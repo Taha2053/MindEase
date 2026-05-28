@@ -1,0 +1,24 @@
+{
+  "name": "mindease",
+  "version": "0.1.0",
+  "description": "AI-native browser extension for neurodiverse learners — GCD4F 2026",
+  "scripts": {
+    "dev:chrome": "vite --mode chrome",
+    "dev:firefox": "vite --mode firefox",
+    "build:chrome": "vite build --mode chrome",
+    "build:firefox": "vite build --mode firefox",
+    "build": "npm run build:chrome && npm run build:firefox"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.42",
+    "@types/uuid": "^10.0.0",
+    "@types/webextension-polyfill": "^0.12.5",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
+  },
+  "dependencies": {
+    "uuid": "^14.0.0",
+    "vite-plugin-web-extension": "^4.5.1",
+    "webextension-polyfill": "^0.12.0"
+  }
+}
