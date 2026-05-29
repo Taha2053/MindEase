@@ -5,27 +5,174 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MindEase</title>
     <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
       body {
-        width: 360px;
-        min-height: 200px;
-        margin: 0;
-        font-family: system-ui, sans-serif;
+        width: 380px;
+        max-height: 560px;
+        overflow-y: auto;
+        font-family: system-ui, -apple-system, sans-serif;
         background: #0f0f0f;
         color: #f0f0f0;
+      }
+
+      /* Scrollbar styling */
+      body::-webkit-scrollbar { width: 6px; }
+      body::-webkit-scrollbar-track { background: transparent; }
+      body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+      /* State 1 — Waiting */
+      .waiting {
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        padding: 24px;
-        box-sizing: border-box;
+        min-height: 200px;
+        padding: 48px 24px;
+        text-align: center;
       }
-      h1 { font-size: 1.2rem; margin: 0 0 8px; color: #a78bfa; }
-      p  { font-size: 0.85rem; color: #888; margin: 0; text-align: center; }
+      .waiting .logo {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #7c3aed;
+        margin-bottom: 12px;
+        letter-spacing: 0.5px;
+      }
+      .waiting .sub {
+        font-size: 0.85rem;
+        color: #888;
+        line-height: 1.5;
+      }
+
+      /* State 2 — Artifact layout */
+      .artifact { padding: 16px; }
+
+      /* Section A — Stats bar */
+      .stats {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+      .stat-card {
+        flex: 1;
+        background: #1a1a1a;
+        border-radius: 10px;
+        padding: 12px 8px;
+        text-align: center;
+      }
+      .stat-card .num {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: #f0f0f0;
+      }
+      .stat-card .label {
+        font-size: 0.65rem;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 4px;
+      }
+
+      /* Section titles */
+      .section-title {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        margin: 16px 0 8px;
+      }
+
+      /* Scrollable lists */
+      .scroll-list {
+        max-height: 200px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .scroll-list::-webkit-scrollbar { width: 5px; }
+      .scroll-list::-webkit-scrollbar-track { background: transparent; }
+      .scroll-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+      /* Study Card */
+      .study-card {
+        background: #1a1a1a;
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .study-card.visual {
+        background: #1e1228;
+        border: 1px solid #2d1a3e;
+      }
+      .study-card .card-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .study-card .card-concept {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #f0f0f0;
+      }
+      .study-card .review-badge {
+        font-size: 0.65rem;
+        font-weight: 600;
+        color: #d97706;
+        background: rgba(217,119,6,0.15);
+        padding: 2px 8px;
+        border-radius: 4px;
+      }
+      .study-card .card-body {
+        font-size: 0.78rem;
+        color: #bbb;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .study-card .card-body.spaced {
+        line-height: 2;
+      }
+
+      /* Gap item */
+      .gap-item {
+        background: #1a1a1a;
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .gap-item .gap-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+      .gap-item .gap-concept {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #f0f0f0;
+      }
+      .gap-item .severity-badge {
+        font-size: 0.6rem;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+      .severity-badge.skipped { background: rgba(220,38,38,0.2); color: #ef4444; }
+      .severity-badge.skimmed { background: rgba(234,179,8,0.2); color: #eab308; }
+      .severity-badge.rushed  { background: rgba(234,88,12,0.2); color: #f97316; }
+
+      .gap-item .gap-text {
+        font-size: 0.75rem;
+        color: #888;
+        line-height: 1.4;
+      }
     </style>
   </head>
   <body>
-    <h1>MindEase</h1>
-    <p>Session panel loading…</p>
+    <div id="app"></div>
     <script type="module" src="./popup.ts"></script>
   </body>
 </html>
