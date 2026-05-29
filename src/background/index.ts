@@ -6,8 +6,9 @@
    ============================================================ */
 
 import browser from "webextension-polyfill";
-import type { ExtensionMessage } from "@/types";
-import { setupLayer2Listeners, endSession } from "@/layer2";
+import type { CognitiveEvent, CognitiveProfile, ContentChunk, ExtensionMessage } from "@/types";
+import { setupLayer2Listeners, endSession as endLayer2Session } from "@/layer2";
+import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
 
 /* ── Session lifecycle ───────────────────────────────────────────────────────── */
 
@@ -15,7 +16,6 @@ browser.runtime.onInstalled.addListener((details) => {
   console.log("[MindEase] Extension installed — background worker ready.", details.reason);
 
   if (details.reason === "install") {
-    /* Open onboarding in a new tab on first install */
     browser.tabs.create({
       url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html"),
       active: true,
@@ -28,32 +28,52 @@ setupLayer2Listeners();
 
 /* ── Tab close → trigger session end ────────────────────────────────────────── */
 browser.tabs.onRemoved.addListener(async (_tabId) => {
-  await endSession();
+  await endLayer2Session();
 });
 
-/* ── Message router ────────────────────────────────────────────────────────────
-     All inter-layer communication passes through here.
-     Layer 2 handles its own messages via setupLayer2Listeners().
-     We also handle Layer 3 and general routing here.
-  ─────────────────────────────────────────────────────────────────────────────── */
+/* ── Message router ──────────────────────────────────────────────────────────── */
 
 browser.runtime.onMessage.addListener(
   (message: unknown, _sender, sendResponse) => {
     const msg = message as ExtensionMessage;
 
     switch (msg.type) {
-      case "SESSION_START":
-        console.log("[Background] Session started:", msg.payload);
-        break;
+      case "SESSION_START": {
+        const { userId } = msg.payload as { userId: string };
+        console.log("[Background] Session started for user:", userId);
 
-      case "SESSION_END":
+        browser.storage.local.get("cognitiveProfile").then((result) => {
+          const profile = (result as Record<string, unknown>)
+            .cognitiveProfile as CognitiveProfile;
+
+          if (!profile) {
+            console.warn("[Background] No cognitive profile found — starting session with default profile.");
+          }
+
+          startSession(userId, profile);
+        });
+        break;
+      }
+
+      case "SESSION_END": {
         console.log("[Background] Session ended — triggering synthesis.");
-        break;
 
-      case "COGNITIVE_EVENT":
-        /* Forward Layer 2 events to Layer 3
-           Layer 3 sessionTracker listens for these */
+        browser.storage.local.get("sessionChunks").then((result) => {
+          const chunks = ((result as Record<string, unknown>)
+            .sessionChunks ?? []) as ContentChunk[];
+
+          endLayer3Session(chunks);
+        });
+
+        endLayer2Session();
         break;
+      }
+
+      case "COGNITIVE_EVENT": {
+        const event = msg.payload as CognitiveEvent;
+        recordEvent(event);
+        break;
+      }
 
       case "ARTIFACT_READY":
         browser.action.setBadgeText({ text: "✓" });
@@ -61,8 +81,6 @@ browser.runtime.onMessage.addListener(
         break;
 
       default:
-        /* Messages handled by Layer 2's own listener will return a response.
-           Unknown messages are logged. */
         break;
     }
 
