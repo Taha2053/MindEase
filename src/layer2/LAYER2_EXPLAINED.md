@@ -222,49 +222,60 @@ Where:
 
 ```typescript
 interface FullCognitiveProfile {
-  userId:           string;          // UUID v4, generated on onboarding
-  learningStyle:    LearningStyle;   // "visual" | "text" | "audio" | "mixed"
-  attentionSpan:    AttentionSpan;   // "short" | "medium" | "long"
-  anchorNeed:       boolean;         // needs conceptual/visual anchors
-  condition:        CognitiveNeed;   // "dyslexia" | "adhd" | "multilingual" | "none"
-  updatedAt:        number;          // timestamp (ms) of last RL update
-  createdAt:        string;          // ISO timestamp
-  baseline: BaselineProfile;         // onboarding answers
-    formatPreference:       FormatPreference;     // "visual" | "text"
-    attentionSpan:          AttentionSpanType;    // "short" | "medium" | "long"
-    readingPace:            ReadingPace;          // "slow" | "moderate" | "fast"
-    needsConceptAnchor:     boolean;              // big picture first?
-    secondLanguageLearner:  boolean;              // studying in non-native language?
-  rlState: RLState;                    // running counters
-    highlightRate:        number;      // total highlights this session
-    pauseRate:            number;      // total pauses
-    reReadRate:           number;      // total re-reads
-    skipRate:             number;      // total skips
-    sessionCount:         number;      // total completed sessions
-    totalEngagementScore: number;      // cumulative reward
-  transformationParams: TransformationParams;   // consumed by Layer 1
-    chunkSize:           ChunkSize;           // "small" | "medium" | "large"
-    simplificationLevel: SimplificationLevel;  // 1 | 2 | 3
-    captionSpeed:        CaptionSpeed;        // "slow" | "normal" | "fast"
+  userId:        string;        // UUID v4, generated on onboarding
+  learningStyle: LearningStyle; // Inferred alias: "visual" | "text" (mirrors baseline.formatPreference)
+  condition:     CognitiveNeed; // Inferred: "multilingual" if secondLanguageLearner, else "none"
+  createdAt:     string;        // ISO timestamp
+  updatedAt:     number;        // Unix ms — updated on every RL action
+
+  baseline: {
+    formatPreference:      "visual" | "text";
+    attentionSpan:         "short" | "medium" | "long";
+    readingPace:           "slow" | "moderate" | "fast";
+    needsConceptAnchor:    boolean;
+    secondLanguageLearner: boolean;
+  };
+
+  rlState: {
+    highlightRate:        number; // total highlights this session
+    pauseRate:            number; // total pauses
+    reReadRate:           number; // total re-reads
+    skipRate:             number; // total skips
+    sessionCount:         number; // completed sessions lifetime
+    totalEngagementScore: number; // cumulative reward sum
+  };
+
+  transformationParams: {
+    chunkSize:           "small" | "medium" | "large";
+    simplificationLevel: 1 | 2 | 3;
+    captionSpeed:        "slow" | "normal" | "fast";
     useVisualAnchors:    boolean;
-    summaryFrequency:    SummaryFrequency;     // "high" | "medium" | "low"
+    summaryFrequency:    "high" | "medium" | "low";
+  };
 }
 ```
 
-### Field Explanations
+### Design Note: condition field
 
-| Field | How it's set | How it changes |
-|-------|-------------|----------------|
-| `baseline.*` | Onboarding (once) | Never changes — represents the user's self-reported baseline |
-| `rlState.*` | Starts at 0 | Incremented by behavior signals every session |
-| `rlState.sessionCount` | Starts at 0 | Incremented by 1 each `endSession()` |
-| `rlState.totalEngagementScore` | Starts at 0 | Sum of all rewards across all sessions |
-| `transformationParams.*` | Initialized from baseline | Mutated by RL agent's chosen action |
-| `transformationParams.chunkSize` | small for short attention | RL can increase/decrease |
-| `transformationParams.simplificationLevel` | 3 for slow readers/SLL | RL can increase/decrease |
-| `transformationParams.captionSpeed` | slow for slow readers/SLL | RL can increase/decrease |
-| `transformationParams.useVisualAnchors` | true for visual learners | RL can toggle |
-| `transformationParams.summaryFrequency` | high for short attention | RL can increase/decrease |
+MindEase deliberately does not ask users to self-diagnose. The `condition` field is
+inferred from behavior: if the user studies in a second language, `condition` is set
+to `"multilingual"` and simplification/chunking parameters are initialized more
+aggressively. The `"dyslexia"` and `"adhd"` values are reserved for a future version
+that may infer these from RL behavior patterns over multiple sessions — for example,
+persistently high skip rates combined with short attention span could suggest ADHD-like
+engagement patterns, triggering a parameter preset without requiring a diagnosis label.
+
+### Field Reference
+
+| Field | Set by | Changes how |
+|-------|--------|-------------|
+| `baseline.*` | Onboarding (once, never changes) | Seeds initial transformationParams |
+| `learningStyle` | Inferred from `baseline.formatPreference` | Convenience alias for Layer 1 |
+| `condition` | Inferred from `baseline.secondLanguageLearner` | Adjusts initial simplification aggressiveness |
+| `rlState.*` | Incremented by behavior signals | Drives RL state discretization |
+| `rlState.sessionCount` | +1 on every `endSession()` | Controls epsilon decay |
+| `rlState.totalEngagementScore` | Cumulative reward sum | Long-term engagement indicator |
+| `transformationParams.*` | Seeded from baseline, mutated by RL agent | Consumed directly by Layer 1 |
 
 ---
 
@@ -439,6 +450,7 @@ npx tsc --noEmit  # Type-check only
 4. **No temporal difference beyond one step**: The Q-update bootstraps from current state. A full TD(λ) or Monte Carlo approach would be more sample-efficient.
 5. **Session stats per URL only**: No cross-session long-term memory of specific content domains.
 6. **No A/B testing**: All users start with the same epsilon/learning rate. Could personalize hyperparameters based on convergence speed.
+7. **`condition` field is partially implemented**: `"dyslexia"` and `"adhd"` are valid enum values but never set — condition is currently inferred from `secondLanguageLearner` only. Future versions could infer these from long-term RL behavior patterns (e.g. persistently high skip rates + short attention span → ADHD-like preset).
 
 ### Next Steps
 
