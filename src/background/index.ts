@@ -7,6 +7,7 @@
 
 import browser from "webextension-polyfill";
 import type { CognitiveEvent, CognitiveProfile, ContentChunk, ExtensionMessage } from "@/types";
+import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session } from "@/layer2";
 import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
 
@@ -42,9 +43,9 @@ browser.runtime.onMessage.addListener(
         const { userId } = msg.payload as { userId: string };
         console.log("[Background] Session started for user:", userId);
 
-        browser.storage.local.get("cognitiveProfile").then((result) => {
+        browser.storage.local.get(STORAGE_KEYS.PROFILE).then((result) => {
           const profile = (result as Record<string, unknown>)
-            .cognitiveProfile as CognitiveProfile;
+            [STORAGE_KEYS.PROFILE] as CognitiveProfile;
 
           if (!profile) {
             console.warn("[Background] No cognitive profile found — starting session with default profile.");
@@ -58,13 +59,7 @@ browser.runtime.onMessage.addListener(
       case "SESSION_END": {
         console.log("[Background] Session ended — triggering synthesis.");
 
-        browser.storage.local.get("sessionChunks").then((result) => {
-          const chunks = ((result as Record<string, unknown>)
-            .sessionChunks ?? []) as ContentChunk[];
-
-          endLayer3Session(chunks);
-        });
-
+        endLayer3Session([]);
         endLayer2Session();
         break;
       }
