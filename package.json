@@ -15,7 +15,7 @@
     "@types/uuid": "^10.0.0",
     "@types/webextension-polyfill": "^0.12.5",
     "typescript": "^6.0.3",
-    "vite": "^8.0.14",
+    "vite": "^5.4.21",
     "vitest": "^4.1.7"
   },
   "dependencies": {
