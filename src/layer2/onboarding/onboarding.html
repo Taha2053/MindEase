@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MindEase — Welcome</title>
+  <link rel="stylesheet" href="onboarding.css" />
+</head>
+<body>
+  <div id="app" role="main" aria-live="polite">
+    <div id="step-indicator" aria-hidden="true"></div>
+    <div id="card">
+      <h1 id="title">Welcome to MindEase</h1>
+      <p id="subtitle">Let's personalize your learning experience.</p>
+      <div id="options-container" role="radiogroup"></div>
+      <div id="nav">
+        <button id="prev-btn" class="btn btn-secondary" aria-label="Previous question" disabled>
+          ← Back
+        </button>
+        <button id="next-btn" class="btn btn-primary">
+          Next →
+        </button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="onboarding.js"></script>
+</body>
+</html>

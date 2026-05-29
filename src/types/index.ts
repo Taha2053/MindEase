@@ -125,9 +125,190 @@ export type MessageType =
   | "SESSION_START"              // background → Layer 3
   | "SESSION_END"                // background → Layer 3
   | "ARTIFACT_READY"             // Layer 3 → popup panel
-  | "PROFILE_UPDATED";           // Layer 2 → Layer 1 + Layer 3
+  | "PROFILE_UPDATED"           // Layer 2 → Layer 1 + Layer 3
+  | "BEHAVIOR_SIGNAL"            // content script → Layer 2
+  | "GET_PROFILE"                // Layer 1 / Layer 3 → Layer 2
+  | "PROFILE_DATA"               // Layer 2 → response
+  | "ONBOARDING_COMPLETE"        // onboarding → background
+  | "RESET_PROFILE";             // popup → background
 
 export interface ExtensionMessage {
   type:    MessageType;
   payload: unknown;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Layer 2 — Adaptive Cognitive Profiling — RL Agent Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Transformation Parameters (consumed by Layer 1) ───────────────────────────
+
+export type ChunkSize           = "small" | "medium" | "large";
+export type SimplificationLevel = 1 | 2 | 3;
+export type CaptionSpeed        = "slow" | "normal" | "fast";
+export type UseVisualAnchors    = boolean;
+export type SummaryFrequency    = "high" | "medium" | "low";
+
+export interface TransformationParams {
+  chunkSize:           ChunkSize;
+  simplificationLevel: SimplificationLevel;
+  captionSpeed:        CaptionSpeed;
+  useVisualAnchors:    UseVisualAnchors;
+  summaryFrequency:    SummaryFrequency;
+}
+
+// ── RL State (tracked counters) ───────────────────────────────────────────────
+
+export interface RLState {
+  highlightRate:       number;
+  pauseRate:           number;
+  reReadRate:          number;
+  skipRate:            number;
+  sessionCount:        number;
+  totalEngagementScore: number;
+}
+
+// ── Full Cognitive Profile (Layer 2's extended profile) ───────────────────────
+
+export interface FullCognitiveProfile {
+  userId:              string;
+  learningStyle:       LearningStyle;
+  attentionSpan:       AttentionSpan;
+  anchorNeed:          boolean;
+  condition:           CognitiveNeed;
+  updatedAt:           number;                         // timestamp (ms)
+  createdAt:           string;                         // ISO timestamp
+  baseline:            BaselineProfile;
+  rlState:             RLState;
+  transformationParams: TransformationParams;
+}
+
+// ── Baseline Profile (onboarding output) ──────────────────────────────────────
+
+export type FormatPreference   = "visual" | "text";
+export type AttentionSpanType  = "short" | "medium" | "long";
+export type ReadingPace        = "slow" | "moderate" | "fast";
+
+export interface BaselineProfile {
+  formatPreference:       FormatPreference;
+  attentionSpan:          AttentionSpanType;
+  readingPace:            ReadingPace;
+  needsConceptAnchor:     boolean;
+  secondLanguageLearner:  boolean;
+}
+
+// ── Behavior Signals ──────────────────────────────────────────────────────────
+
+export type SignalType =
+  | "highlight"
+  | "pause"
+  | "reRead"
+  | "skip"
+  | "tabSwitch";
+
+export interface BehaviorSignalContext {
+  url:        string;
+  sectionId:  string;
+}
+
+export interface BehaviorSignalMessage {
+  type:       "BEHAVIOR_SIGNAL";
+  signal:     SignalType;
+  timestamp:  string;
+  context:    BehaviorSignalContext;
+}
+
+// ── Session End (consumed by Layer 3) ─────────────────────────────────────────
+
+export type DominantSignal = "highlight" | "skip" | "pause";
+
+export interface SessionStats {
+  engagedSections:  string[];
+  skippedSections:  string[];
+  totalHighlights:  number;
+  totalPauses:      number;
+  totalSkips:       number;
+  dominantSignal:   DominantSignal;
+}
+
+export interface SessionEndPayload {
+  sessionStats:   SessionStats;
+  updatedProfile: FullCognitiveProfile;
+}
+
+// ── Profile API ───────────────────────────────────────────────────────────────
+
+export interface GetProfileRequest {
+  type: "GET_PROFILE";
+}
+
+export interface ProfileDataResponse {
+  type:    "PROFILE_DATA";
+  profile: FullCognitiveProfile;
+}
+
+// ── Q-Learning Types ──────────────────────────────────────────────────────────
+
+export interface QTable {
+  [stateKey: string]: number[];   // stateKey → Q-values for each action (length = ACTION_COUNT)
+}
+
+export interface RLAgentConfig {
+  learningRate:   number;
+  discountFactor: number;
+  epsilon:        number;
+  epsilonDecay:   number;
+  minEpsilon:     number;
+}
+
+export const ACTIONS = [
+  "increaseChunkSize",
+  "decreaseChunkSize",
+  "increaseSimplification",
+  "decreaseSimplification",
+  "increaseCaptionSpeed",
+  "decreaseCaptionSpeed",
+  "toggleVisualAnchors",
+  "increaseSummaryFrequency",
+  "decreaseSummaryFrequency",
+] as const;
+
+export type Action = (typeof ACTIONS)[number];
+export const ACTION_COUNT = ACTIONS.length;
+
+// ── State Discretization ──────────────────────────────────────────────────────
+
+export interface DiscreteState {
+  highlightLevel: number;  // 0–2
+  pauseLevel:     number;  // 0–2
+  reReadLevel:    number;  // 0–2
+  skipLevel:      number;  // 0–2
+}
+
+export function discretizeState(rlState: RLState): DiscreteState {
+  const rateToLevel = (rate: number): number => {
+    if (rate <= 0) return 0;
+    if (rate <= 5) return 1;
+    return 2;
+  };
+  return {
+    highlightLevel: rateToLevel(rlState.highlightRate),
+    pauseLevel:     rateToLevel(rlState.pauseRate),
+    reReadLevel:    rateToLevel(rlState.reReadRate),
+    skipLevel:      rateToLevel(rlState.skipRate),
+  };
+}
+
+export function stateToKey(state: DiscreteState): string {
+  return `${state.highlightLevel}-${state.pauseLevel}-${state.reReadLevel}-${state.skipLevel}`;
+}
+
+// ── Storage Keys ──────────────────────────────────────────────────────────────
+
+export const STORAGE_KEYS = {
+  PROFILE:         "mindease_profile",
+  QTABLE:          "mindease_qtable",
+  ONBOARDING_DONE: "mindease_onboarding_done",
+  SESSION_ACTIVE:  "mindease_session_active",
+  SESSION_STATS:   "mindease_session_stats",
+} as const;

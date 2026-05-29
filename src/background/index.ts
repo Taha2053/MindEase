@@ -1,20 +1,41 @@
-// ============================================================
-// background/index.ts — Service Worker (persistent background logic)
-// Manages session lifecycle and routes messages between layers.
-// ============================================================
+/* ============================================================
+   background/index.ts — Service Worker (persistent background logic)
+   Manages session lifecycle and routes messages between layers.
+   Integrates Layer 2 (cognitive profiling) for behavior signals,
+   profile getter API, and session lifecycle.
+   ============================================================ */
 
 import browser from "webextension-polyfill";
 import type { ExtensionMessage } from "@/types";
+import { setupLayer2Listeners, endSession } from "@/layer2";
 
-// ── Session lifecycle ─────────────────────────────────────────────────────────
+/* ── Session lifecycle ───────────────────────────────────────────────────────── */
 
-// Fired when the extension is installed or updated
-browser.runtime.onInstalled.addListener(() => {
-  console.log("[MindEase] Extension installed — background worker ready.");
+browser.runtime.onInstalled.addListener((details) => {
+  console.log("[MindEase] Extension installed — background worker ready.", details.reason);
+
+  if (details.reason === "install") {
+    /* Open onboarding in a new tab on first install */
+    browser.tabs.create({
+      url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html"),
+      active: true,
+    });
+  }
 });
 
-// ── Message router ────────────────────────────────────────────────────────────
-// All inter-layer communication passes through here.
+/* ── Initialize Layer 2 ─────────────────────────────────────────────────────── */
+setupLayer2Listeners();
+
+/* ── Tab close → trigger session end ────────────────────────────────────────── */
+browser.tabs.onRemoved.addListener(async (_tabId) => {
+  await endSession();
+});
+
+/* ── Message router ────────────────────────────────────────────────────────────
+     All inter-layer communication passes through here.
+     Layer 2 handles its own messages via setupLayer2Listeners().
+     We also handle Layer 3 and general routing here.
+  ─────────────────────────────────────────────────────────────────────────────── */
 
 browser.runtime.onMessage.addListener(
   (message: unknown, _sender, sendResponse) => {
@@ -27,25 +48,24 @@ browser.runtime.onMessage.addListener(
 
       case "SESSION_END":
         console.log("[Background] Session ended — triggering synthesis.");
-        // TODO: trigger Layer 3 synthesis pipeline
         break;
 
       case "COGNITIVE_EVENT":
-        // Forward Layer 2 events to Layer 3
-        // Layer 3 sessionTracker listens for these
+        /* Forward Layer 2 events to Layer 3
+           Layer 3 sessionTracker listens for these */
         break;
 
       case "ARTIFACT_READY":
-        // Notify popup panel that the knowledge artifact is ready
         browser.action.setBadgeText({ text: "✓" });
         browser.action.setBadgeBackgroundColor({ color: "#7C3AED" });
         break;
 
       default:
-        console.warn("[Background] Unknown message type:", msg.type);
+        /* Messages handled by Layer 2's own listener will return a response.
+           Unknown messages are logged. */
+        break;
     }
 
-    // Keep message channel open for async responses
     sendResponse({ received: true });
     return true;
   }

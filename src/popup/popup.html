@@ -1,31 +1,158 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MindEase</title>
-    <style>
-      body {
-        width: 360px;
-        min-height: 200px;
-        margin: 0;
-        font-family: system-ui, sans-serif;
-        background: #0f0f0f;
-        color: #f0f0f0;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        padding: 24px;
-        box-sizing: border-box;
-      }
-      h1 { font-size: 1.2rem; margin: 0 0 8px; color: #a78bfa; }
-      p  { font-size: 0.85rem; color: #888; margin: 0; text-align: center; }
-    </style>
-  </head>
-  <body>
-    <h1>MindEase</h1>
-    <p>Session panel loading…</p>
-    <script type="module" src="./popup.ts"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MindEase</title>
+  <style>
+    :root {
+      --navy: #0f1724;
+      --white: #f0f4f8;
+      --accent: #4EB8FF;
+      --accent-hover: #3aa0e0;
+      --gray: #94a3b8;
+      --dark-card: #1a2332;
+      --border: #2a3a4a;
+      --success: #4ade80;
+      --danger: #f87171;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 380px;
+      min-height: 320px;
+      font-family: 'Segoe UI', 'Arial', sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      letter-spacing: 0.03em;
+      background: var(--navy);
+      color: var(--white);
+      padding: 20px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      margin-bottom: 16px;
+      color: var(--accent);
+    }
+
+    h2 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      margin-bottom: 8px;
+      color: var(--gray);
+      text-transform: uppercase;
+    }
+
+    .section {
+      background: var(--dark-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .stat-row:last-child { border-bottom: none; }
+
+    .stat-label {
+      color: var(--gray);
+      font-size: 0.8rem;
+    }
+    .stat-value {
+      color: var(--white);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .stat-row.highlight .stat-value { color: var(--accent); }
+    .stat-row.skip .stat-value { color: var(--danger); }
+
+    .empty-state {
+      color: var(--gray);
+      font-size: 0.8rem;
+      text-align: center;
+      padding: 12px 0;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      transition: background 200ms ease, opacity 200ms ease;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: var(--navy);
+    }
+    .btn-primary:hover { background: var(--accent-hover); }
+
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+    .btn-danger:hover {
+      background: rgba(248,113,113,0.1);
+    }
+
+    .status {
+      text-align: center;
+      font-size: 0.8rem;
+      margin-top: 8px;
+      min-height: 1.2em;
+    }
+    .status.success { color: var(--success); }
+  </style>
+</head>
+<body>
+  <h1 id="profile-title">MindEase</h1>
+
+  <div class="section">
+    <h2>Baseline Profile</h2>
+    <div id="profile-summary"></div>
+  </div>
+
+  <div class="section">
+    <h2>Session Stats</h2>
+    <div id="session-stats"></div>
+  </div>
+
+  <div class="section">
+    <h2>Transformation Params</h2>
+    <div id="transformation-params"></div>
+  </div>
+
+  <div class="btn-group">
+    <button id="end-session-btn" class="btn btn-primary">End Session</button>
+    <button id="reset-profile-btn" class="btn btn-danger">Reset Profile</button>
+  </div>
+
+  <div id="status-message" class="status"></div>
+
+  <script type="module" src="./popup.ts"></script>
+</body>
 </html>
