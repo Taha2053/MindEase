@@ -69,6 +69,16 @@ function initialTransformationParams(baseline: BaselineProfile): TransformationP
     captionSpeed = "slow";
   }
 
+  if (baseline.infoDensity === "concise") {
+    chunkSize = chunkSize === "large" ? "medium" : "small";
+    summaryFrequency = "high";
+  }
+
+  if (baseline.learningApproach === "example-first") {
+    useVisualAnchors = true;
+    simplificationLevel = Math.min(3, simplificationLevel + 1) as TransformationParams["simplificationLevel"];
+  }
+
   return { chunkSize, simplificationLevel, captionSpeed, useVisualAnchors, summaryFrequency };
 }
 

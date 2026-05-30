@@ -36,6 +36,8 @@ const DEFAULT_FULL_PROFILE = {
     readingPace: "moderate" as const,
     needsConceptAnchor: false,
     secondLanguageLearner: false,
+    infoDensity: "detailed" as const,
+    learningApproach: "theory-first" as const,
   },
   rlState: {
     highlightRate: 0,

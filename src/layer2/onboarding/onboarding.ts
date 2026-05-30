@@ -1,5 +1,5 @@
 import browser from "webextension-polyfill";
-import type { BaselineProfile } from "@/types";
+import type { BaselineProfile, FullCognitiveProfile } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 
 interface Question {
@@ -15,18 +15,45 @@ const QUESTIONS: Question[] = [
     title: "How do you learn best?",
     subtitle: "Choose the style that feels most natural to you.",
     options: [
-      { icon: "\u{1F4CB}", label: "Visual — Diagrams & Images", description: "Charts, mind maps, illustrations help concepts click.", value: "visual" },
-      { icon: "\u{1F4DD}", label: "Text — Written Explanations", description: "Reading and writing works best for absorbing new ideas.", value: "text" },
+      { icon: "\u{1F4CB}", label: "Visual \u2014 Diagrams & Images", description: "Charts, mind maps, illustrations help concepts click.", value: "visual" },
+      { icon: "\u{1F4DD}", label: "Text \u2014 Written Explanations", description: "Reading and writing works best for absorbing new ideas.", value: "text" },
+    ],
+  },
+  {
+    id: "learningApproach",
+    title: "How do you prefer new topics to be introduced?",
+    subtitle: "This helps us structure how we present content.",
+    options: [
+      { icon: "\u{1F4A1}", label: "Examples first", description: "Show me concrete examples, then explain the theory behind them.", value: "example-first" },
+      { icon: "\u{1F4D6}", label: "Theory first", description: "Explain the concept first, then show examples to illustrate it.", value: "theory-first" },
+    ],
+  },
+  {
+    id: "infoDensity",
+    title: "How much detail do you prefer in your learning material?",
+    subtitle: "This adjusts content density and chunk size.",
+    options: [
+      { icon: "\u{1F4A8}", label: "Concise \u2014 Key points only", description: "Short, focused summaries with the essentials.", value: "concise" },
+      { icon: "\u{1F4DA}", label: "Detailed \u2014 In-depth explanations", description: "Thorough explanations with all the nuance.", value: "detailed" },
     ],
   },
   {
     id: "attentionSpan",
     title: "How long can you focus before needing a break?",
-    subtitle: "Be honest — this helps us set the right pace.",
+    subtitle: "Be honest \u2014 this helps us set the right pace.",
     options: [
-      { icon: "\u26A1", label: "Short — Under 10 min", description: "Frequent short bursts keep you sharp.", value: "short" },
-      { icon: "\u{1F9D0}", label: "Medium — 10\u201325 min", description: "Solid focus sessions with a breather in between.", value: "medium" },
-      { icon: "\u{1F30A}", label: "Long — 25+ minutes", description: "You can dive deep for extended periods.", value: "long" },
+      { icon: "\u26A1", label: "Short \u2014 Under 10 min", description: "Frequent short bursts keep you sharp.", value: "short" },
+      { icon: "\u{1F9D0}", label: "Medium \u2014 10\u201325 min", description: "Solid focus sessions with a breather in between.", value: "medium" },
+      { icon: "\u{1F30A}", label: "Long \u2014 25+ minutes", description: "You can dive deep for extended periods.", value: "long" },
+    ],
+  },
+  {
+    id: "secondLanguageLearner",
+    title: "Are you studying in a language that\u2019s not your native one?",
+    subtitle: "We adjust sentence complexity when needed.",
+    options: [
+      { icon: "\u{1F30D}", label: "Yes \u2014 second language", description: "Simpler sentences and slower captions help.", value: "true" },
+      { icon: "\u{1F3F4}", label: "No \u2014 native language", description: "I am comfortable reading in this language.", value: "false" },
     ],
   },
   {
@@ -44,17 +71,8 @@ const QUESTIONS: Question[] = [
     title: "Do you need the big picture before diving into details?",
     subtitle: "How do you prefer new topics to be introduced?",
     options: [
-      { icon: "\u{1F30D}", label: "Yes — start with overview", description: "Show me the map before I explore the terrain.", value: "true" },
-      { icon: "\u{1F50D}", label: "No — details first", description: "Build up to the big picture step by step.", value: "false" },
-    ],
-  },
-  {
-    id: "secondLanguageLearner",
-    title: "Are you studying in a language that\u2019s not your native one?",
-    subtitle: "We adjust sentence complexity when needed.",
-    options: [
-      { icon: "\u{1F30D}", label: "Yes \u2014 second language", description: "Simpler sentences and slower captions help.", value: "true" },
-      { icon: "\u{1F3F4}", label: "No \u2014 native language", description: "I am comfortable reading in this language.", value: "false" },
+      { icon: "\u{1F30D}", label: "Yes \u2014 start with overview", description: "Show me the map before I explore the terrain.", value: "true" },
+      { icon: "\u{1F50D}", label: "No \u2014 details first", description: "Build up to the big picture step by step.", value: "false" },
     ],
   },
 ];
@@ -62,14 +80,34 @@ const QUESTIONS: Question[] = [
 interface OnboardingState {
   currentStep: number;
   answers: Partial<Record<keyof BaselineProfile, string>>;
+  isEditMode: boolean;
+  existingProfile: FullCognitiveProfile | null;
 }
 
 const state: OnboardingState = {
   currentStep: 0,
   answers: {},
+  isEditMode: false,
+  existingProfile: null,
 };
 
 const $ = (id: string): HTMLElement | null => document.getElementById(id);
+
+/* ─── Theme ─── */
+
+function loadTheme(): void {
+  const theme = localStorage.getItem("mindease_theme") ?? "dark";
+  document.body.classList.toggle("light", theme === "light");
+}
+
+function toggleTheme(): void {
+  const isLight = document.body.classList.toggle("light");
+  localStorage.setItem("mindease_theme", isLight ? "light" : "dark");
+  const btn = $("#theme-toggle");
+  if (btn) btn.textContent = isLight ? "\u{1F319}" : "\u2600\uFE0F";
+}
+
+/* ─── Render ─── */
 
 function renderStep(): void {
   const question = QUESTIONS[state.currentStep];
@@ -183,7 +221,61 @@ function getTransformationParamsFromBaseline(baseline: BaselineProfile) {
     captionSpeed = "slow";
   }
 
+  if (baseline.infoDensity === "concise") {
+    chunkSize = chunkSize === "large" ? "medium" : "small";
+    summaryFrequency = "high";
+  }
+
+  if (baseline.learningApproach === "example-first") {
+    useVisualAnchors = true;
+    simplificationLevel = Math.min(3, simplificationLevel + 1) as 1 | 2 | 3;
+  }
+
   return { chunkSize, simplificationLevel, captionSpeed, useVisualAnchors, summaryFrequency };
+}
+
+function generateProfileSummary(baseline: BaselineProfile): string {
+  const parts: string[] = [];
+
+  if (baseline.formatPreference === "visual") {
+    parts.push("You learn best through visual content\u2014diagrams, images, and charts help concepts click");
+  } else {
+    parts.push("You prefer text-based learning\u2014reading and writing work best for absorbing new ideas");
+  }
+
+  if (baseline.learningApproach === "example-first") {
+    parts.push("and you grasp new topics better when concrete examples come first");
+  } else {
+    parts.push("and you prefer understanding the theory before seeing examples");
+  }
+
+  if (baseline.infoDensity === "concise") {
+    parts.push("You like concise, focused summaries that get straight to the point");
+  } else {
+    parts.push("You appreciate detailed, in-depth explanations with full nuance");
+  }
+
+  if (baseline.attentionSpan === "short") {
+    parts.push("and shorter, frequent study sessions will help you stay sharp");
+  } else if (baseline.attentionSpan === "long") {
+    parts.push("and you can dive deep into material for extended periods");
+  }
+
+  if (baseline.secondLanguageLearner) {
+    parts.push("Since you\u2019re learning in a second language, we\u2019ll keep sentences simple and captions slower");
+  }
+
+  if (baseline.needsConceptAnchor) {
+    parts.push("We\u2019ll always start with the big picture so you can see where details fit");
+  }
+
+  if (baseline.readingPace === "slow") {
+    parts.push("and we\u2019ll adjust to a comfortable reading pace with extra simplification");
+  } else if (baseline.readingPace === "fast") {
+    parts.push("we\u2019ll keep the pace moving to match your reading speed");
+  }
+
+  return parts.join(". ") + ".";
 }
 
 async function saveProfile(): Promise<void> {
@@ -193,7 +285,27 @@ async function saveProfile(): Promise<void> {
     readingPace: state.answers.readingPace as BaselineProfile["readingPace"],
     needsConceptAnchor: state.answers.needsConceptAnchor === "true",
     secondLanguageLearner: state.answers.secondLanguageLearner === "true",
+    infoDensity: state.answers.infoDensity as BaselineProfile["infoDensity"],
+    learningApproach: state.answers.learningApproach as BaselineProfile["learningApproach"],
   };
+
+  if (state.isEditMode && state.existingProfile) {
+    const profile: FullCognitiveProfile = {
+      ...state.existingProfile,
+      learningStyle: baseline.formatPreference === "visual" ? "visual" as const : "text" as const,
+      attentionSpan: baseline.attentionSpan,
+      anchorNeed: baseline.needsConceptAnchor,
+      condition: (baseline.secondLanguageLearner ? "multilingual" : "none") as "multilingual" | "none",
+      updatedAt: Date.now(),
+      baseline,
+      transformationParams: getTransformationParamsFromBaseline(baseline),
+    };
+    await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
+    try {
+      await browser.runtime.sendMessage({ type: "PROFILE_UPDATED", payload: profile });
+    } catch { /* ok */ }
+    return;
+  }
 
   const profile = {
     userId: generateUUID(),
@@ -219,11 +331,16 @@ async function saveProfile(): Promise<void> {
     [STORAGE_KEYS.PROFILE]: profile,
     [STORAGE_KEYS.ONBOARDING_DONE]: true,
   });
+
+  try {
+    await browser.runtime.sendMessage({ type: "ONBOARDING_COMPLETE" });
+  } catch { /* ok */ }
 }
 
 function renderCompleteScreen(): void {
   const card = $("card");
   const indicatorEl = $("step-indicator");
+  const headerTitle = $("header-title");
   if (!card || !indicatorEl) return;
 
   const baseline = {
@@ -232,9 +349,14 @@ function renderCompleteScreen(): void {
     readingPace: state.answers.readingPace as BaselineProfile["readingPace"],
     needsConceptAnchor: state.answers.needsConceptAnchor === "true",
     secondLanguageLearner: state.answers.secondLanguageLearner === "true",
+    infoDensity: state.answers.infoDensity as BaselineProfile["infoDensity"],
+    learningApproach: state.answers.learningApproach as BaselineProfile["learningApproach"],
   };
 
   const params = getTransformationParamsFromBaseline(baseline);
+  const summary = generateProfileSummary(baseline);
+
+  if (headerTitle) headerTitle.textContent = state.isEditMode ? "Profile Updated" : "You\u2019re all set!";
 
   indicatorEl.innerHTML = QUESTIONS
     .map(() => `<span class="progress-dot done" aria-hidden="true"></span>`)
@@ -242,14 +364,13 @@ function renderCompleteScreen(): void {
 
   card.innerHTML = `
     <div class="complete-screen">
-      <div class="complete-icon">&#x1F9E0;</div>
-      <div class="complete-title">You\u2019re all set!</div>
-      <div class="complete-sub">
-        Your cognitive profile has been created.<br>
-        MindEase will now adapt content to your learning style.
-      </div>
+      <div class="complete-icon">${state.isEditMode ? "\u270F\uFE0F" : "\u{1F9E0}"}</div>
+      <div class="complete-title">${state.isEditMode ? "Profile Updated" : "You\u2019re all set!"}</div>
+      <div class="profile-summary">${summary}</div>
       <div class="profile-preview">
         <div class="preview-row"><span>Format</span><span>${baseline.formatPreference}</span></div>
+        <div class="preview-row"><span>Learning Approach</span><span>${baseline.learningApproach === "example-first" ? "Examples first" : "Theory first"}</span></div>
+        <div class="preview-row"><span>Info Density</span><span>${baseline.infoDensity}</span></div>
         <div class="preview-row"><span>Attention</span><span>${baseline.attentionSpan}</span></div>
         <div class="preview-row"><span>Reading Pace</span><span>${baseline.readingPace}</span></div>
         <div class="preview-row"><span>Overview First</span><span>${baseline.needsConceptAnchor ? "Yes" : "No"}</span></div>
@@ -259,18 +380,49 @@ function renderCompleteScreen(): void {
       </div>
       <div class="nav" style="justify-content:center">
         <button id="start-btn" class="btn-next enabled" style="padding:12px 40px;font-size:0.95rem">
-          Start Learning &#x2192;
+          ${state.isEditMode ? "Done \u2714" : "Start Learning \u2192"}
         </button>
       </div>
     </div>
   `;
 
-  document.getElementById("start-btn")?.addEventListener("click", async () => {
+  document.getElementById("start-btn")?.addEventListener("click", () => {
     window.close();
   });
 }
 
-function init(): void {
+/* ─── Init ─── */
+
+async function init(): Promise<void> {
+  loadTheme();
+
+  const themeBtn = $("theme-toggle");
+  if (themeBtn) {
+    const isLight = document.body.classList.contains("light");
+    themeBtn.textContent = isLight ? "\u{1F319}" : "\u2600\uFE0F";
+    themeBtn.addEventListener("click", toggleTheme);
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  state.isEditMode = params.get("edit") === "1";
+
+  if (state.isEditMode) {
+    const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
+    const profile = result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined;
+    if (profile) {
+      state.existingProfile = profile;
+      state.answers.formatPreference = profile.baseline.formatPreference;
+      state.answers.attentionSpan = profile.baseline.attentionSpan;
+      state.answers.readingPace = profile.baseline.readingPace;
+      state.answers.needsConceptAnchor = profile.baseline.needsConceptAnchor ? "true" : "false";
+      state.answers.secondLanguageLearner = profile.baseline.secondLanguageLearner ? "true" : "false";
+      state.answers.infoDensity = profile.baseline.infoDensity ?? "detailed";
+      state.answers.learningApproach = profile.baseline.learningApproach ?? "theory-first";
+    }
+    const headerTitle = $("header-title");
+    if (headerTitle) headerTitle.textContent = "Edit Profile";
+  }
+
   const prevBtn = $("prev-btn");
   const nextBtn = $("next-btn");
 
@@ -289,9 +441,6 @@ function init(): void {
 
     if (state.currentStep === QUESTIONS.length - 1) {
       await saveProfile();
-      try {
-        await browser.runtime.sendMessage({ type: "ONBOARDING_COMPLETE" });
-      } catch { /* background may not be listening */ }
       renderCompleteScreen();
       return;
     }

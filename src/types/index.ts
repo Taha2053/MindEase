@@ -246,6 +246,8 @@ export interface FullCognitiveProfile {
 export type FormatPreference   = "visual" | "text";
 export type AttentionSpanType  = "short" | "medium" | "long";
 export type ReadingPace        = "slow" | "moderate" | "fast";
+export type InfoDensity        = "concise" | "detailed";
+export type LearningApproach   = "example-first" | "theory-first";
 
 export interface BaselineProfile {
   formatPreference:       FormatPreference;
@@ -253,6 +255,8 @@ export interface BaselineProfile {
   readingPace:            ReadingPace;
   needsConceptAnchor:     boolean;
   secondLanguageLearner:  boolean;
+  infoDensity:            InfoDensity;
+  learningApproach:       LearningApproach;
 }
 
 // ── Behavior Signals ──────────────────────────────────────────────────────────

@@ -65,8 +65,11 @@ function renderProfile(profile: FullCognitiveProfile, stats: SessionStats): stri
     </div>
 
     <div class="btn-group">
-      <button id="end-session-btn" class="btn btn-primary">End Session</button>
-      <button id="reset-profile-btn" class="btn btn-danger">Reset</button>
+      <button id="edit-profile-btn" class="btn btn-primary">Edit Profile</button>
+      <button id="end-session-btn" class="btn btn-ghost">End Session</button>
+    </div>
+    <div class="btn-group" style="margin-top:0">
+      <button id="reset-profile-btn" class="btn btn-danger">Reset All</button>
     </div>
   `;
 }
@@ -187,6 +190,12 @@ async function init(): Promise<void> {
 
   app.innerHTML = html;
 
+  document.getElementById("edit-profile-btn")?.addEventListener("click", async () => {
+    await browser.tabs.create({
+      url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html?edit=1"),
+      active: true,
+    });
+  });
   document.getElementById("end-session-btn")?.addEventListener("click", handleEndSession);
   document.getElementById("reset-profile-btn")?.addEventListener("click", handleResetProfile);
   document.getElementById("start-onboarding-btn")?.addEventListener("click", async () => {
