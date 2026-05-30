@@ -166,6 +166,26 @@ function renderArtifact(artifact: KnowledgeArtifact): string {
   `;
 }
 
+function renderPersonalNotes(notes: Array<Record<string, unknown>>): string {
+  if (!notes || notes.length === 0) return "";
+  const recent = notes.slice(-10).reverse();
+  return `
+    <div class="hr"></div>
+    <div class="section-title">Personal Notes</div>
+    <div class="scroll-list">
+      ${recent.map((n) => `
+        <div class="item-card" style="border-left:3px solid var(--accent)">
+          <div class="ic-body" style="font-style:italic;color:var(--text-primary)">\u201C${escapeHtml(String(n.text ?? ""))}\u201D</div>
+          <div style="font-size:0.6rem;color:var(--text-muted);margin-top:4px;display:flex;gap:6px">
+            <span style="color:var(--accent)">${escapeHtml(truncate(String(n.resourceTitle ?? ""), 30))}</span>
+            <span>${new Date(Number(n.timestamp ?? 0)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 /* ── Actions ───────────────────────────────────────────────────── */
 
 async function handleEndSession(): Promise<void> {
@@ -189,6 +209,7 @@ async function init(): Promise<void> {
   const result = await browser.storage.local.get([
     STORAGE_KEYS.PROFILE,
     STORAGE_KEYS.SESSION_STATS,
+    STORAGE_KEYS.NOTES,
     "latestArtifact",
   ]);
 
@@ -202,9 +223,11 @@ async function init(): Promise<void> {
     dominantSignal: "pause" as const,
   };
   const artifact = result["latestArtifact"] as KnowledgeArtifact | undefined;
+  const notesCollection = result[STORAGE_KEYS.NOTES] as { notes: Array<Record<string, unknown>> } | undefined;
 
   let html = profile ? renderProfile(profile, stats) : renderNoProfile();
   if (artifact) html += renderArtifact(artifact);
+  if (notesCollection?.notes?.length) html += renderPersonalNotes(notesCollection.notes);
 
   app.innerHTML = html;
 
@@ -228,6 +251,17 @@ async function init(): Promise<void> {
 
 browser.runtime.onMessage.addListener((message: unknown) => {
   const msg = message as ExtensionMessage;
+  if (msg.type === "HIGHLIGHTS_UPDATED") {
+    /* Refresh notes section without full reload */
+    browser.storage.local.get(STORAGE_KEYS.NOTES).then((updated) => {
+      const data = updated[STORAGE_KEYS.NOTES] as { notes: Array<Record<string, unknown>> } | undefined;
+      const existing = app.querySelector(".section-title:last-of-type");
+      if (data?.notes?.length && !existing?.textContent?.includes("Personal Notes")) {
+        app.insertAdjacentHTML("beforeend", renderPersonalNotes(data.notes));
+      }
+    });
+  }
+
   if (msg.type === "ARTIFACT_READY") {
     const artifactSection = renderArtifact(msg.payload as KnowledgeArtifact);
     const existing = document.querySelector(".section-title:first-of-type");

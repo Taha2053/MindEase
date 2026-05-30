@@ -255,7 +255,13 @@ function handleTextSelection(): void {
 
   browser.runtime.sendMessage({
     type: "HIGHLIGHT_NOTE",
-    payload: { text, tabId: 0, sectionId },
+    payload: {
+      text,
+      url: window.location.href,
+      title: document.title,
+      tabId: 0,
+      sectionId,
+    },
   }).catch(() => {});
 }
 
@@ -368,6 +374,36 @@ function initContentTransformation(pageType: string): void {
   }
 }
 
+/* ── Helper: HTML escape ── */
+function _escHtml(s: string): string {
+  const d = document.createElement("div");
+  d.appendChild(document.createTextNode(s));
+  return d.innerHTML;
+}
+function _trunc(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max) + "\u2026";
+}
+
+/* ── Render notes into the notes list container ── */
+function renderNotesList(notes?: Array<Record<string, unknown>>): void {
+  const container = document.getElementById("mindease-notes-list");
+  if (!container) return;
+  if (!notes || notes.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:0.78rem;text-align:center;padding:12px">Highlight text on the page to create notes.</p>';
+    return;
+  }
+  const recent = notes.slice(-20).reverse();
+  container.innerHTML = recent.map((n) => `
+    <div class="mindease-note-card">
+      <div class="mindease-note-text">\u201C${_escHtml(String(n.text ?? ""))}\u201D</div>
+      <div class="mindease-note-meta">
+        <span class="mindease-note-source">${_escHtml(_trunc(String(n.resourceTitle ?? n.sourceUrl ?? ""), 40))}</span>
+        <span>${new Date(Number(n.timestamp ?? 0)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+      </div>
+    </div>
+  `).join("");
+}
+
 /* Receive pushed response from background */
 browser.runtime.onMessage.addListener((message: unknown) => {
   const msg = message as { type: string; chunks?: ContentChunk[]; error?: string };
@@ -377,6 +413,12 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   }
   if (msg.type === "TRANSFORM_ERROR") {
     console.error("[MindEase Content] Transform error:", msg.error);
+  }
+  if (msg.type === "HIGHLIGHTS_UPDATED") {
+    browser.storage.local.get("mindease_notes").then((updated) => {
+      const data = updated.mindease_notes as { notes?: Array<Record<string, unknown>> } | undefined;
+      renderNotesList(data?.notes);
+    });
   }
 });
 
@@ -761,6 +803,35 @@ function generateOverlayStyles(): string {
         transition: width 0.5s ease;
       }
 
+      /* ── Notes ── */
+      .mindease-note-card {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 10px;
+        padding: 10px 12px;
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        border-left: 3px solid var(--accent);
+      }
+      .mindease-note-text {
+        font-size: 0.8rem;
+        color: var(--text-primary);
+        line-height: 1.5;
+        font-style: italic;
+      }
+      .mindease-note-meta {
+        font-size: 0.62rem;
+        color: var(--text-muted);
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .mindease-note-source {
+        color: var(--accent);
+      }
+
       /* ── Responsive ── */
       @media (max-width: 480px) {
         #mindease-overlay {
@@ -946,6 +1017,10 @@ function injectOverlay(chunks: ContentChunk[]): void {
           <div class="rl-bar-label"><span>Overall</span><span id="sess-score">0.0</span></div>
           <div class="rl-bar"><div class="rl-bar-fill" id="sess-score-bar" style="width:0%;background:var(--accent-gradient)"></div></div>
         </div>
+        <div class="mindease-section-title">Personal Notes</div>
+        <div id="mindease-notes-list">
+          <p style="color:var(--text-muted);font-size:0.78rem;text-align:center;padding:12px">Highlight text on the page to create notes.</p>
+        </div>
       </div>
     </div>
 
@@ -1116,9 +1191,13 @@ function injectOverlay(chunks: ContentChunk[]): void {
   });
 
   /* ── Load profile + stats ── */
-  browser.storage.local.get(["mindease_profile", "mindease_session_stats"]).then((result: Record<string, unknown>) => {
+  browser.storage.local.get(["mindease_profile", "mindease_session_stats", "mindease_notes"]).then((result: Record<string, unknown>) => {
     const profile = result.mindease_profile as Record<string, unknown> | undefined;
     const stats = result.mindease_session_stats as Record<string, unknown> | undefined;
+
+    // Render aggregated notes
+    const notesData = result.mindease_notes as { notes?: Array<Record<string, unknown>> } | undefined;
+    renderNotesList(notesData?.notes);
 
     if (profile) {
       const baseline = profile.baseline as Record<string, unknown> | undefined;

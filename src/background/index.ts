@@ -7,15 +7,34 @@
    ============================================================ */
 
 import browser from "webextension-polyfill";
+import { v4 as uuidv4 } from "uuid";
 import type {
   CognitiveEvent, CognitiveProfile, FullCognitiveProfile,
-  ExtensionMessage, ContentChunk, SignalType,
+  ExtensionMessage, ContentChunk, SignalType, HighlightNote, NotesCollection,
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session, getCurrentProfile } from "@/layer2";
 import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
 import { transformContent } from "@/layer1/index";
 import { SessionManager } from "@/session/SessionManager";
+
+/* ── Aggregated notes helpers ────────────────────────────────────────────────── */
+
+async function loadAggregatedNotes(): Promise<NotesCollection> {
+  try {
+    const result = await browser.storage.local.get(STORAGE_KEYS.NOTES);
+    return (result[STORAGE_KEYS.NOTES] as NotesCollection) ?? { notes: [], updatedAt: 0 };
+  } catch {
+    return { notes: [], updatedAt: 0 };
+  }
+}
+
+async function saveAggregatedNote(note: HighlightNote): Promise<void> {
+  const collection = await loadAggregatedNotes();
+  collection.notes.push(note);
+  collection.updatedAt = Date.now();
+  await browser.storage.local.set({ [STORAGE_KEYS.NOTES]: collection });
+}
 
 /* ── Default profile when storage has none ──────────────────────────────────── */
 const DEFAULT_PROFILE: CognitiveProfile = {
@@ -195,9 +214,41 @@ browser.runtime.onMessage.addListener(
       }
 
       case "HIGHLIGHT_NOTE": {
-        const notePayload = msg.payload as { text: string; tabId: number; sectionId?: string };
-        sessionManager.recordHighlight(notePayload.tabId, notePayload.text, notePayload.sectionId);
+        const notePayload = msg.payload as {
+          text: string; url?: string; title?: string; tabId: number; sectionId?: string;
+        };
+        const senderTab = (sender as { tab?: { id?: number; url?: string; title?: string } } | undefined)?.tab;
+        const actualTabId = senderTab?.id ?? notePayload.tabId;
+        const url = notePayload.url ?? senderTab?.url ?? "";
+        const title = notePayload.title ?? senderTab?.title ?? "";
+
+        // Store in workspace (per-tab) using real tab ID
+        sessionManager.recordHighlight(actualTabId, notePayload.text, notePayload.sectionId);
+
+        // Store aggregated notes (async IIFE since listener is not async)
+        (async () => {
+          const note: HighlightNote = {
+            id: uuidv4(),
+            text: notePayload.text,
+            sourceUrl: url,
+            resourceTitle: title,
+            timestamp: Date.now(),
+            sectionId: notePayload.sectionId,
+          };
+          await saveAggregatedNote(note);
+
+          // Broadcast update to popup/overlay
+          browser.runtime.sendMessage({ type: "HIGHLIGHTS_UPDATED" }).catch(() => {});
+        })();
         break;
+      }
+
+      case "HIGHLIGHTS_GET": {
+        (async () => {
+          const notes = await loadAggregatedNotes();
+          sendResponse({ type: "HIGHLIGHTS_DATA", notes: notes.notes });
+        })();
+        return true;
       }
 
       case "ACTIVITY_PING": {

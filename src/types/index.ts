@@ -134,8 +134,11 @@ export type MessageType =
   | "TRANSFORM_CONTENT"           // content → background (Layer 1)
   | "TRANSFORMED_CONTENT"         // background → content (response)
   | "TRANSFORM_ERROR"             // background → content (error)
+  | "HIGHLIGHTS_DATA"             // background → popup/overlay (notes list)
   | "PING"                       // content → background (keepalive)
   | "HIGHLIGHT_NOTE"             // content → background (rich highlight)
+  | "HIGHLIGHTS_GET"             // popup/overlay → background (fetch all notes)
+  | "HIGHLIGHTS_UPDATED"         // background → popup/overlay (notes changed)
   | "ACTIVITY_PING";             // content → background (reset idle timer)
 
 export interface ExtensionMessage {
@@ -156,6 +159,11 @@ export interface HighlightNote {
   resourceTitle: string;
   timestamp: number;
   sectionId?: string;
+}
+
+export interface NotesCollection {
+  notes: HighlightNote[];
+  updatedAt: number;
 }
 
 export interface TabResource {
@@ -374,4 +382,5 @@ export const STORAGE_KEYS = {
   SESSION_ACTIVE:  "mindease_session_active",
   SESSION_STATS:   "mindease_session_stats",
   WORKSPACE:       "mindease_workspace",
+  NOTES:           "mindease_notes",
 } as const;
