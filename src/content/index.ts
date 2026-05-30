@@ -7,6 +7,15 @@
 
 import browser from "webextension-polyfill";
 
+/* ─── Keepalive ping — wake service worker before heavy messages ──────────── */
+async function wakeServiceWorker(): Promise<void> {
+  try {
+    await browser.runtime.sendMessage({ type: "PING" });
+  } catch {
+    /* ignore — just waking the worker */
+  }
+}
+
 /* ── Behavior Signal Tracking ────────────────────────────────────────────────── */
 
 interface TrackedSection {
@@ -251,10 +260,11 @@ if (sourceType) {
   /* Start Layer 2 behavior tracking */
   initBehaviorTracking();
 
-  /* Layer 1 — trigger content transformation after a short delay */
-  setTimeout(() => {
+  /* Layer 1 — trigger content transformation after SW wake delay */
+  setTimeout(async () => {
+    await wakeServiceWorker();
     initContentTransformation(sourceType === "video" ? "website" : sourceType ?? "website");
-  }, 2000);
+  }, 5000);
 }
 
 /* ─── Layer 1: Content Transformation + Overlay ─────────────────────────────── */

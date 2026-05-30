@@ -133,6 +133,10 @@ browser.runtime.onMessage.addListener(
         return true; /* keep channel open for async response */
       }
 
+      case "PING":
+        sendResponse({ pong: true });
+        break;
+
       case "ARTIFACT_READY":
         browser.action.setBadgeText({ text: "✓" });
         browser.action.setBadgeBackgroundColor({ color: "#7C3AED" });
