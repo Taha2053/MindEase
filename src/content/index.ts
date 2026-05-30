@@ -6,6 +6,7 @@
    ============================================================ */
 
 import browser from "webextension-polyfill";
+import type { ContentChunk } from "../types/index.js";
 
 /* ─── Keepalive ping — wake service worker before heavy messages ──────────── */
 async function wakeServiceWorker(): Promise<void> {
@@ -269,28 +270,31 @@ if (sourceType) {
 
 /* ─── Layer 1: Content Transformation + Overlay ─────────────────────────────── */
 
-async function initContentTransformation(pageType: "website" | "pdf" | "lecture"): Promise<void> {
+async function initContentTransformation(pageType: string): Promise<void> {
   try {
-    /* Extract page text */
-    const pageText = document.body.innerText.slice(0, 4000);
-    if (pageText.trim().length < 50) return; /* skip pages with no meaningful text */
-
-    /* Request transformation from background */
+    const text = document.body.innerText.slice(0, 4000);
+    if (text.trim().length < 50) return;
     console.log("[MindEase Content] Sending TRANSFORM_CONTENT...");
-    const response = await browser.runtime.sendMessage({
+    browser.runtime.sendMessage({
       type: "TRANSFORM_CONTENT",
-      payload: { text: pageText, pageType },
-    });
-    console.log("[MindEase Content] Response:", response);
-
-    const transformResponse = response as { type: string; chunks: { id: string; text: string }[] } | undefined;
-    if (transformResponse?.type === "TRANSFORMED_CONTENT" && transformResponse.chunks?.length > 0) {
-      injectOverlay(transformResponse.chunks);
-    }
+      payload: { text, pageType },
+    }).catch(() => {});
   } catch (err) {
-    console.error("[MindEase] Transform error:", err);
+    console.error("[MindEase] Transform send error:", err);
   }
 }
+
+/* Receive pushed response from background */
+browser.runtime.onMessage.addListener((message: unknown) => {
+  const msg = message as { type: string; chunks?: ContentChunk[]; error?: string };
+  if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks && msg.chunks.length > 0) {
+    console.log("[MindEase Content] Received chunks:", msg.chunks.length);
+    injectOverlay(msg.chunks);
+  }
+  if (msg.type === "TRANSFORM_ERROR") {
+    console.error("[MindEase Content] Transform error:", msg.error);
+  }
+});
 
 /* ─── Floating Overlay Panel ────────────────────────────────────────────────── */
 

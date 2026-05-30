@@ -74,7 +74,7 @@ browser.tabs.onRemoved.addListener(async (_tabId) => {
 /* ── Message router ──────────────────────────────────────────────────────────── */
 
 browser.runtime.onMessage.addListener(
-  (message: unknown, _sender, sendResponse) => {
+  (message: unknown, sender, sendResponse) => {
     const msg = message as ExtensionMessage;
 
     if (msg.type === "TRANSFORM_CONTENT") {
@@ -82,9 +82,14 @@ browser.runtime.onMessage.addListener(
         text: string;
         pageType: "website" | "pdf" | "lecture";
       };
+      const tabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
 
-      // Return a Promise — works in Firefox. Chrome needs return true + sendResponse.
-      const responsePromise = (async () => {
+      if (!tabId) {
+        sendResponse({ received: true });
+        return true;
+      }
+
+      (async () => {
         const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
         const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_PROFILE;
 
@@ -100,17 +105,16 @@ browser.runtime.onMessage.addListener(
             (fullProfile as FullCognitiveProfile).userId ?? "guest",
             fullProfile as unknown as CognitiveProfile,
           );
-          return { type: "TRANSFORMED_CONTENT", chunks };
+          // Push result directly to the tab
+          await browser.tabs.sendMessage(tabId, { type: "TRANSFORMED_CONTENT", chunks });
         } catch (err) {
           console.error("[Background] Transform failed:", err);
-          return { type: "TRANSFORM_ERROR", error: String(err) };
+          await browser.tabs.sendMessage(tabId, { type: "TRANSFORM_ERROR", error: String(err) });
         }
       })();
 
-      // For Chrome: use sendResponse when promise resolves
-      responsePromise.then(sendResponse);
-
-      return true; // Keep channel open for both browsers
+      sendResponse({ received: true }); // immediate sync ACK
+      return true;
     }
 
     // All other synchronous cases
