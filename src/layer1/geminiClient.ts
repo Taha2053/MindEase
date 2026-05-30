@@ -5,7 +5,7 @@
 
 import type { TransformationParams } from "@/types";
 
-const MISTRAL_API_KEY = "iyJrm3exBfraqN4J6Fmto2qAFduX2dt1";
+const MISTRAL_API_KEY = import.meta.env.VITE_MISTRAL_API_KEY as string;
 
 async function callMistral(prompt: string): Promise<string> {
   const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
