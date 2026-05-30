@@ -4,177 +4,189 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MindEase</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
       body {
-        width: 380px;
+        width: 360px;
         max-height: 560px;
         overflow-y: auto;
-        font-family: system-ui, -apple-system, sans-serif;
-        background: #0f0f0f;
-        color: #f0f0f0;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        background: #080f1a;
+        color: #e8edf5;
       }
 
-      body::-webkit-scrollbar { width: 6px; }
+      body::-webkit-scrollbar { width: 4px; }
       body::-webkit-scrollbar-track { background: transparent; }
-      body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+      body::-webkit-scrollbar-thumb { background: #1a2d45; border-radius: 2px; }
 
-      .waiting {
+      .header {
+        background: linear-gradient(135deg, #0d1829, #0d1e35);
+        border-bottom: 1px solid #1a2d45;
+        padding: 16px 20px;
         display: flex;
-        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .header-logo {
+        width: 32px;
+        height: 32px;
+        background: linear-gradient(135deg, #4EB8FF, #7B6FFF);
+        border-radius: 8px;
+        display: flex;
         align-items: center;
         justify-content: center;
-        min-height: 200px;
-        padding: 48px 24px;
-        text-align: center;
+        font-size: 16px;
       }
-      .waiting .logo {
-        font-size: 1.5rem;
+
+      .header-text {
+        flex: 1;
+      }
+      .header-title {
+        font-size: 1rem;
         font-weight: 700;
-        color: #7c3aed;
-        margin-bottom: 12px;
-        letter-spacing: 0.5px;
+        letter-spacing: -0.01em;
       }
-      .waiting .sub {
-        font-size: 0.85rem;
-        color: #888;
-        line-height: 1.5;
+      .header-sub {
+        font-size: 0.65rem;
+        color: #4EB8FF;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 500;
       }
 
-      .artifact { padding: 16px; }
+      .body-wrap {
+        padding: 16px;
+      }
 
-      .stats {
+      .stats-row {
         display: flex;
         gap: 8px;
         margin-bottom: 16px;
       }
+
       .stat-card {
         flex: 1;
-        background: #1a1a1a;
+        background: #0d1829;
+        border: 1px solid #1a2d45;
         border-radius: 10px;
-        padding: 12px 8px;
+        padding: 12px 6px;
         text-align: center;
       }
       .stat-card .num {
         font-size: 1.3rem;
         font-weight: 700;
-        color: #f0f0f0;
+        color: #e8edf5;
+        display: block;
       }
       .stat-card .label {
-        font-size: 0.65rem;
-        color: #888;
+        font-size: 0.6rem;
+        color: #475569;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.06em;
         margin-top: 4px;
       }
 
       .section-title {
-        font-size: 0.8rem;
+        font-size: 0.65rem;
         font-weight: 600;
-        color: #888;
+        color: #475569;
         text-transform: uppercase;
-        letter-spacing: 0.8px;
+        letter-spacing: 0.1em;
         margin: 16px 0 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .section-title::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: #1a2d45;
+      }
+
+      .profile-card {
+        background: #0d1829;
+        border: 1px solid #1a2d45;
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 12px;
+      }
+
+      .profile-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .profile-item {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .profile-item .pi-label {
+        font-size: 0.6rem;
+        color: #475569;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .profile-item .pi-value {
+        font-size: 0.82rem;
+        font-weight: 500;
+        color: #4EB8FF;
       }
 
       .scroll-list {
-        max-height: 200px;
+        max-height: 180px;
         overflow-y: auto;
         display: flex;
         flex-direction: column;
         gap: 8px;
       }
-      .scroll-list::-webkit-scrollbar { width: 5px; }
+      .scroll-list::-webkit-scrollbar { width: 4px; }
       .scroll-list::-webkit-scrollbar-track { background: transparent; }
-      .scroll-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+      .scroll-list::-webkit-scrollbar-thumb { background: #1a2d45; border-radius: 2px; }
 
-      .study-card {
-        background: #1a1a1a;
+      .item-card {
+        background: #0d1829;
+        border: 1px solid #1a2d45;
         border-radius: 10px;
-        padding: 12px;
+        padding: 10px 12px;
       }
-      .study-card.visual {
-        background: #1e1228;
-        border: 1px solid #2d1a3e;
-      }
-      .study-card .card-header {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 6px;
-      }
-      .study-card .card-concept {
-        font-size: 0.85rem;
-        font-weight: 600;
-        color: #f0f0f0;
-      }
-      .study-card .review-badge {
-        font-size: 0.65rem;
-        font-weight: 600;
-        color: #d97706;
-        background: rgba(217,119,6,0.15);
-        padding: 2px 8px;
-        border-radius: 4px;
-      }
-      .study-card .card-body {
-        font-size: 0.78rem;
-        color: #bbb;
-        line-height: 1.5;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .study-card .card-body.spaced { line-height: 2; }
-
-      .gap-item {
-        background: #1a1a1a;
-        border-radius: 10px;
-        padding: 12px;
-      }
-      .gap-item .gap-header {
+      .item-card .ic-header {
         display: flex;
         align-items: center;
         gap: 8px;
         margin-bottom: 4px;
       }
-      .gap-item .gap-concept {
+      .item-card .ic-concept {
         font-size: 0.82rem;
         font-weight: 600;
-        color: #f0f0f0;
+        color: #e8edf5;
       }
-      .gap-item .severity-badge {
-        font-size: 0.6rem;
+      .item-card .ic-body {
+        font-size: 0.72rem;
+        color: #64748b;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .badge {
+        font-size: 0.55rem;
         font-weight: 600;
-        padding: 2px 8px;
+        padding: 2px 6px;
         border-radius: 4px;
         text-transform: uppercase;
-        letter-spacing: 0.3px;
+        letter-spacing: 0.05em;
       }
-      .severity-badge.skipped { background: rgba(220,38,38,0.2); color: #ef4444; }
-      .severity-badge.skimmed { background: rgba(234,179,8,0.2); color: #eab308; }
-      .severity-badge.rushed  { background: rgba(234,88,12,0.2); color: #f97316; }
-
-      .gap-item .gap-text {
-        font-size: 0.75rem;
-        color: #888;
-        line-height: 1.4;
-      }
-
-      /* Layer 2 profile panel */
-      .profile-panel {
-        background: #1a1a1a;
-        border-radius: 10px;
-        padding: 12px;
-        margin-bottom: 12px;
-      }
-      .profile-row {
-        display: flex;
-        justify-content: space-between;
-        font-size: 0.78rem;
-        padding: 3px 0;
-        color: #bbb;
-      }
-      .profile-row span:last-child { color: #4EB8FF; font-weight: 500; }
+      .badge-review { background: rgba(234,179,8,0.15); color: #eab308; }
+      .badge-skipped { background: rgba(220,38,38,0.15); color: #ef4444; }
+      .badge-skimmed { background: rgba(234,179,8,0.15); color: #eab308; }
+      .badge-rushed { background: rgba(234,88,12,0.15); color: #f97316; }
 
       .btn-group {
         display: flex;
@@ -186,16 +198,67 @@
         padding: 10px;
         border: none;
         border-radius: 8px;
-        font-size: 0.8rem;
+        font-size: 0.78rem;
         font-weight: 500;
         cursor: pointer;
+        transition: all 0.15s;
+        font-family: 'Inter', sans-serif;
       }
-      .btn-primary { background: #4EB8FF; color: #0f0f0f; }
-      .btn-danger { background: transparent; color: #ef4444; border: 1px solid #ef4444; }
+      .btn-primary {
+        background: linear-gradient(135deg, #4EB8FF, #7B6FFF);
+        color: #080f1a;
+        font-weight: 600;
+      }
+      .btn-primary:hover { opacity: 0.9; }
+      .btn-ghost {
+        background: transparent;
+        color: #64748b;
+        border: 1px solid #1a2d45;
+      }
+      .btn-ghost:hover { color: #e8edf5; border-color: #2a4a6a; }
+      .btn-danger {
+        background: transparent;
+        color: #ef4444;
+        border: 1px solid rgba(239,68,68,0.3);
+      }
+      .btn-danger:hover { border-color: #ef4444; background: rgba(239,68,68,0.06); }
+
+      .waiting {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 200px;
+        padding: 48px 24px;
+        text-align: center;
+      }
+      .waiting .w-icon {
+        font-size: 2rem;
+        margin-bottom: 12px;
+      }
+      .waiting .w-title {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .waiting .w-sub {
+        font-size: 0.78rem;
+        color: #475569;
+        line-height: 1.5;
+      }
+
+      .hr { height: 1px; background: #1a2d45; margin: 12px 0; }
     </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div class="header">
+      <div class="header-logo">&#x1F9E0;</div>
+      <div class="header-text">
+        <div class="header-title">MindEase</div>
+        <div class="header-sub">Adaptive Learning</div>
+      </div>
+    </div>
+    <div class="body-wrap" id="app"></div>
     <script type="module" src="./popup.ts"></script>
   </body>
 </html>

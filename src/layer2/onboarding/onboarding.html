@@ -7,19 +7,23 @@
   <link rel="stylesheet" href="onboarding.css" />
 </head>
 <body>
-  <div id="app" role="main" aria-live="polite">
-    <div id="step-indicator" aria-hidden="true"></div>
-    <div id="card">
-      <h1 id="title">Welcome to MindEase</h1>
-      <p id="subtitle">Let's personalize your learning experience.</p>
-      <div id="options-container" role="radiogroup"></div>
-      <div id="nav">
-        <button id="prev-btn" class="btn btn-secondary" aria-label="Previous question" disabled>
-          ← Back
-        </button>
-        <button id="next-btn" class="btn btn-primary">
-          Next →
-        </button>
+  <div class="container" id="app" role="main" aria-live="polite">
+    <div class="brand">
+      <div class="brand-icon">&#x1F9E0;</div>
+      <div>
+        <div class="brand-name">MindEase</div>
+        <div class="brand-tagline">Adaptive Learning</div>
+      </div>
+    </div>
+    <div class="progress-track" id="step-indicator" aria-hidden="true"></div>
+    <div class="card" id="card">
+      <div class="step-num" id="step-num">STEP 1 OF 5</div>
+      <h1 id="title" class="question">How do you learn best?</h1>
+      <p id="subtitle" class="question-sub">Select the option that best describes you.</p>
+      <div id="options-container" class="options" role="radiogroup"></div>
+      <div id="nav" class="nav">
+        <button id="prev-btn" class="btn-back" disabled>&larr; Back</button>
+        <button id="next-btn" class="btn-next">Next &rarr;</button>
       </div>
     </div>
   </div>

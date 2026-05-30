@@ -1,16 +1,8 @@
-/* ============================================================
-   popup/popup.ts — Extension popup panel logic
-   Shows Layer 2 cognitive profile + session stats on top,
-   Layer 3 knowledge artifact (cards, gaps) below.
-   ============================================================ */
-
 import browser from "webextension-polyfill";
 import type { FullCognitiveProfile, SessionStats, KnowledgeArtifact, ExtensionMessage } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 
 const app = document.getElementById("app")!;
-
-/* ── XSS escape ──────────────────────────────────────────────────────────────── */
 
 function escapeHtml(text: string): string {
   const div = document.createElement("div");
@@ -22,49 +14,59 @@ function truncate(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max) + "\u2026";
 }
 
-/* ── Layer 2: Profile panel ──────────────────────────────────────────────────── */
+/* ── Layer 2: Profile panel ───────────────────────────────────── */
 
 function renderProfile(profile: FullCognitiveProfile, stats: SessionStats): string {
   const p = profile.transformationParams;
   return `
-    <div class="profile-panel">
-      <div class="section-title">Cognitive Profile</div>
-      <div class="profile-row"><span>Format</span><span>${profile.baseline.formatPreference}</span></div>
-      <div class="profile-row"><span>Attention</span><span>${profile.baseline.attentionSpan}</span></div>
-      <div class="profile-row"><span>Reading Pace</span><span>${profile.baseline.readingPace}</span></div>
-      <div class="profile-row"><span>Concept Anchor</span><span>${profile.baseline.needsConceptAnchor ? "Yes" : "No"}</span></div>
-      <div class="profile-row"><span>Second Language</span><span>${profile.baseline.secondLanguageLearner ? "Yes" : "No"}</span></div>
-      <div class="profile-row"><span>Sessions</span><span>${profile.rlState.sessionCount}</span></div>
-      <div class="profile-row"><span>Engagement Score</span><span>${profile.rlState.totalEngagementScore.toFixed(1)}</span></div>
-    </div>
-
-    <div class="profile-panel">
-      <div class="section-title">Transformation Params</div>
-      <div class="profile-row"><span>Chunk Size</span><span>${p.chunkSize}</span></div>
-      <div class="profile-row"><span>Simplify Level</span><span>${p.simplificationLevel}</span></div>
-      <div class="profile-row"><span>Caption Speed</span><span>${p.captionSpeed}</span></div>
-      <div class="profile-row"><span>Visual Anchors</span><span>${p.useVisualAnchors ? "On" : "Off"}</span></div>
-      <div class="profile-row"><span>Summary Freq</span><span>${p.summaryFrequency}</span></div>
-    </div>
-
-    <div class="stats">
+    <div class="stats-row">
       <div class="stat-card">
-        <div class="num">${stats.totalHighlights}</div>
-        <div class="label">Highlights</div>
+        <span class="num">${stats.totalHighlights}</span>
+        <span class="label">Highlights</span>
       </div>
       <div class="stat-card">
-        <div class="num">${stats.totalPauses}</div>
-        <div class="label">Pauses</div>
+        <span class="num">${stats.totalPauses}</span>
+        <span class="label">Pauses</span>
       </div>
       <div class="stat-card">
-        <div class="num">${stats.totalSkips}</div>
-        <div class="label">Skips</div>
+        <span class="num">${stats.totalSkips}</span>
+        <span class="label">Skips</span>
+      </div>
+    </div>
+
+    <div class="section-title">Cognitive Profile</div>
+    <div class="profile-card">
+      <div class="profile-grid">
+        <div class="profile-item">
+          <span class="pi-label">Format</span>
+          <span class="pi-value">${profile.baseline.formatPreference}</span>
+        </div>
+        <div class="profile-item">
+          <span class="pi-label">Attention</span>
+          <span class="pi-value">${profile.baseline.attentionSpan}</span>
+        </div>
+        <div class="profile-item">
+          <span class="pi-label">Chunk Size</span>
+          <span class="pi-value">${p.chunkSize}</span>
+        </div>
+        <div class="profile-item">
+          <span class="pi-label">Simplify Level</span>
+          <span class="pi-value">${p.simplificationLevel}</span>
+        </div>
+        <div class="profile-item">
+          <span class="pi-label">Reading Pace</span>
+          <span class="pi-value">${profile.baseline.readingPace}</span>
+        </div>
+        <div class="profile-item">
+          <span class="pi-label">Sessions</span>
+          <span class="pi-value">${profile.rlState.sessionCount}</span>
+        </div>
       </div>
     </div>
 
     <div class="btn-group">
       <button id="end-session-btn" class="btn btn-primary">End Session</button>
-      <button id="reset-profile-btn" class="btn btn-danger">Reset Profile</button>
+      <button id="reset-profile-btn" class="btn btn-danger">Reset</button>
     </div>
   `;
 }
@@ -72,79 +74,80 @@ function renderProfile(profile: FullCognitiveProfile, stats: SessionStats): stri
 function renderNoProfile(): string {
   return `
     <div class="waiting">
-      <div class="logo">MindEase</div>
-      <p class="sub">Complete onboarding to start.</p>
+      <div class="w-icon">&#x1F9E0;</div>
+      <div class="w-title">Welcome to MindEase</div>
+      <p class="w-sub">Complete the onboarding to personalize your learning experience.</p>
     </div>
   `;
 }
 
-/* ── Layer 3: Artifact panel ─────────────────────────────────────────────────── */
+/* ── Layer 3: Artifact panel ──────────────────────────────────── */
 
-function severityClass(severity: string): string {
+function severityBadge(severity: string): string {
   switch (severity) {
-    case "skipped": return "skipped";
-    case "skimmed": return "skimmed";
-    case "rushed":  return "rushed";
+    case "skipped": return `<span class="badge badge-skipped">Skipped</span>`;
+    case "skimmed": return `<span class="badge badge-skimmed">Skimmed</span>`;
+    case "rushed":  return `<span class="badge badge-rushed">Rushed</span>`;
     default:        return "";
   }
 }
 
 function renderCards(artifact: KnowledgeArtifact): string {
   if (artifact.learnedCards.length === 0) {
-    return `<p style="font-size:0.8rem;color:#666;">No concepts recorded yet.</p>`;
+    return '<p style="font-size:0.78rem;color:#475569;">No concepts recorded yet.</p>';
   }
   return artifact.learnedCards.map((card) => `
-    <div class="${card.format === "visual" ? "study-card visual" : "study-card"}">
-      <div class="card-header">
-        <span class="card-concept">${escapeHtml(card.concept)}</span>
-        ${card.reviewFlag ? '<span class="review-badge">Review</span>' : ""}
+    <div class="item-card">
+      <div class="ic-header">
+        <span class="ic-concept">${escapeHtml(card.concept)}</span>
+        ${card.reviewFlag ? '<span class="badge badge-review">Review</span>' : ""}
       </div>
-      <div class="${card.format === "spaced-list" ? "card-body spaced" : "card-body"}">${escapeHtml(card.content)}</div>
+      <div class="ic-body">${escapeHtml(truncate(card.content, 100))}</div>
     </div>
   `).join("");
 }
 
 function renderGaps(artifact: KnowledgeArtifact): string {
   if (artifact.gaps.length === 0) {
-    return `<p style="font-size:0.8rem;color:#666;">No gaps detected. Nice!</p>`;
+    return '<p style="font-size:0.78rem;color:#475569;">No gaps detected.</p>';
   }
   return artifact.gaps.map((gap) => `
-    <div class="gap-item">
-      <div class="gap-header">
-        <span class="gap-concept">${escapeHtml(gap.conceptLabel)}</span>
-        <span class="severity-badge ${severityClass(gap.severity)}">${gap.severity}</span>
+    <div class="item-card">
+      <div class="ic-header">
+        <span class="ic-concept">${escapeHtml(gap.conceptLabel)}</span>
+        ${severityBadge(gap.severity)}
       </div>
-      <div class="gap-text">${escapeHtml(truncate(gap.text, 80))}</div>
+      <div class="ic-body">${escapeHtml(truncate(gap.text, 80))}</div>
     </div>
   `).join("");
 }
 
 function renderArtifact(artifact: KnowledgeArtifact): string {
   return `
-    <div class="artifact">
-      <div class="stats">
-        <div class="stat-card">
-          <div class="num">${artifact.learnedCards.length}</div>
-          <div class="label">Learned</div>
-        </div>
-        <div class="stat-card">
-          <div class="num">${artifact.gaps.length}</div>
-          <div class="label">Gaps</div>
-        </div>
-        <div class="stat-card">
-          <div class="num">${artifact.connections.length}</div>
-          <div class="label">Connections</div>
-        </div>
+    <div class="hr"></div>
+    <div class="section-title">Session Artifact</div>
+    <div class="stats-row">
+      <div class="stat-card">
+        <span class="num">${artifact.learnedCards.length}</span>
+        <span class="label">Learned</span>
       </div>
-      <div class="section-title">Study Cards</div>
-      <div class="scroll-list">${renderCards(artifact)}</div>
-      <div class="section-title">Gaps</div>
-      <div class="scroll-list">${renderGaps(artifact)}</div>
+      <div class="stat-card">
+        <span class="num">${artifact.gaps.length}</span>
+        <span class="label">Gaps</span>
+      </div>
+      <div class="stat-card">
+        <span class="num">${artifact.connections.length}</span>
+        <span class="label">Connections</span>
+      </div>
     </div>
+    <div class="section-title">Study Cards</div>
+    <div class="scroll-list">${renderCards(artifact)}</div>
+    <div class="section-title">Gaps</div>
+    <div class="scroll-list">${renderGaps(artifact)}</div>
   `;
 }
 
-/* ── Actions ─────────────────────────────────────────────────────────────────── */
+/* ── Actions ───────────────────────────────────────────────────── */
 
 async function handleEndSession(): Promise<void> {
   await browser.runtime.sendMessage({ type: "SESSION_END" });
@@ -158,7 +161,7 @@ async function handleResetProfile(): Promise<void> {
   });
 }
 
-/* ── Init ────────────────────────────────────────────────────────────────────── */
+/* ── Init ──────────────────────────────────────────────────────── */
 
 async function init(): Promise<void> {
   const result = await browser.storage.local.get([
@@ -187,18 +190,31 @@ async function init(): Promise<void> {
   document.getElementById("reset-profile-btn")?.addEventListener("click", handleResetProfile);
 }
 
-/* ── Live updates from Layer 3 ───────────────────────────────────────────────── */
+/* ── Live updates from Layer 3 ─────────────────────────────────── */
 
 browser.runtime.onMessage.addListener((message: unknown) => {
   const msg = message as ExtensionMessage;
   if (msg.type === "ARTIFACT_READY") {
     const artifactSection = renderArtifact(msg.payload as KnowledgeArtifact);
-    const existing = document.querySelector(".artifact");
+    const existing = document.querySelector(".section-title:first-of-type");
     if (existing) {
-      existing.outerHTML = artifactSection;
-    } else {
-      app.insertAdjacentHTML("beforeend", artifactSection);
+      const parent = existing.closest(".body-wrap") ?? app;
+      const hr = parent.querySelector(".hr");
+      if (hr) hr.remove();
+      const sections = parent.querySelectorAll(".section-title");
+      sections.forEach(s => {
+        const cardContainer = s.nextElementSibling;
+        if (cardContainer?.classList.contains("scroll-list")) {
+          cardContainer.remove();
+        }
+        s.remove();
+      });
+      const statsRow = parent.querySelector(".stats-row:last-of-type");
+      if (statsRow && !statsRow.previousElementSibling?.classList.contains("section-title")) {
+        statsRow.remove();
+      }
     }
+    app.insertAdjacentHTML("beforeend", artifactSection);
   }
 });
 
