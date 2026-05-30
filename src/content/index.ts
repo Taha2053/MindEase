@@ -6,7 +6,16 @@
    ============================================================ */
 
 import browser from "webextension-polyfill";
-import type { ContentChunk } from "../types/index.js";
+import type { ContentChunk } from "@/types";
+import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
+import {
+  saveSidebarState,
+  loadSidebarState,
+  injectReopenButton,
+  removeReopenButton,
+  ensureReopenStyles,
+  type SidebarState,
+} from "@/content/sidebarManager";
 
 function shouldActivate(): boolean {
   const url = window.location.href;
@@ -70,7 +79,7 @@ let scrollTimer: ReturnType<typeof setTimeout> | null = null;
 let scrollHistory: { y: number; time: number }[] = [];
 const SCROLL_HISTORY_SIZE = 10;
 const PAUSE_THRESHOLD_MS = 3000;
-const SKIP_SPEED_THRESHOLD_PX_PER_MS = 1.5; /* px per ms — very fast scroll */
+const SKIP_SPEED_THRESHOLD_PX_PER_MS = 1.5;
 
 /* ─── Content type detection ─────────────────────────────────────────────────── */
 
@@ -90,9 +99,7 @@ function detectSourceType(): "pdf" | "website" | "video" | "lecture" | null {
   return "website";
 }
 
-/* ─── Emit signal to background ─────────────────────────────────────────────── */
-
-/* ─── Activity ping — reset workspace idle timer ─────────────────────────── */
+/* ─── Activity ping ──────────────────────────────────────────────────────────── */
 let activityPingTimer: ReturnType<typeof setTimeout> | null = null;
 
 function sendActivityPing(): void {
@@ -113,11 +120,7 @@ function emitSignal(signal: "highlight" | "pause" | "reRead" | "skip" | "tabSwit
       url: window.location.href,
       sectionId,
     },
-  }).catch(() => {
-    /* Background might not be ready */
-  });
-
-  // Also send activity ping for workspace idle timer
+  }).catch(() => {});
   sendActivityPing();
 }
 
@@ -157,7 +160,6 @@ function buildSections(): void {
 }
 
 function findCurrentSection(scrollY: number): TrackedSection | null {
-  /* Find which section the user is currently viewing (within viewport) */
   const viewportBottom = scrollY + window.innerHeight;
   let best: TrackedSection | null = null;
   let maxOverlap = 0;
@@ -181,21 +183,18 @@ function handleScroll(): void {
   const now = Date.now();
   const currentScrollY = window.scrollY;
 
-  /* Record scroll positions for speed detection */
   scrollHistory.push({ y: currentScrollY, time: now });
   if (scrollHistory.length > SCROLL_HISTORY_SIZE) {
     scrollHistory.shift();
   }
 
-  /* Detect skip (very fast scroll past a section) */
   if (scrollHistory.length >= 2) {
     const oldest = scrollHistory[0];
     const elapsed = now - oldest.time;
     const distance = Math.abs(currentScrollY - oldest.y);
-    const speed = distance / elapsed; /* px per ms */
+    const speed = distance / elapsed;
 
     if (speed > SKIP_SPEED_THRESHOLD_PX_PER_MS && elapsed < 1000) {
-      /* Skip detection — find sections that were scrolled past */
       const minY = Math.min(lastScrollY, currentScrollY);
       const maxY = Math.max(lastScrollY, currentScrollY);
       for (const s of sections) {
@@ -209,7 +208,6 @@ function handleScroll(): void {
     }
   }
 
-  /* Detect reRead (scrolling back up to a previously visited section) */
   if (currentScrollY < lastScrollY) {
     const section = findCurrentSection(currentScrollY);
     if (section && section.visited && (now - section.lastVisitTime) > 5000) {
@@ -217,7 +215,6 @@ function handleScroll(): void {
     }
   }
 
-  /* Mark current section as visited */
   const currentSection = findCurrentSection(currentScrollY);
   if (currentSection) {
     if (!currentSection.visited) {
@@ -227,7 +224,6 @@ function handleScroll(): void {
     currentSection.lastVisitTime = now;
   }
 
-  /* Pause detection: if scroll stops for >3s, emit pause */
   if (pauseTimer) clearTimeout(pauseTimer);
   pauseTimer = setTimeout(() => {
     const section = findCurrentSection(window.scrollY);
@@ -245,7 +241,7 @@ function handleTextSelection(): void {
   if (!selection || selection.isCollapsed) return;
 
   const text = selection.toString().trim();
-  if (text.length < 3) return; /* ignore accidental selections */
+  if (text.length < 3) return;
 
   const range = selection.getRangeAt(0);
   let sectionId = "page";
@@ -257,15 +253,9 @@ function handleTextSelection(): void {
 
   emitSignal("highlight", sectionId);
 
-  /* Also send the highlighted text as a note for the workspace artifact */
-  const tabId = 0; /* tabId not available from content script — background uses sender */
   browser.runtime.sendMessage({
     type: "HIGHLIGHT_NOTE",
-    payload: {
-      text,
-      tabId,
-      sectionId,
-    },
+    payload: { text, tabId: 0, sectionId },
   }).catch(() => {});
 }
 
@@ -295,7 +285,6 @@ function initBehaviorTracking(): void {
   document.addEventListener("click", sendActivityPing);
   document.addEventListener("keydown", sendActivityPing);
 
-  /* Rebuild sections when DOM changes (lazy-loaded content) */
   const observer = new MutationObserver(() => {
     buildSections();
   });
@@ -304,49 +293,72 @@ function initBehaviorTracking(): void {
 
 /* ── Entry point ─────────────────────────────────────────────────────────────── */
 
-if (shouldActivate()) {
-  const sourceType = detectSourceType();
+let _theme: Theme = "dark";
 
-  if (sourceType) {
-    console.log(`[MindEase Content] Detected source: ${sourceType}`);
+(async () => {
+  _theme = await initTheme();
 
-    /* Notify background that a new session source has been detected */
-    browser.runtime.sendMessage({
-      type: "SESSION_START",
-      payload: {
-        sourceType,
-        url: window.location.href,
-        timestamp: Date.now(),
-        title: document.title,
-      },
-    });
-
-    /* Start Layer 2 behavior tracking */
-    initBehaviorTracking();
-
-    /* Layer 1 — trigger content transformation after SW wake delay */
-    setTimeout(async () => {
-      await wakeServiceWorker();
-      if (sourceType === "video") {
-        await initYouTubeMode();
-      } else if (sourceType === "pdf") {
-        await initPDFMode();
-      } else {
-        initContentTransformation(sourceType ?? "website");
-      }
-    }, 5000);
+  if (!shouldActivate()) {
+    console.log("[MindEase] Skipping non-educational site:", window.location.hostname);
+    return;
   }
-} else {
-  console.log("[MindEase] Skipping non-educational site:", window.location.hostname);
-}
 
-/* ─── Layer 1: Content Transformation + Overlay ─────────────────────────────── */
+  const sourceType = detectSourceType();
+  if (!sourceType) return;
 
-async function initContentTransformation(pageType: string): Promise<void> {
+  console.log(`[MindEase Content] Detected source: ${sourceType}`);
+
+  browser.runtime.sendMessage({
+    type: "SESSION_START",
+    payload: {
+      sourceType,
+      url: window.location.href,
+      timestamp: Date.now(),
+      title: document.title,
+    },
+  });
+
+  initBehaviorTracking();
+
+  setTimeout(async () => {
+    await wakeServiceWorker();
+    if (sourceType === "video") {
+      await initYouTubeMode();
+    } else if (sourceType === "pdf") {
+      await initPDFMode();
+    } else {
+      initContentTransformation(sourceType ?? "website");
+    }
+  }, 5000);
+
+  /* ── Sidebar recovery: restore overlay if previously visible ── */
+  const savedState = await loadSidebarState();
+  if (savedState.visible) {
+    /* The overlay will be injected when TRANSFORMED_CONTENT arrives */
+  } else {
+    ensureReopenStyles();
+    const btn = injectReopenButton(_theme);
+    btn.addEventListener("click", async () => {
+      removeReopenButton();
+      await saveSidebarState({ visible: true });
+      /* Trigger content re-transformation */
+      const text = document.body.innerText.slice(0, 4000);
+      if (text.trim().length >= 50) {
+        browser.runtime.sendMessage({
+          type: "TRANSFORM_CONTENT",
+          payload: { text, pageType: "website" },
+        }).catch(() => {});
+      }
+    });
+  }
+})();
+
+/* ─── Layer 1: Content Transformation ──────────────────────────────────────────── */
+
+function initContentTransformation(pageType: string): void {
   try {
     const text = document.body.innerText.slice(0, 4000);
     if (text.trim().length < 50) return;
-    console.log("[MindEase Content] Sending TRANSFORM_CONTENT...");
     browser.runtime.sendMessage({
       type: "TRANSFORM_CONTENT",
       payload: { text, pageType },
@@ -360,7 +372,7 @@ async function initContentTransformation(pageType: string): Promise<void> {
 browser.runtime.onMessage.addListener((message: unknown) => {
   const msg = message as { type: string; chunks?: ContentChunk[]; error?: string };
   if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks && msg.chunks.length > 0) {
-    console.log("[MindEase Content] Received chunks:", msg.chunks.length);
+    removeReopenButton();
     injectOverlay(msg.chunks);
   }
   if (msg.type === "TRANSFORM_ERROR") {
@@ -368,109 +380,154 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   }
 });
 
-/* ─── Floating Overlay Panel ────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Overlay Styles — Injected CSS string with theme variables
+   ═══════════════════════════════════════════════════════════════════════════════ */
 
-function injectOverlay(chunks: ContentChunk[]): void {
-  document.getElementById("mindease-overlay")?.remove();
-  document.getElementById("mindease-pdf-loader")?.remove();
+function generateOverlayStyles(): string {
+  return `
+    <style id="mindease-overlay-styles">
+      /* ── Theme variables (scoped to overlay) ── */
+      #mindease-overlay[data-theme="dark"] {
+        --bg-base:        #060d18;
+        --bg-surface:     #0d1829;
+        --bg-surface-alt: #0a1422;
+        --bg-overlay:     rgba(6, 13, 24, 0.95);
+        --bg-elevated:    #111d2f;
+        --border:         #1a2d45;
+        --border-hover:   #2a4a6a;
+        --border-focus:   #4EB8FF;
+        --text-primary:   #e8edf5;
+        --text-dim:       #64748b;
+        --text-muted:     #475569;
+        --accent:         #4EB8FF;
+        --accent-secondary: #7B6FFF;
+        --accent-gradient:  linear-gradient(135deg, #4EB8FF, #7B6FFF);
+        --accent-glow:      rgba(78,184,255,0.3);
+        --danger:         #ef4444;
+        --shadow:         -8px 0 48px rgba(0,0,0,0.7);
+        --shadow-right:   8px 0 48px rgba(0,0,0,0.7);
+        --font-family:    'Inter', 'Segoe UI', system-ui, sans-serif;
+      }
 
-  const conceptChunks = chunks.filter(c => c.text.includes("[CONCEPT:"));
-  const regularChunks = chunks.filter(c => !c.text.includes("[CONCEPT:"));
+      #mindease-overlay[data-theme="light"] {
+        --bg-base:        #f5f7fa;
+        --bg-surface:     #ffffff;
+        --bg-surface-alt: #f0f2f5;
+        --bg-overlay:     rgba(245, 247, 250, 0.97);
+        --bg-elevated:    #e8ecf1;
+        --border:         #d0d7de;
+        --border-hover:   #8b949e;
+        --border-focus:   #3b82f6;
+        --text-primary:   #1a2332;
+        --text-dim:       #6b7280;
+        --text-muted:     #9ca3af;
+        --accent:         #3b82f6;
+        --accent-secondary: #8b5cf6;
+        --accent-gradient:  linear-gradient(135deg, #3b82f6, #8b5cf6);
+        --accent-glow:      rgba(59,130,246,0.3);
+        --danger:         #dc2626;
+        --shadow:         -8px 0 48px rgba(0,0,0,0.15);
+        --shadow-right:   8px 0 48px rgba(0,0,0,0.15);
+        --font-family:    'Inter', 'Segoe UI', system-ui, sans-serif;
+      }
 
-  const overlay = document.createElement("div");
-  overlay.id = "mindease-overlay";
-
-  const styles = `
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-
+      /* ── Base overlay ── */
       #mindease-overlay {
+        all: initial;
         position: fixed;
         top: 0;
         right: 0;
-        width: 400px;
-        height: 100vh;
-        background: #080f1a;
-        color: #e8edf5;
-        font-family: 'Inter', 'Segoe UI', sans-serif;
-        font-size: 13.5px;
+        width: var(--overlay-width, min(420px, 90vw));
+        height: var(--overlay-height, 100vh);
+        max-height: 100vh;
+        background: var(--bg-overlay);
+        color: var(--text-primary);
+        font-family: var(--font-family);
+        font-size: 0.875rem;
         line-height: 1.65;
-        letter-spacing: 0.025em;
         z-index: 2147483647;
-        box-shadow: -8px 0 48px rgba(0,0,0,0.7);
+        box-shadow: var(--shadow);
         display: flex;
         flex-direction: column;
-        border-left: 1px solid #1a2d45;
+        border-left: 1px solid var(--border);
         overflow: hidden;
-        animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        animation: mindease-slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
       }
 
-      @keyframes slideIn {
+      #mindease-overlay *,
+      #mindease-overlay *::before,
+      #mindease-overlay *::after {
+        box-sizing: border-box;
+      }
+
+      @keyframes mindease-slideIn {
         from { transform: translateX(100%); opacity: 0; }
         to { transform: translateX(0); opacity: 1; }
       }
 
-      @keyframes spin {
+      @keyframes mindease-fadeUp {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes mindease-spin {
         from { transform: rotate(0deg); }
         to { transform: rotate(360deg); }
       }
 
+      /* ── Header ── */
       #mindease-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
         padding: 16px 20px;
-        background: #0d1829;
-        border-bottom: 1px solid #1a2d45;
+        background: var(--bg-surface);
+        border-bottom: 1px solid var(--border);
         flex-shrink: 0;
       }
-
       #mindease-logo {
         display: flex;
         align-items: center;
         gap: 10px;
       }
-
       #mindease-logo .logo-icon {
-        width: 28px;
-        height: 28px;
-        background: linear-gradient(135deg, #4EB8FF, #7B6FFF);
+        width: 28px; height: 28px;
+        background: var(--accent-gradient);
         border-radius: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
         font-size: 14px;
+        flex-shrink: 0;
       }
-
       #mindease-logo .logo-text {
         font-size: 0.9rem;
         font-weight: 600;
-        color: #e8edf5;
+        color: var(--text-primary);
         letter-spacing: 0.05em;
       }
-
       #mindease-logo .logo-badge {
         font-size: 0.6rem;
-        color: #4EB8FF;
-        background: rgba(78,184,255,0.12);
+        color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 12%, transparent);
         padding: 2px 6px;
         border-radius: 4px;
         font-weight: 500;
         letter-spacing: 0.05em;
       }
 
+      /* ── Controls ── */
       #mindease-controls {
         display: flex;
         gap: 8px;
         align-items: center;
       }
-
-      #mindease-minimize {
+      .mindease-ctrl-btn {
         background: none;
-        border: 1px solid #1a2d45;
-        color: #64748b;
-        width: 28px;
-        height: 28px;
+        border: 1px solid var(--border);
+        color: var(--text-dim);
+        width: 28px; height: 28px;
         border-radius: 6px;
         cursor: pointer;
         font-size: 14px;
@@ -479,144 +536,133 @@ function injectOverlay(chunks: ContentChunk[]): void {
         justify-content: center;
         transition: all 0.15s;
       }
-      #mindease-minimize:hover { color: #e8edf5; border-color: #4EB8FF; background: rgba(78,184,255,0.08); }
-
-      #mindease-close {
-        background: none;
-        border: 1px solid #1a2d45;
-        color: #64748b;
-        width: 28px;
-        height: 28px;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 14px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: all 0.15s;
+      .mindease-ctrl-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+      .mindease-ctrl-btn:focus-visible {
+        outline: 2px solid var(--border-focus);
+        outline-offset: 2px;
       }
-      #mindease-close:hover { color: #ef4444; border-color: #ef4444; background: rgba(239,68,68,0.08); }
+      #mindease-close:hover { color: var(--danger); border-color: var(--danger); }
 
+      /* ── Tabs ── */
       #mindease-tabs {
         display: flex;
-        background: #0d1829;
-        border-bottom: 1px solid #1a2d45;
+        background: var(--bg-surface);
+        border-bottom: 1px solid var(--border);
         flex-shrink: 0;
       }
-
       .mindease-tab {
         flex: 1;
         padding: 10px 8px;
         font-size: 0.72rem;
         font-weight: 500;
-        color: #64748b;
+        color: var(--text-dim);
         text-align: center;
         cursor: pointer;
         border-bottom: 2px solid transparent;
         transition: all 0.15s;
         letter-spacing: 0.05em;
         text-transform: uppercase;
+        background: none;
       }
-      .mindease-tab:hover { color: #94a3b8; }
-      .mindease-tab.active { color: #4EB8FF; border-bottom-color: #4EB8FF; }
+      .mindease-tab:hover { color: var(--text-primary); }
+      .mindease-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+      .mindease-tab:focus-visible {
+        outline: 2px solid var(--border-focus);
+        outline-offset: -2px;
+      }
 
+      /* ── Stats bar ── */
       #mindease-stats-bar {
         display: flex;
         gap: 0;
-        background: #0a1422;
-        border-bottom: 1px solid #1a2d45;
+        background: var(--bg-surface-alt);
+        border-bottom: 1px solid var(--border);
         flex-shrink: 0;
       }
-
       .mindease-stat {
         flex: 1;
         padding: 8px 4px;
         text-align: center;
-        border-right: 1px solid #1a2d45;
+        border-right: 1px solid var(--border);
       }
       .mindease-stat:last-child { border-right: none; }
       .mindease-stat .s-num {
         font-size: 1.1rem;
         font-weight: 600;
-        color: #e8edf5;
+        color: var(--text-primary);
         display: block;
       }
       .mindease-stat .s-label {
         font-size: 0.58rem;
-        color: #475569;
+        color: var(--text-muted);
         text-transform: uppercase;
         letter-spacing: 0.06em;
       }
 
+      /* ── Body ── */
       #mindease-body {
         flex: 1;
         overflow-y: auto;
         padding: 16px;
         scroll-behavior: smooth;
       }
-
       #mindease-body::-webkit-scrollbar { width: 4px; }
       #mindease-body::-webkit-scrollbar-track { background: transparent; }
-      #mindease-body::-webkit-scrollbar-thumb { background: #1a2d45; border-radius: 2px; }
+      #mindease-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+      #mindease-body::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
 
       .mindease-tab-content { display: none; }
       .mindease-tab-content.active { display: block; }
+      .mindease-tab-content:focus { outline: none; }
 
+      /* ── Chunk cards ── */
       .mindease-chunk {
         margin-bottom: 12px;
         padding: 14px;
-        background: #0d1829;
+        background: var(--bg-surface);
         border-radius: 10px;
-        border: 1px solid #1a2d45;
+        border: 1px solid var(--border);
         transition: border-color 0.15s;
-        animation: fadeUp 0.3s ease both;
+        animation: mindease-fadeUp 0.3s ease both;
       }
-      .mindease-chunk:hover { border-color: #2a4a6a; }
-
-      @keyframes fadeUp {
-        from { opacity: 0; transform: translateY(8px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-
+      .mindease-chunk:hover { border-color: var(--border-hover); }
       .mindease-chunk.has-concept {
-        border-color: rgba(78,184,255,0.2);
-        background: linear-gradient(135deg, #0d1829, #0d1e35);
+        border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+        background: linear-gradient(135deg, var(--bg-surface), var(--bg-elevated));
       }
 
       .chunk-concept-tag {
         display: inline-flex;
         align-items: center;
         gap: 5px;
-        color: #4EB8FF;
+        color: var(--accent);
         font-size: 0.7rem;
         font-weight: 600;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         margin-bottom: 8px;
-        background: rgba(78,184,255,0.1);
+        background: color-mix(in srgb, var(--accent) 10%, transparent);
         padding: 3px 8px;
         border-radius: 4px;
       }
-
       .chunk-text {
-        color: #cbd5e1;
+        color: var(--text-primary);
         font-size: 0.855rem;
         line-height: 1.7;
       }
-
       .chunk-summary {
         margin-top: 10px;
         padding-top: 10px;
-        border-top: 1px solid #1a2d45;
+        border-top: 1px solid var(--border);
         font-size: 0.78rem;
-        color: #7B6FFF;
+        color: var(--accent-secondary);
         font-style: italic;
       }
 
       .mindease-section-title {
         font-size: 0.65rem;
         font-weight: 600;
-        color: #475569;
+        color: var(--text-muted);
         text-transform: uppercase;
         letter-spacing: 0.1em;
         margin: 16px 0 8px;
@@ -628,18 +674,18 @@ function injectOverlay(chunks: ContentChunk[]): void {
         content: '';
         flex: 1;
         height: 1px;
-        background: #1a2d45;
+        background: var(--border);
       }
 
+      /* ── Footer ── */
       #mindease-footer {
         padding: 12px 16px;
-        background: #0a1422;
-        border-top: 1px solid #1a2d45;
+        background: var(--bg-surface-alt);
+        border-top: 1px solid var(--border);
         display: flex;
         gap: 8px;
         flex-shrink: 0;
       }
-
       .mindease-btn {
         flex: 1;
         padding: 9px;
@@ -650,22 +696,26 @@ function injectOverlay(chunks: ContentChunk[]): void {
         cursor: pointer;
         transition: all 0.15s;
         letter-spacing: 0.02em;
+        font-family: var(--font-family);
       }
-
+      .mindease-btn:focus-visible {
+        outline: 2px solid var(--border-focus);
+        outline-offset: 2px;
+      }
       .mindease-btn-primary {
-        background: linear-gradient(135deg, #4EB8FF, #7B6FFF);
-        color: #080f1a;
+        background: var(--accent-gradient);
+        color: var(--bg-base);
         font-weight: 600;
       }
-      .mindease-btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
-
+      .mindease-btn-primary:hover { opacity: 0.9; }
       .mindease-btn-ghost {
         background: transparent;
-        color: #64748b;
-        border: 1px solid #1a2d45;
+        color: var(--text-dim);
+        border: 1px solid var(--border);
       }
-      .mindease-btn-ghost:hover { color: #e8edf5; border-color: #2a4a6a; }
+      .mindease-btn-ghost:hover { color: var(--text-primary); border-color: var(--border-hover); }
 
+      /* ── Profile / Session panels ── */
       .profile-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -673,14 +723,14 @@ function injectOverlay(chunks: ContentChunk[]): void {
         margin-bottom: 12px;
       }
       .profile-card {
-        background: #0d1829;
-        border: 1px solid #1a2d45;
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
         border-radius: 8px;
         padding: 10px;
       }
       .profile-card .pc-label {
         font-size: 0.6rem;
-        color: #475569;
+        color: var(--text-muted);
         text-transform: uppercase;
         letter-spacing: 0.08em;
         margin-bottom: 4px;
@@ -688,22 +738,20 @@ function injectOverlay(chunks: ContentChunk[]): void {
       .profile-card .pc-value {
         font-size: 0.82rem;
         font-weight: 500;
-        color: #4EB8FF;
+        color: var(--accent);
       }
 
-      .rl-bar-container {
-        margin-bottom: 8px;
-      }
+      .rl-bar-container { margin-bottom: 8px; }
       .rl-bar-label {
         display: flex;
         justify-content: space-between;
         font-size: 0.72rem;
-        color: #64748b;
+        color: var(--text-dim);
         margin-bottom: 4px;
       }
       .rl-bar {
         height: 4px;
-        background: #1a2d45;
+        background: var(--border);
         border-radius: 2px;
         overflow: hidden;
       }
@@ -712,8 +760,58 @@ function injectOverlay(chunks: ContentChunk[]): void {
         border-radius: 2px;
         transition: width 0.5s ease;
       }
+
+      /* ── Responsive ── */
+      @media (max-width: 480px) {
+        #mindease-overlay {
+          width: 100vw !important;
+          border-left: none !important;
+          border-right: none !important;
+        }
+        #mindease-header { padding: 12px 14px; }
+        #mindease-body { padding: 12px; }
+        .profile-grid { grid-template-columns: 1fr; }
+        #mindease-logo .logo-badge { display: none; }
+      }
+
+      @media (max-height: 500px) {
+        #mindease-header { padding: 8px 14px; }
+        #mindease-stats-bar .s-num { font-size: 0.9rem; }
+        .mindease-chunk { padding: 10px; }
+      }
+
+      /* ── Reduced motion ── */
+      @media (prefers-reduced-motion: reduce) {
+        #mindease-overlay,
+        .mindease-chunk {
+          animation: none !important;
+        }
+        .rl-bar-fill {
+          transition: none !important;
+        }
+      }
     </style>
   `;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Floating Overlay Panel
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+function injectOverlay(chunks: ContentChunk[]): void {
+  document.getElementById("mindease-overlay")?.remove();
+  document.getElementById("mindease-pdf-loader")?.remove();
+  removeReopenButton();
+
+  const conceptChunks = chunks.filter(c => c.text.includes("[CONCEPT:"));
+  const regularChunks = chunks.filter(c => !c.text.includes("[CONCEPT:"));
+
+  const overlay = document.createElement("div");
+  overlay.id = "mindease-overlay";
+  overlay.setAttribute("data-theme", _theme);
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-label", "MindEase study panel");
+  overlay.setAttribute("aria-hidden", "false");
 
   const totalConcepts = conceptChunks.length;
   const summaryChunks = chunks.filter(c => c.text.includes("[SUMMARY:"));
@@ -740,7 +838,7 @@ function injectOverlay(chunks: ContentChunk[]): void {
   }).join("");
 
   overlay.innerHTML = `
-    ${styles}
+    ${generateOverlayStyles()}
     <div id="mindease-header">
       <div id="mindease-logo">
         <div class="logo-icon">&#x1F9E0;</div>
@@ -748,15 +846,15 @@ function injectOverlay(chunks: ContentChunk[]): void {
         <span class="logo-badge">ADAPTIVE</span>
       </div>
       <div id="mindease-controls">
-        <button id="mindease-minimize" title="Minimize">&minus;</button>
-        <button id="mindease-close" title="Close">&#x2715;</button>
+        <button class="mindease-ctrl-btn" id="mindease-minimize" title="Minimize" aria-label="Minimize panel">&minus;</button>
+        <button class="mindease-ctrl-btn" id="mindease-close" title="Close" aria-label="Close panel">&#x2715;</button>
       </div>
     </div>
 
-    <div id="mindease-tabs">
-      <div class="mindease-tab active" data-tab="content">Content</div>
-      <div class="mindease-tab" data-tab="profile">Profile</div>
-      <div class="mindease-tab" data-tab="session">Session</div>
+    <div id="mindease-tabs" role="tablist" aria-label="Panel sections">
+      <button class="mindease-tab active" data-tab="content" role="tab" aria-selected="true" aria-controls="tab-content">Content</button>
+      <button class="mindease-tab" data-tab="profile" role="tab" aria-selected="false" aria-controls="tab-profile">Profile</button>
+      <button class="mindease-tab" data-tab="session" role="tab" aria-selected="false" aria-controls="tab-session">Session</button>
     </div>
 
     <div id="mindease-stats-bar">
@@ -779,14 +877,14 @@ function injectOverlay(chunks: ContentChunk[]): void {
     </div>
 
     <div id="mindease-body">
-      <div class="mindease-tab-content active" id="tab-content">
+      <div class="mindease-tab-content active" id="tab-content" role="tabpanel" aria-label="Content">
         ${chunks.length === 0
-          ? '<p style="color:#475569;text-align:center;padding:24px">No content chunks yet.</p>'
+          ? '<p style="color:var(--text-muted);text-align:center;padding:24px">No content chunks yet.</p>'
           : chunksHTML
         }
       </div>
 
-      <div class="mindease-tab-content" id="tab-profile">
+      <div class="mindease-tab-content" id="tab-profile" role="tabpanel" aria-label="Profile">
         <div class="mindease-section-title">Cognitive Baseline</div>
         <div class="profile-grid" id="mindease-profile-grid">
           <div class="profile-card">
@@ -810,20 +908,20 @@ function injectOverlay(chunks: ContentChunk[]): void {
         <div id="mindease-rl-bars">
           <div class="rl-bar-container">
             <div class="rl-bar-label"><span>Chunk Size</span><span id="rl-chunk">&mdash;</span></div>
-            <div class="rl-bar"><div class="rl-bar-fill" id="rl-chunk-bar" style="width:50%;background:#4EB8FF"></div></div>
+            <div class="rl-bar"><div class="rl-bar-fill" id="rl-chunk-bar" style="width:50%;background:var(--accent)"></div></div>
           </div>
           <div class="rl-bar-container">
             <div class="rl-bar-label"><span>Simplification</span><span id="rl-simplify">&mdash;</span></div>
-            <div class="rl-bar"><div class="rl-bar-fill" id="rl-simplify-bar" style="width:50%;background:#7B6FFF"></div></div>
+            <div class="rl-bar"><div class="rl-bar-fill" id="rl-simplify-bar" style="width:50%;background:var(--accent-secondary)"></div></div>
           </div>
           <div class="rl-bar-container">
             <div class="rl-bar-label"><span>Summary Freq</span><span id="rl-summary">&mdash;</span></div>
-            <div class="rl-bar"><div class="rl-bar-fill" id="rl-summary-bar" style="width:50%;background:#4EB8FF"></div></div>
+            <div class="rl-bar"><div class="rl-bar-fill" id="rl-summary-bar" style="width:50%;background:var(--accent)"></div></div>
           </div>
         </div>
       </div>
 
-      <div class="mindease-tab-content" id="tab-session">
+      <div class="mindease-tab-content" id="tab-session" role="tabpanel" aria-label="Session">
         <div class="mindease-section-title">This Session</div>
         <div class="profile-grid">
           <div class="profile-card">
@@ -846,7 +944,7 @@ function injectOverlay(chunks: ContentChunk[]): void {
         <div class="mindease-section-title">Engagement Score</div>
         <div class="rl-bar-container">
           <div class="rl-bar-label"><span>Overall</span><span id="sess-score">0.0</span></div>
-          <div class="rl-bar"><div class="rl-bar-fill" id="sess-score-bar" style="width:0%;background:linear-gradient(90deg,#4EB8FF,#7B6FFF)"></div></div>
+          <div class="rl-bar"><div class="rl-bar-fill" id="sess-score-bar" style="width:0%;background:var(--accent-gradient)"></div></div>
         </div>
       </div>
     </div>
@@ -859,18 +957,89 @@ function injectOverlay(chunks: ContentChunk[]): void {
 
   document.body.appendChild(overlay);
 
+  /* ── Focus trap ── */
+  function focusTrap(e: KeyboardEvent): void {
+    const focusable = overlay.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.key === "Tab") {
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }
+  overlay.addEventListener("keydown", focusTrap);
+
+  /* ── Keyboard: Escape to close ── */
+  overlay.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      handleClose();
+    }
+  });
+
+  /* ── Focus first focusable ── */
+  setTimeout(() => {
+    const firstBtn = overlay.querySelector<HTMLElement>("#mindease-minimize");
+    firstBtn?.focus();
+  }, 100);
+
+  /* ── Tab switching ── */
   overlay.querySelectorAll(".mindease-tab").forEach(tab => {
     tab.addEventListener("click", () => {
-      overlay.querySelectorAll(".mindease-tab").forEach(t => t.classList.remove("active"));
-      overlay.querySelectorAll(".mindease-tab-content").forEach(t => t.classList.remove("active"));
+      overlay.querySelectorAll(".mindease-tab").forEach(t => {
+        t.classList.remove("active");
+        t.setAttribute("aria-selected", "false");
+      });
+      overlay.querySelectorAll(".mindease-tab-content").forEach(t => {
+        t.classList.remove("active");
+      });
       tab.classList.add("active");
+      tab.setAttribute("aria-selected", "true");
       const tabId = (tab as HTMLElement).dataset.tab;
-      document.getElementById(`tab-${tabId}`)?.classList.add("active");
+      const panel = document.getElementById(`tab-${tabId}`);
+      panel?.classList.add("active");
+      panel?.focus();
+      saveSidebarState({ activeTab: tabId as SidebarState["activeTab"] });
     });
   });
 
-  document.getElementById("mindease-close")?.addEventListener("click", () => overlay.remove());
+  /* ── Close handler ── */
+  async function handleClose(): Promise<void> {
+    overlay.removeAttribute("role");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.style.display = "none";
+    await saveSidebarState({
+      visible: false,
+      minimized: false,
+      onRight,
+      activeTab: (document.querySelector(".mindease-tab.active") as HTMLElement)?.dataset.tab as SidebarState["activeTab"] ?? "content",
+      lastScrollY: window.scrollY,
+    });
+    ensureReopenStyles();
+    const btn = injectReopenButton(_theme);
+    btn.addEventListener("click", async () => {
+      removeReopenButton();
+      await saveSidebarState({ visible: true });
+      overlay.style.display = "flex";
+      overlay.removeAttribute("aria-hidden");
+      overlay.setAttribute("role", "dialog");
+      setTimeout(() => {
+        const firstBtn = overlay.querySelector<HTMLElement>("#mindease-minimize");
+        firstBtn?.focus();
+      }, 100);
+    });
+  }
 
+  document.getElementById("mindease-close")?.addEventListener("click", handleClose);
+
+  /* ── Minimize ── */
   let minimized = false;
   document.getElementById("mindease-minimize")?.addEventListener("click", () => {
     minimized = !minimized;
@@ -891,24 +1060,62 @@ function injectOverlay(chunks: ContentChunk[]): void {
       footer!.style.display = "";
       overlay.style.height = "100vh";
     }
+    saveSidebarState({ minimized });
   });
 
+  /* ── End Session ── */
   document.getElementById("mindease-end-session")?.addEventListener("click", () => {
     browser.runtime.sendMessage({ type: "SESSION_END" }).catch(() => {});
   });
 
+  /* ── Side toggle ── */
   let onRight = true;
   document.getElementById("mindease-toggle-side")?.addEventListener("click", () => {
     onRight = !onRight;
     overlay.style.right = onRight ? "0" : "auto";
     overlay.style.left = onRight ? "auto" : "0";
-    overlay.style.borderLeft = onRight ? "1px solid #1a2d45" : "none";
-    overlay.style.borderRight = onRight ? "none" : "1px solid #1a2d45";
-    overlay.style.boxShadow = onRight
-      ? "-8px 0 48px rgba(0,0,0,0.7)"
-      : "8px 0 48px rgba(0,0,0,0.7)";
+    overlay.style.borderLeft = onRight ? "1px solid var(--border)" : "none";
+    overlay.style.borderRight = onRight ? "none" : "1px solid var(--border)";
+    overlay.style.boxShadow = onRight ? "var(--shadow)" : "var(--shadow-right)";
+    saveSidebarState({ onRight });
   });
 
+  /* ── Restore saved state ── */
+  loadSidebarState().then((saved) => {
+    if (saved.minimized) {
+      minimized = true;
+      const body = document.getElementById("mindease-body");
+      const tabs = document.getElementById("mindease-tabs");
+      const stats = document.getElementById("mindease-stats-bar");
+      const footer = document.getElementById("mindease-footer");
+      body!.style.display = "none";
+      tabs!.style.display = "none";
+      stats!.style.display = "none";
+      footer!.style.display = "none";
+      overlay.style.height = "auto";
+    }
+    if (!saved.onRight) {
+      onRight = false;
+      overlay.style.right = "auto";
+      overlay.style.left = "0";
+      overlay.style.borderLeft = "none";
+      overlay.style.borderRight = "1px solid var(--border)";
+      overlay.style.boxShadow = "var(--shadow-right)";
+    }
+    if (saved.activeTab && saved.activeTab !== "content") {
+      overlay.querySelectorAll(".mindease-tab").forEach(t => {
+        t.classList.remove("active");
+        t.setAttribute("aria-selected", "false");
+      });
+      overlay.querySelectorAll(".mindease-tab-content").forEach(t => t.classList.remove("active"));
+      const tab = overlay.querySelector(`.mindease-tab[data-tab="${saved.activeTab}"]`) as HTMLElement;
+      tab?.classList.add("active");
+      tab?.setAttribute("aria-selected", "true");
+      document.getElementById(`tab-${saved.activeTab}`)?.classList.add("active");
+    }
+  });
+
+  /* ── Load profile + stats ── */
   browser.storage.local.get(["mindease_profile", "mindease_session_stats"]).then((result: Record<string, unknown>) => {
     const profile = result.mindease_profile as Record<string, unknown> | undefined;
     const stats = result.mindease_session_stats as Record<string, unknown> | undefined;
@@ -919,11 +1126,11 @@ function injectOverlay(chunks: ContentChunk[]): void {
       const params = profile.transformationParams as Record<string, unknown> | undefined;
 
       const formatEl = document.getElementById("pc-format");
-      if (formatEl) formatEl.textContent = String(baseline?.formatPreference ?? "&mdash;");
+      if (formatEl) formatEl.textContent = String(baseline?.formatPreference ?? "—");
       const attentionEl = document.getElementById("pc-attention");
-      if (attentionEl) attentionEl.textContent = String(baseline?.attentionSpan ?? "&mdash;");
+      if (attentionEl) attentionEl.textContent = String(baseline?.attentionSpan ?? "—");
       const paceEl = document.getElementById("pc-pace");
-      if (paceEl) paceEl.textContent = String(baseline?.readingPace ?? "&mdash;");
+      if (paceEl) paceEl.textContent = String(baseline?.readingPace ?? "—");
       const sessionsEl = document.getElementById("pc-sessions");
       if (sessionsEl) sessionsEl.textContent = String(rlState?.sessionCount ?? 0);
 
@@ -934,17 +1141,17 @@ function injectOverlay(chunks: ContentChunk[]): void {
       const chunkBarEl = document.getElementById("rl-chunk-bar");
       const chunkEl = document.getElementById("rl-chunk");
       if (chunkBarEl) chunkBarEl.style.width = `${chunkMap[String(params?.chunkSize)] ?? 50}%`;
-      if (chunkEl) chunkEl.textContent = String(params?.chunkSize ?? "&mdash;");
+      if (chunkEl) chunkEl.textContent = String(params?.chunkSize ?? "—");
 
       const simplifyBarEl = document.getElementById("rl-simplify-bar");
       const simplifyEl = document.getElementById("rl-simplify");
       if (simplifyBarEl) simplifyBarEl.style.width = `${simplifyMap[String(params?.simplificationLevel)] ?? 50}%`;
-      if (simplifyEl) simplifyEl.textContent = String(params?.simplificationLevel ?? "&mdash;");
+      if (simplifyEl) simplifyEl.textContent = String(params?.simplificationLevel ?? "—");
 
       const summaryBarEl = document.getElementById("rl-summary-bar");
       const summaryEl = document.getElementById("rl-summary");
       if (summaryBarEl) summaryBarEl.style.width = `${summaryMap[String(params?.summaryFrequency)] ?? 50}%`;
-      if (summaryEl) summaryEl.textContent = String(params?.summaryFrequency ?? "&mdash;");
+      if (summaryEl) summaryEl.textContent = String(params?.summaryFrequency ?? "—");
     }
 
     if (stats) {
@@ -963,9 +1170,20 @@ function injectOverlay(chunks: ContentChunk[]): void {
       if (scoreBarEl) scoreBarEl.style.width = `${Math.min(score * 10, 100)}%`;
     }
   });
+
+  /* ── Save visible state ── */
+  saveSidebarState({
+    visible: true,
+    minimized: false,
+    onRight: true,
+    activeTab: "content",
+    lastScrollY: window.scrollY,
+  });
 }
 
-/* ─── YouTube Mode ─────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════════
+   YouTube Mode
+   ═══════════════════════════════════════════════════════════════════════════════ */
 
 async function initYouTubeMode(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 3000));
@@ -975,6 +1193,13 @@ async function initYouTubeMode(): Promise<void> {
 
   const captionOverlay = document.createElement("div");
   captionOverlay.id = "mindease-caption-overlay";
+  captionOverlay.setAttribute("aria-live", "polite");
+  captionOverlay.setAttribute("aria-label", "AI-transformed captions");
+
+  const baseBg = _theme === "light" ? "rgba(245, 247, 250, 0.95)" : "rgba(15, 23, 36, 0.92)";
+  const baseText = _theme === "light" ? "#1a2332" : "#f0f4f8";
+  const accentColor = _theme === "light" ? "#3b82f6" : "#4EB8FF";
+
   captionOverlay.style.cssText = `
     position: fixed;
     bottom: 120px;
@@ -982,20 +1207,20 @@ async function initYouTubeMode(): Promise<void> {
     transform: translateX(-50%);
     max-width: 800px;
     width: 90%;
-    background: rgba(15, 23, 36, 0.92);
-    color: #f0f4f8;
-    font-family: 'Segoe UI', Arial, sans-serif;
-    font-size: 18px;
+    background: ${baseBg};
+    color: ${baseText};
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    font-size: 1.125rem;
     line-height: 1.6;
     letter-spacing: 0.04em;
     padding: 12px 20px;
     border-radius: 12px;
-    border: 1px solid #4EB8FF;
-    z-index: 2147483647;
+    border: 1px solid ${accentColor};
+    z-index: 2147483645;
     text-align: center;
     backdrop-filter: blur(8px);
     display: none;
-    box-shadow: 0 4px 24px rgba(78,184,255,0.2);
+    box-shadow: 0 4px 24px ${_theme === "light" ? "rgba(59,130,246,0.2)" : "rgba(78,184,255,0.2)"};
   `;
   document.body.appendChild(captionOverlay);
 
@@ -1009,12 +1234,13 @@ async function initYouTubeMode(): Promise<void> {
 
   let captionChunks: string[] = [];
 
-  browser.runtime.onMessage.addListener((message: unknown) => {
+  const captionMessageHandler = (message: unknown) => {
     const msg = message as { type: string; chunks?: Array<{ text: string }> };
     if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks) {
       captionChunks = msg.chunks.map(c => c.text);
     }
-  });
+  };
+  browser.runtime.onMessage.addListener(captionMessageHandler);
 
   video.addEventListener("timeupdate", () => {
     if (captionChunks.length === 0) return;
@@ -1035,31 +1261,41 @@ async function initYouTubeMode(): Promise<void> {
   });
 }
 
-/* ─── PDF Mode ────────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════════
+   PDF Mode
+   ═══════════════════════════════════════════════════════════════════════════════ */
 
 async function initPDFMode(): Promise<void> {
   const pdfText = document.body?.innerText?.slice(0, 4000)
-    ?? "PDF document — unable to extract text directly";
+    ?? "PDF document \u2014 unable to extract text directly";
 
   const loader = document.createElement("div");
   loader.id = "mindease-pdf-loader";
+  loader.setAttribute("role", "status");
+  loader.setAttribute("aria-live", "polite");
+
+  const accentColor = _theme === "light" ? "#3b82f6" : "#4EB8FF";
+  const baseBg = _theme === "light" ? "#ffffff" : "#0f1724";
+  const baseText = _theme === "light" ? "#1a2332" : "#e8edf5";
+
   loader.style.cssText = `
     position: fixed;
     top: 20px;
     right: 20px;
-    background: #0f1724;
-    color: #4EB8FF;
-    font-family: 'Segoe UI', Arial, sans-serif;
-    font-size: 13px;
+    background: ${baseBg};
+    color: ${accentColor};
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    font-size: 0.8125rem;
     padding: 10px 16px;
     border-radius: 8px;
-    border: 1px solid #4EB8FF;
-    z-index: 2147483647;
+    border: 1px solid ${accentColor};
+    z-index: 2147483644;
     display: flex;
     align-items: center;
     gap: 8px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.2);
   `;
-  loader.innerHTML = '<span style="animation: spin 1s linear infinite; display:inline-block">&#x27F3;</span> MindEase &mdash; Simplifying PDF...';
+  loader.innerHTML = '<span style="animation: mindease-spin 1s linear infinite; display:inline-block">&#x27F3;</span> MindEase &mdash; Simplifying PDF...';
   document.body?.appendChild(loader);
 
   browser.runtime.sendMessage({

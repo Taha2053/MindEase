@@ -2,7 +2,7 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-:root {
+[data-theme="dark"] {
   --bg: #060d18;
   --surface: #0d1829;
   --surface-hover: #0a1422;
@@ -23,7 +23,7 @@
   --dot-done: rgba(78,184,255,0.4);
 }
 
-body.light {
+[data-theme="light"] {
   --bg: #f5f7fa;
   --surface: #ffffff;
   --surface-hover: #f0f2f5;
@@ -54,6 +54,19 @@ body {
   justify-content: center;
   overflow: hidden;
   transition: background 0.3s, color 0.3s;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 body::before {
@@ -157,6 +170,11 @@ body::before {
 @keyframes cardIn {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .step-num {
@@ -323,11 +341,6 @@ body::before {
   font-size: 32px;
   margin: 0 auto 24px;
   animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-@keyframes popIn {
-  from { opacity: 0; transform: scale(0.5); }
-  to { opacity: 1; transform: scale(1); }
 }
 
 .complete-title {

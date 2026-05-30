@@ -1,6 +1,7 @@
 import browser from "webextension-polyfill";
 import type { BaselineProfile, FullCognitiveProfile } from "@/types";
 import { STORAGE_KEYS } from "@/types";
+import { initTheme, toggleTheme as themeManagerToggle, getAppliedTheme, type Theme } from "@/utils/themeManager";
 
 interface Question {
   id: keyof BaselineProfile;
@@ -95,16 +96,14 @@ const $ = (id: string): HTMLElement | null => document.getElementById(id);
 
 /* ─── Theme ─── */
 
-function loadTheme(): void {
-  const theme = localStorage.getItem("mindease_theme") ?? "dark";
-  document.body.classList.toggle("light", theme === "light");
+async function loadTheme(): Promise<void> {
+  await initTheme();
 }
 
-function toggleTheme(): void {
-  const isLight = document.body.classList.toggle("light");
-  localStorage.setItem("mindease_theme", isLight ? "light" : "dark");
+async function toggleThemeLocal(): Promise<void> {
+  const next = await themeManagerToggle();
   const btn = $("#theme-toggle");
-  if (btn) btn.textContent = isLight ? "\u{1F319}" : "\u2600\uFE0F";
+  if (btn) btn.textContent = next === "light" ? "\u{1F319}" : "\u2600\uFE0F";
 }
 
 /* ─── Render ─── */
@@ -398,9 +397,9 @@ async function init(): Promise<void> {
 
   const themeBtn = $("theme-toggle");
   if (themeBtn) {
-    const isLight = document.body.classList.contains("light");
-    themeBtn.textContent = isLight ? "\u{1F319}" : "\u2600\uFE0F";
-    themeBtn.addEventListener("click", toggleTheme);
+    const current = getAppliedTheme();
+    themeBtn.textContent = current === "light" ? "\u{1F319}" : "\u2600\uFE0F";
+    themeBtn.addEventListener("click", toggleThemeLocal);
   }
 
   const params = new URLSearchParams(window.location.search);

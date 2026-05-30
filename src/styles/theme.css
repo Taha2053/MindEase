@@ -1,0 +1,167 @@
+/* ============================================================
+   theme.css — Shared Design Tokens for MindEase
+   All UI surfaces import or inject these CSS custom properties.
+   ============================================================ */
+
+:root,
+[data-theme="dark"] {
+  /* ── Backgrounds ── */
+  --bg-base:        #060d18;
+  --bg-surface:     #0d1829;
+  --bg-surface-alt: #0a1422;
+  --bg-overlay:     rgba(6, 13, 24, 0.92);
+  --bg-elevated:    #111d2f;
+
+  /* ── Borders ── */
+  --border:       #1a2d45;
+  --border-hover: #2a4a6a;
+  --border-focus: #4EB8FF;
+
+  /* ── Text ── */
+  --text-primary: #e8edf5;
+  --text-dim:     #64748b;
+  --text-muted:   #475569;
+
+  /* ── Accent ── */
+  --accent:        #4EB8FF;
+  --accent-secondary: #7B6FFF;
+  --accent-gradient:  linear-gradient(135deg, #4EB8FF, #7B6FFF);
+  --accent-glow:      rgba(78, 184, 255, 0.3);
+
+  /* ── Semantic ── */
+  --success: #22c55e;
+  --warning: #eab308;
+  --danger:  #ef4444;
+  --info:    #3b82f6;
+
+  /* ── Background effects ── */
+  --bg-gradient-1: rgba(78, 184, 255, 0.06);
+  --bg-gradient-2: rgba(123, 111, 255, 0.06);
+  --selected-bg:   rgba(78, 184, 255, 0.06);
+
+  /* ── Surface icon backgrounds ── */
+  --option-icon-bg:       #1a2d45;
+  --option-icon-selected: rgba(78, 184, 255, 0.15);
+
+  /* ── Progress dots ── */
+  --dot-done: rgba(78, 184, 255, 0.4);
+
+  /* ── Shadows ── */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 8px 24px var(--accent-glow);
+
+  /* ── Typography ── */
+  --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-size-xs:   0.65rem;
+  --font-size-sm:   0.73rem;
+  --font-size-base: 0.83rem;
+  --font-size-md:   0.88rem;
+  --font-size-lg:   1rem;
+  --font-size-xl:   1.35rem;
+  --font-size-2xl:  1.6rem;
+
+  /* ── Spacing ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* ── Border radius ── */
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   10px;
+  --radius-xl:   12px;
+  --radius-2xl:  20px;
+  --radius-full: 50%;
+
+  /* ── Transitions ── */
+  --transition-fast: 0.15s;
+  --transition-base: 0.3s;
+  --transition-slow: 0.4s;
+
+  /* ── Z-index layers ── */
+  --z-overlay:    2147483647;
+  --z-reopen-btn: 2147483646;
+  --z-caption:    2147483645;
+  --z-loader:     2147483644;
+
+  /* ── Overlay dimensions ── */
+  --overlay-width: min(420px, 90vw);
+  --overlay-max-height: 100vh;
+}
+
+/* ── Light theme ── */
+[data-theme="light"] {
+  --bg-base:        #f5f7fa;
+  --bg-surface:     #ffffff;
+  --bg-surface-alt: #f0f2f5;
+  --bg-overlay:     rgba(245, 247, 250, 0.95);
+  --bg-elevated:    #e8ecf1;
+
+  --border:       #d0d7de;
+  --border-hover: #8b949e;
+  --border-focus: #3b82f6;
+
+  --text-primary: #1a2332;
+  --text-dim:     #6b7280;
+  --text-muted:   #9ca3af;
+
+  --accent:        #3b82f6;
+  --accent-secondary: #8b5cf6;
+  --accent-gradient:  linear-gradient(135deg, #3b82f6, #8b5cf6);
+  --accent-glow:      rgba(59, 130, 246, 0.3);
+
+  --success: #16a34a;
+  --warning: #ca8a04;
+  --danger:  #dc2626;
+
+  --bg-gradient-1: rgba(59, 130, 246, 0.04);
+  --bg-gradient-2: rgba(139, 92, 246, 0.04);
+  --selected-bg:   rgba(59, 130, 246, 0.06);
+
+  --option-icon-bg:       #e5e7eb;
+  --option-icon-selected: rgba(59, 130, 246, 0.12);
+
+  --dot-done: rgba(59, 130, 246, 0.4);
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.15);
+  --shadow-glow: 0 8px 24px var(--accent-glow);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Focus ring ── */
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ── Scrollbar ── */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
+}

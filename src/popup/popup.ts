@@ -1,8 +1,11 @@
 import browser from "webextension-polyfill";
 import type { FullCognitiveProfile, SessionStats, KnowledgeArtifact, ExtensionMessage } from "@/types";
+import type { Theme } from "@/utils/themeManager";
 import { STORAGE_KEYS } from "@/types";
+import { initTheme, toggleTheme, getAppliedTheme } from "@/utils/themeManager";
 
 const app = document.getElementById("app")!;
+let _theme: Theme = "dark";
 
 function escapeHtml(text: string): string {
   const div = document.createElement("div");
@@ -12,6 +15,18 @@ function escapeHtml(text: string): string {
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max) + "\u2026";
+}
+
+/* ── Theme toggle ── */
+function setupThemeToggle(): void {
+  const btn = document.getElementById("theme-toggle") as HTMLButtonElement | null;
+  if (!btn) return;
+  _theme = getAppliedTheme();
+  btn.textContent = _theme === "light" ? "\u{1F319}" : "\u2600\uFE0F";
+  btn.addEventListener("click", async () => {
+    const next = await toggleTheme();
+    btn.textContent = next === "light" ? "\u{1F319}" : "\u2600\uFE0F";
+  });
 }
 
 /* ── Layer 2: Profile panel ───────────────────────────────────── */
@@ -98,7 +113,7 @@ function severityBadge(severity: string): string {
 
 function renderCards(artifact: KnowledgeArtifact): string {
   if (artifact.learnedCards.length === 0) {
-    return '<p style="font-size:0.78rem;color:#475569;">No concepts recorded yet.</p>';
+    return '<p style="font-size:0.78rem;color:var(--text-muted);">No concepts recorded yet.</p>';
   }
   return artifact.learnedCards.map((card) => `
     <div class="item-card">
@@ -113,7 +128,7 @@ function renderCards(artifact: KnowledgeArtifact): string {
 
 function renderGaps(artifact: KnowledgeArtifact): string {
   if (artifact.gaps.length === 0) {
-    return '<p style="font-size:0.78rem;color:#475569;">No gaps detected.</p>';
+    return '<p style="font-size:0.78rem;color:var(--text-muted);">No gaps detected.</p>';
   }
   return artifact.gaps.map((gap) => `
     <div class="item-card">
@@ -168,6 +183,9 @@ async function handleResetProfile(): Promise<void> {
 /* ── Init ──────────────────────────────────────────────────────── */
 
 async function init(): Promise<void> {
+  _theme = await initTheme();
+  setupThemeToggle();
+
   const result = await browser.storage.local.get([
     STORAGE_KEYS.PROFILE,
     STORAGE_KEYS.SESSION_STATS,
