@@ -77,6 +77,7 @@ function renderNoProfile(): string {
       <div class="w-icon">&#x1F9E0;</div>
       <div class="w-title">Welcome to MindEase</div>
       <p class="w-sub">Complete the onboarding to personalize your learning experience.</p>
+      <button id="start-onboarding-btn" class="btn btn-primary" style="margin-top:16px;padding:10px 24px;font-size:0.83rem">Start Onboarding</button>
     </div>
   `;
 }
@@ -188,6 +189,12 @@ async function init(): Promise<void> {
 
   document.getElementById("end-session-btn")?.addEventListener("click", handleEndSession);
   document.getElementById("reset-profile-btn")?.addEventListener("click", handleResetProfile);
+  document.getElementById("start-onboarding-btn")?.addEventListener("click", async () => {
+    await browser.tabs.create({
+      url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html"),
+      active: true,
+    });
+  });
 }
 
 /* ── Live updates from Layer 3 ─────────────────────────────────── */
