@@ -7,7 +7,7 @@
    ============================================================ */
 
 import browser from "webextension-polyfill";
-import type { CognitiveEvent, CognitiveProfile, FullCognitiveProfile, ExtensionMessage, TransformationParams, ContentChunk } from "@/types";
+import type { CognitiveEvent, CognitiveProfile, FullCognitiveProfile, ExtensionMessage, ContentChunk } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session } from "@/layer2";
 import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
@@ -112,25 +112,26 @@ browser.runtime.onMessage.addListener(
       case "TRANSFORM_CONTENT": {
         const { text, pageType } = msg.payload as { text: string; pageType: "website" | "pdf" | "lecture" };
 
+        // Get profile and transform — must use promise chain, not await
         browser.storage.local.get(STORAGE_KEYS.PROFILE).then(async (result) => {
           const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_FULL_PROFILE;
-          const params: TransformationParams = fullProfile.transformationParams;
 
           try {
-            const sourceUrl = (sender as { url?: string } | undefined)?.url;
-            const chunks = await transformContent(text, pageType, params, sourceUrl);
+            console.log("[Background] Starting transform for:", pageType);
+            const chunks = await transformContent(text, pageType, fullProfile.transformationParams);
+            console.log("[Background] Transform complete, chunks:", chunks.length);
 
-            /* Start Layer 3 session if not already */
-            startSession(fullProfile.userId, fullProfile);
+            // Start Layer 3 session with chunks
+            startSession(fullProfile.userId ?? "guest", fullProfile as unknown as CognitiveProfile);
 
             sendResponse({ type: "TRANSFORMED_CONTENT", chunks });
           } catch (err) {
             console.error("[Background] Transform failed:", err);
-            sendResponse({ type: "TRANSFORMED_CONTENT", chunks: [] });
+            sendResponse({ type: "TRANSFORM_ERROR", error: String(err) });
           }
         });
 
-        return true; /* keep channel open for async response */
+        return true; // CRITICAL: keeps message channel open for async response
       }
 
       case "PING":
