@@ -1,31 +1,27 @@
-/* ─── MindEase — Layer 1: Gemini API Client ───
-     Direct fetch() calls to Google Gemini API from the extension.
-     Replaces the old Python FastAPI backend.
-     Uses Vite env var VITE_GEMINI_API_KEY.
+/* ─── MindEase — Layer 1: Ollama API Client ───
+     Direct fetch() calls to local Ollama server.
+     No API key required. Uses mistral:7b-instruct model.
   ───────────────────────────────────────────────────────────── */
 
 import type { TransformationParams } from "@/types";
 
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY as string;
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
-
-async function callGemini(prompt: string): Promise<string> {
-  const response = await fetch(GEMINI_URL, {
+async function callOllama(prompt: string): Promise<string> {
+  const response = await fetch("http://localhost:11434/api/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
+      model: "mistral:7b-instruct",
+      prompt,
+      stream: false,
     }),
   });
 
   if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Gemini API error ${response.status}: ${err}`);
+    throw new Error(`Ollama error: ${response.status}`);
   }
 
-  const data = await response.json();
-  const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  return text;
+  const data = (await response.json()) as { response: string };
+  return data.response;
 }
 
 /* ─── Web Content Transformation ─── */
@@ -44,7 +40,7 @@ Rules:
 - If summaryFrequency=high, add [SUMMARY: ...] after every chunk
 Return clean readable text only. Content: ${content}`;
 
-  return callGemini(prompt);
+  return callOllama(prompt);
 }
 
 /* ─── PDF Content Transformation ─── */
@@ -64,7 +60,7 @@ Rules:
 - If summaryFrequency=high, add [SUMMARY: ...] after every chunk
 Be warm, clear, encouraging. Content: ${content}`;
 
-  return callGemini(prompt);
+  return callOllama(prompt);
 }
 
 /* ─── Video Transcript Transformation ─── */
@@ -83,7 +79,7 @@ Format each caption as: [MM:SS] caption text
 Add [CONCEPT: ...] markers for key terms.
 Transcript: ${transcript}`;
 
-  return callGemini(prompt);
+  return callOllama(prompt);
 }
 
 /* ─── Lecture Transformation ─── */
@@ -99,5 +95,5 @@ NOW COVERING: ... | KEY POINTS: ... | WATCH FOR: ...
 Keep it under 60 words.
 Lecture text: ${text}`;
 
-  return callGemini(prompt);
+  return callOllama(prompt);
 }

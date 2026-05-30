@@ -40,7 +40,8 @@
   ],
 
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "http://localhost:11434/*"
   ],
 
   "web_accessible_resources": [
