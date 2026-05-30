@@ -74,7 +74,7 @@ browser.tabs.onRemoved.addListener(async (_tabId) => {
 /* ── Message router ──────────────────────────────────────────────────────────── */
 
 browser.runtime.onMessage.addListener(
-  (message: unknown, _sender, sendResponse) => {
+  (message: unknown, sender, sendResponse) => {
     const msg = message as Record<string, unknown>;
 
     switch (msg.type) {
@@ -117,7 +117,8 @@ browser.runtime.onMessage.addListener(
           const params: TransformationParams = fullProfile.transformationParams;
 
           try {
-            const chunks = await transformContent(text, pageType, params);
+            const sourceUrl = (sender as { url?: string } | undefined)?.url;
+            const chunks = await transformContent(text, pageType, params, sourceUrl);
 
             /* Start Layer 3 session if not already */
             startSession(fullProfile.userId, fullProfile);

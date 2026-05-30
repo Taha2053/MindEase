@@ -24,8 +24,9 @@ export async function transformContent(
   pageText: string,
   pageType: "website" | "pdf" | "lecture",
   profile: TransformationParams,
+  sourceUrl?: string,
 ): Promise<ContentChunk[]> {
-  const sourceId = window?.location?.href ?? "unknown";
+  const sourceId = sourceUrl ?? "unknown";
   const sourceType = pageType === "lecture" ? "lecture" : pageType === "pdf" ? "pdf" : "website";
 
   let transformed: string;
