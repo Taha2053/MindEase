@@ -276,17 +276,19 @@ async function initContentTransformation(pageType: "website" | "pdf" | "lecture"
     if (pageText.trim().length < 50) return; /* skip pages with no meaningful text */
 
     /* Request transformation from background */
+    console.log("[MindEase Content] Sending TRANSFORM_CONTENT...");
     const response = await browser.runtime.sendMessage({
       type: "TRANSFORM_CONTENT",
       payload: { text: pageText, pageType },
     });
+    console.log("[MindEase Content] Response:", response);
 
     const transformResponse = response as { type: string; chunks: { id: string; text: string }[] } | undefined;
     if (transformResponse?.type === "TRANSFORMED_CONTENT" && transformResponse.chunks?.length > 0) {
       injectOverlay(transformResponse.chunks);
     }
-  } catch {
-    /* Background might not handle this message type yet */
+  } catch (err) {
+    console.error("[MindEase] Transform error:", err);
   }
 }
 
