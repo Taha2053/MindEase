@@ -1,27 +1,36 @@
-/* ─── MindEase — Layer 1: Ollama API Client ───
-     Direct fetch() calls to local Ollama server.
-     No API key required. Uses mistral:7b-instruct model.
+/* ─── MindEase — Layer 1: Mistral API Client ───
+     Direct fetch() calls to Mistral AI API.
+     Uses mistral-small-latest model.
   ───────────────────────────────────────────────────────────── */
 
 import type { TransformationParams } from "@/types";
 
-async function callOllama(prompt: string): Promise<string> {
-  const response = await fetch("http://localhost:11434/api/generate", {
+const MISTRAL_API_KEY = "iyJrm3exBfraqN4J6Fmto2qAFduX2dt1";
+
+async function callMistral(prompt: string): Promise<string> {
+  const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${MISTRAL_API_KEY}`,
+    },
     body: JSON.stringify({
-      model: "mistral:7b-instruct",
-      prompt,
-      stream: false,
+      model: "mistral-small-latest",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 1024,
+      temperature: 0.3,
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`Ollama error: ${response.status}`);
+    const err = await response.text();
+    throw new Error(`Mistral error ${response.status}: ${err}`);
   }
 
-  const data = (await response.json()) as { response: string };
-  return data.response;
+  const data = (await response.json()) as {
+    choices: Array<{ message: { content: string } }>;
+  };
+  return data.choices[0].message.content;
 }
 
 /* ─── Web Content Transformation ─── */
@@ -40,7 +49,7 @@ Rules:
 - If summaryFrequency=high, add [SUMMARY: ...] after every chunk
 Return clean readable text only. Content: ${content}`;
 
-  return callOllama(prompt);
+  return callMistral(prompt);
 }
 
 /* ─── PDF Content Transformation ─── */
@@ -60,7 +69,7 @@ Rules:
 - If summaryFrequency=high, add [SUMMARY: ...] after every chunk
 Be warm, clear, encouraging. Content: ${content}`;
 
-  return callOllama(prompt);
+  return callMistral(prompt);
 }
 
 /* ─── Video Transcript Transformation ─── */
@@ -79,7 +88,7 @@ Format each caption as: [MM:SS] caption text
 Add [CONCEPT: ...] markers for key terms.
 Transcript: ${transcript}`;
 
-  return callOllama(prompt);
+  return callMistral(prompt);
 }
 
 /* ─── Lecture Transformation ─── */
@@ -95,5 +104,5 @@ NOW COVERING: ... | KEY POINTS: ... | WATCH FOR: ...
 Keep it under 60 words.
 Lecture text: ${text}`;
 
-  return callOllama(prompt);
+  return callMistral(prompt);
 }

@@ -41,7 +41,7 @@
 
   "host_permissions": [
     "<all_urls>",
-    "http://localhost:11434/*"
+    "https://api.mistral.ai/*"
   ],
 
   "web_accessible_resources": [
