@@ -78,26 +78,39 @@ browser.runtime.onMessage.addListener(
     const msg = message as ExtensionMessage;
 
     if (msg.type === "TRANSFORM_CONTENT") {
-      // Handle async case separately — must return true immediately
-      const { text, pageType } = msg.payload as { text: string; pageType: "website" | "pdf" | "lecture" };
+      const { text, pageType } = msg.payload as {
+        text: string;
+        pageType: "website" | "pdf" | "lecture";
+      };
 
-      (async () => {
+      // Return a Promise — works in Firefox. Chrome needs return true + sendResponse.
+      const responsePromise = (async () => {
         const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
-        const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_FULL_PROFILE;
+        const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_PROFILE;
 
         try {
           console.log("[Background] Starting transform for:", pageType);
-          const chunks = await transformContent(text, pageType, fullProfile.transformationParams);
+          const chunks = await transformContent(
+            text,
+            pageType,
+            (fullProfile as FullCognitiveProfile).transformationParams,
+          );
           console.log("[Background] Transform complete, chunks:", chunks.length);
-          startSession(fullProfile.userId ?? "guest", fullProfile as unknown as CognitiveProfile);
-          sendResponse({ type: "TRANSFORMED_CONTENT", chunks });
+          startSession(
+            (fullProfile as FullCognitiveProfile).userId ?? "guest",
+            fullProfile as unknown as CognitiveProfile,
+          );
+          return { type: "TRANSFORMED_CONTENT", chunks };
         } catch (err) {
           console.error("[Background] Transform failed:", err);
-          sendResponse({ type: "TRANSFORM_ERROR", error: String(err) });
+          return { type: "TRANSFORM_ERROR", error: String(err) };
         }
       })();
 
-      return true; // Keep channel open
+      // For Chrome: use sendResponse when promise resolves
+      responsePromise.then(sendResponse);
+
+      return true; // Keep channel open for both browsers
     }
 
     // All other synchronous cases
