@@ -91,7 +91,7 @@ browser.runtime.onMessage.addListener(
 
       (async () => {
         const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
-        const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_PROFILE;
+        const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_FULL_PROFILE;
 
         try {
           console.log("[Background] Starting transform for:", pageType);
