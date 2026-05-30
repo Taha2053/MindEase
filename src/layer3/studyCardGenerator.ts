@@ -19,21 +19,31 @@ import type {
 
 // ── Card format selection ─────────────────────────────────────────────────────
 // Maps the cognitive profile to the optimal card format.
+// Uses actual Layer 2 profile fields (baseline) rather than
+// unreachable condition/learningStyle values.
 
 function selectCardFormat(profile: CognitiveProfile): CardFormat {
-  // ADHD: short bursts, high visual anchoring — chunked list format
+  /* Try to use baseline fields if available (FullCognitiveProfile) */
+  const p = profile as unknown as Record<string, unknown>;
+  const baseline = p.baseline as Record<string, unknown> | undefined;
+
+  if (baseline) {
+    const fmt = baseline.formatPreference as string | undefined;
+    const span = baseline.attentionSpan as string | undefined;
+    const pace = baseline.readingPace as string | undefined;
+    const sll  = baseline.secondLanguageLearner as boolean | undefined;
+
+    if (fmt === "visual") return "visual";
+    if (span === "short") return "chunked-text";
+    if (pace === "slow" || sll === true) return "spaced-list";
+  }
+
+  /* Fallback to legacy fields for backward compatibility */
   if (profile.condition === "adhd") return "chunked-text";
-
-  // Dyslexia: wider spacing, no dense blocks — spaced list format
   if (profile.condition === "dyslexia") return "spaced-list";
-
-  // Visual learner: diagram-first, minimal prose — visual anchor format
   if (profile.learningStyle === "visual") return "visual";
-
-  // Audio learner: voice-friendly note structure
   if (profile.learningStyle === "audio") return "audio-note";
 
-  // Default: clean text
   return "chunked-text";
 }
 

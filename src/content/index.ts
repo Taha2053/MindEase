@@ -251,6 +251,145 @@ if (sourceType) {
   /* Start Layer 2 behavior tracking */
   initBehaviorTracking();
 
-  /* Layer 1 (Rayhane) will hook in here to intercept and transform content */
-  /* Layer 3 (Eya)     receives those signals via background message routing */
+  /* Layer 1 — trigger content transformation after a short delay */
+  setTimeout(() => {
+    initContentTransformation(sourceType === "video" ? "website" : sourceType ?? "website");
+  }, 2000);
+}
+
+/* ─── Layer 1: Content Transformation + Overlay ─────────────────────────────── */
+
+async function initContentTransformation(pageType: "website" | "pdf" | "lecture"): Promise<void> {
+  try {
+    /* Extract page text */
+    const pageText = document.body.innerText.slice(0, 4000);
+    if (pageText.trim().length < 50) return; /* skip pages with no meaningful text */
+
+    /* Request transformation from background */
+    const response = await browser.runtime.sendMessage({
+      type: "TRANSFORM_CONTENT",
+      payload: { text: pageText, pageType },
+    });
+
+    const transformResponse = response as { type: string; chunks: { id: string; text: string }[] } | undefined;
+    if (transformResponse?.type === "TRANSFORMED_CONTENT" && transformResponse.chunks?.length > 0) {
+      injectOverlay(transformResponse.chunks);
+    }
+  } catch {
+    /* Background might not handle this message type yet */
+  }
+}
+
+/* ─── Floating Overlay Panel ────────────────────────────────────────────────── */
+
+interface OverlayChunk {
+  id: string;
+  text: string;
+}
+
+function injectOverlay(chunks: OverlayChunk[]): void {
+  /* Remove existing overlay if any */
+  const existing = document.getElementById("mindease-overlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "mindease-overlay";
+  overlay.innerHTML = `
+    <style>
+      #mindease-overlay {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 380px;
+        height: 100vh;
+        background: #0f1724;
+        color: #f0f4f8;
+        font-family: 'Segoe UI', 'Arial', sans-serif;
+        font-size: 14px;
+        line-height: 1.6;
+        letter-spacing: 0.03em;
+        z-index: 2147483647;
+        box-shadow: -4px 0 24px rgba(0,0,0,0.5);
+        display: flex;
+        flex-direction: column;
+        border-left: 1px solid #2a3a4a;
+        overflow: hidden;
+      }
+      #mindease-overlay-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        background: #1a2332;
+        border-bottom: 1px solid #2a3a4a;
+        flex-shrink: 0;
+      }
+      #mindease-overlay-header h2 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #4EB8FF;
+        letter-spacing: 0.04em;
+      }
+      #mindease-overlay-close {
+        background: none;
+        border: none;
+        color: #94a3b8;
+        font-size: 1.2rem;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+      }
+      #mindease-overlay-close:hover {
+        color: #f0f4f8;
+        background: rgba(255,255,255,0.1);
+      }
+      #mindease-overlay-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px 20px;
+      }
+      #mindease-overlay-body .chunk {
+        margin-bottom: 16px;
+        padding: 12px;
+        background: #1a2332;
+        border-radius: 8px;
+        border: 1px solid #2a3a4a;
+      }
+      #mindease-overlay-body .chunk p {
+        margin: 0 0 4px;
+        color: #f0f4f8;
+      }
+      #mindease-overlay-body .chunk .concept {
+        color: #4EB8FF;
+        font-weight: 500;
+        font-size: 0.8rem;
+      }
+    </style>
+    <div id="mindease-overlay-header">
+      <h2>MindEase — Simplified View</h2>
+      <button id="mindease-overlay-close" aria-label="Close">✕</button>
+    </div>
+    <div id="mindease-overlay-body">
+      ${chunks.map((c) => {
+        const hasConcept = c.text.includes("[CONCEPT:");
+        const cleanText = c.text.replace(/\[CONCEPT:[^\]]+\]/g, "").trim();
+        const conceptMatch = c.text.match(/\[CONCEPT:\s*([^\]]+)\]/);
+        const conceptTag = conceptMatch ? conceptMatch[1].trim() : "";
+        return `
+          <div class="chunk">
+            ${conceptTag ? `<p class="concept">✦ ${conceptTag}</p>` : ""}
+            <p>${hasConcept ? cleanText : c.text}</p>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  /* Bind close button */
+  document.getElementById("mindease-overlay-close")?.addEventListener("click", () => {
+    overlay.remove();
+  });
 }

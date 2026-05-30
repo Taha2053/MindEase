@@ -2,14 +2,53 @@
    background/index.ts — Service Worker (persistent background logic)
    Manages session lifecycle and routes messages between layers.
    Integrates Layer 2 (cognitive profiling) for behavior signals,
-   profile getter API, and session lifecycle.
+   profile getter API, session lifecycle, and content transformation
+   via Gemini API (Layer 1).
    ============================================================ */
 
 import browser from "webextension-polyfill";
-import type { CognitiveEvent, CognitiveProfile, ContentChunk, ExtensionMessage } from "@/types";
+import type { CognitiveEvent, CognitiveProfile, FullCognitiveProfile, ExtensionMessage, TransformationParams, ContentChunk } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session } from "@/layer2";
 import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
+import { transformContent } from "@/layer1/index";
+
+/* ── Default profile when storage has none ──────────────────────────────────── */
+const DEFAULT_PROFILE: CognitiveProfile = {
+  userId: "default",
+  learningStyle: "text",
+  attentionSpan: "medium",
+  anchorNeed: false,
+  condition: "none",
+  updatedAt: Date.now(),
+};
+
+const DEFAULT_FULL_PROFILE = {
+  ...DEFAULT_PROFILE,
+  createdAt: new Date().toISOString(),
+  baseline: {
+    formatPreference: "text" as const,
+    attentionSpan: "medium" as const,
+    readingPace: "moderate" as const,
+    needsConceptAnchor: false,
+    secondLanguageLearner: false,
+  },
+  rlState: {
+    highlightRate: 0,
+    pauseRate: 0,
+    reReadRate: 0,
+    skipRate: 0,
+    sessionCount: 0,
+    totalEngagementScore: 0,
+  },
+  transformationParams: {
+    chunkSize: "medium" as const,
+    simplificationLevel: 2 as const,
+    captionSpeed: "normal" as const,
+    useVisualAnchors: false,
+    summaryFrequency: "medium" as const,
+  },
+};
 
 /* ── Session lifecycle ───────────────────────────────────────────────────────── */
 
@@ -36,18 +75,18 @@ browser.tabs.onRemoved.addListener(async (_tabId) => {
 
 browser.runtime.onMessage.addListener(
   (message: unknown, _sender, sendResponse) => {
-    const msg = message as ExtensionMessage;
+    const msg = message as Record<string, unknown>;
 
     switch (msg.type) {
       case "SESSION_START": {
-        const { userId } = msg.payload as { userId: string };
+        const payload = msg.payload as { userId: string } | undefined;
+        const userId = payload?.userId ?? "guest";
         console.log("[Background] Session started for user:", userId);
 
         browser.storage.local.get(STORAGE_KEYS.PROFILE).then((result) => {
-          const profile = (result as Record<string, unknown>)
-            [STORAGE_KEYS.PROFILE] as CognitiveProfile;
+          const profile = (result[STORAGE_KEYS.PROFILE] as CognitiveProfile | undefined) ?? DEFAULT_PROFILE;
 
-          if (!profile) {
+          if (!result[STORAGE_KEYS.PROFILE]) {
             console.warn("[Background] No cognitive profile found — starting session with default profile.");
           }
 
@@ -59,7 +98,7 @@ browser.runtime.onMessage.addListener(
       case "SESSION_END": {
         console.log("[Background] Session ended — triggering synthesis.");
 
-        endLayer3Session([]);
+        endLayer3Session();
         endLayer2Session();
         break;
       }
@@ -68,6 +107,29 @@ browser.runtime.onMessage.addListener(
         const event = msg.payload as CognitiveEvent;
         recordEvent(event);
         break;
+      }
+
+      case "TRANSFORM_CONTENT": {
+        const { text, pageType } = msg.payload as { text: string; pageType: "website" | "pdf" | "lecture" };
+
+        browser.storage.local.get(STORAGE_KEYS.PROFILE).then(async (result) => {
+          const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_FULL_PROFILE;
+          const params: TransformationParams = fullProfile.transformationParams;
+
+          try {
+            const chunks = await transformContent(text, pageType, params);
+
+            /* Start Layer 3 session if not already */
+            startSession(fullProfile.userId, fullProfile);
+
+            sendResponse({ type: "TRANSFORMED_CONTENT", chunks });
+          } catch (err) {
+            console.error("[Background] Transform failed:", err);
+            sendResponse({ type: "TRANSFORMED_CONTENT", chunks: [] });
+          }
+        });
+
+        return true; /* keep channel open for async response */
       }
 
       case "ARTIFACT_READY":

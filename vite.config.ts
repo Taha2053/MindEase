@@ -4,18 +4,13 @@ import { defineConfig } from "vite";
 import webExtension from "vite-plugin-web-extension";
 
 export default defineConfig(({ mode }) => ({
-  // ── Build output ────────────────────────────────────────────────────────────
   build: {
     outDir: mode === "firefox" ? "dist/firefox" : "dist/chrome",
     emptyOutDir: true,
   },
-
-  // ── Path aliases ─────────────────────────────────────────────────────────────
   resolve: {
     alias: {
       "@": "/src",
-      // During tests, replace webextension-polyfill with a Node-safe stub so
-      // its CJS runtime check doesn't throw outside a browser extension context.
       ...(process.env.VITEST
         ? {
             "webextension-polyfill": path.resolve(
@@ -26,8 +21,6 @@ export default defineConfig(({ mode }) => ({
         : {}),
     },
   },
-
-  // ── Extension plugin ─────────────────────────────────────────────────────────
   plugins: [
     webExtension({
       manifest: () => {
@@ -47,12 +40,12 @@ export default defineConfig(({ mode }) => ({
       },
       browser: mode === "firefox" ? "firefox" : "chrome",
       watchFilePaths: ["src/**/*.ts", "src/manifest.json"],
+      additionalInputs: [
+        "src/layer2/onboarding/onboarding.html",
+      ],
     }),
   ],
-
-  // ── Vitest ───────────────────────────────────────────────────────────────────
   test: {
-    // Layer 3 modules are pure logic — no browser DOM needed
     environment: "node",
   },
 }));
