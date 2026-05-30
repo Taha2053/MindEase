@@ -134,11 +134,65 @@ export type MessageType =
   | "TRANSFORM_CONTENT"           // content → background (Layer 1)
   | "TRANSFORMED_CONTENT"         // background → content (response)
   | "TRANSFORM_ERROR"             // background → content (error)
-  | "PING";                       // content → background (keepalive)
+  | "PING"                       // content → background (keepalive)
+  | "HIGHLIGHT_NOTE"             // content → background (rich highlight)
+  | "ACTIVITY_PING";             // content → background (reset idle timer)
 
 export interface ExtensionMessage {
   type:    MessageType;
   payload: unknown;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Study Workspace — Multi-Tab Session Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type SessionState = "active" | "passive" | "suspended" | "ended";
+
+export interface HighlightNote {
+  id: string;
+  text: string;
+  sourceUrl: string;
+  resourceTitle: string;
+  timestamp: number;
+  sectionId?: string;
+}
+
+export interface TabResource {
+  tabId: number;
+  url: string;
+  title: string;
+  sourceType: "pdf" | "video" | "website" | "lecture";
+  joinedAt: number;
+  lastActiveAt: number;
+  highlights: HighlightNote[];
+}
+
+export interface FocusSummary {
+  totalTimeMs: number;
+  focusedTimeMs: number;
+  interruptionCount: number;
+  longestDistractionMs: number;
+  passiveTimeMs: number;
+  suspendedTimeMs: number;
+}
+
+export interface WorkspaceSession {
+  sessionId: string;
+  userId: string;
+  state: SessionState;
+  tabs: TabResource[];
+  startTime: number;
+  endTime: number | null;
+  lastActivityAt: number;
+  enteredPassiveAt: number | null;
+  enteredSuspendedAt: number | null;
+  totalActiveDurationMs: number;
+  totalPassiveDurationMs: number;
+  totalSuspendedDurationMs: number;
+  interruptionCount: number;
+  longestDistractionMs: number;
+  distractionStart: number | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -315,4 +369,5 @@ export const STORAGE_KEYS = {
   ONBOARDING_DONE: "mindease_onboarding_done",
   SESSION_ACTIVE:  "mindease_session_active",
   SESSION_STATS:   "mindease_session_stats",
+  WORKSPACE:       "mindease_workspace",
 } as const;

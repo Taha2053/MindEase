@@ -45,6 +45,13 @@ async function ensureAgent(): Promise<RLAgent> {
   return agent;
 }
 
+/* ─── Normalize signal type for Layer 3 ─── */
+function normalizeEventType(signal: string): string {
+  if (signal === "reRead") return "re-read";
+  if (signal === "tabSwitch") return "pause";
+  return signal;
+}
+
 /* ─── Emit a cognitive event to Layer 3 ─── */
 export function emitCognitiveEvent(event: {
   type: string;
@@ -57,7 +64,7 @@ export function emitCognitiveEvent(event: {
 }): void {
   browser.runtime.sendMessage({
     type: "COGNITIVE_EVENT",
-    payload: event,
+    payload: { ...event, type: normalizeEventType(event.type) },
   }).catch(() => {});
 }
 
@@ -139,16 +146,6 @@ export async function endSession(): Promise<FullCognitiveProfile | null> {
 
   /* Save updated profile */
   await updateProfile(profile);
-
-  /* Broadcast to Layer 3 */
-  try {
-    await browser.runtime.sendMessage({
-      type: "SESSION_END",
-      payload: sessionEndPayload,
-    });
-  } catch {
-    /* no listeners */
-  }
 
   /* Clear session stats for next session */
   await clearSessionStats();

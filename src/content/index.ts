@@ -92,6 +92,18 @@ function detectSourceType(): "pdf" | "website" | "video" | "lecture" | null {
 
 /* ─── Emit signal to background ─────────────────────────────────────────────── */
 
+/* ─── Activity ping — reset workspace idle timer ─────────────────────────── */
+let activityPingTimer: ReturnType<typeof setTimeout> | null = null;
+
+function sendActivityPing(): void {
+  if (activityPingTimer) clearTimeout(activityPingTimer);
+  activityPingTimer = setTimeout(() => {
+    browser.runtime.sendMessage({ type: "ACTIVITY_PING" }).catch(() => {});
+  }, 5000);
+}
+
+/* ─── Emit signal to background ─────────────────────────────────────────────── */
+
 function emitSignal(signal: "highlight" | "pause" | "reRead" | "skip" | "tabSwitch", sectionId: string = "page"): void {
   browser.runtime.sendMessage({
     type: "BEHAVIOR_SIGNAL",
@@ -104,6 +116,9 @@ function emitSignal(signal: "highlight" | "pause" | "reRead" | "skip" | "tabSwit
   }).catch(() => {
     /* Background might not be ready */
   });
+
+  // Also send activity ping for workspace idle timer
+  sendActivityPing();
 }
 
 /* ─── Section tracking ──────────────────────────────────────────────────────── */
@@ -241,6 +256,17 @@ function handleTextSelection(): void {
   }
 
   emitSignal("highlight", sectionId);
+
+  /* Also send the highlighted text as a note for the workspace artifact */
+  const tabId = 0; /* tabId not available from content script — background uses sender */
+  browser.runtime.sendMessage({
+    type: "HIGHLIGHT_NOTE",
+    payload: {
+      text,
+      tabId,
+      sectionId,
+    },
+  }).catch(() => {});
 }
 
 /* ─── Visibility change (tab switch) ────────────────────────────────────────── */
@@ -266,6 +292,8 @@ function initBehaviorTracking(): void {
   window.addEventListener("scroll", throttledScroll, { passive: true });
   document.addEventListener("mouseup", handleTextSelection);
   document.addEventListener("visibilitychange", handleVisibilityChange);
+  document.addEventListener("click", sendActivityPing);
+  document.addEventListener("keydown", sendActivityPing);
 
   /* Rebuild sections when DOM changes (lazy-loaded content) */
   const observer = new MutationObserver(() => {
@@ -289,6 +317,7 @@ if (shouldActivate()) {
         sourceType,
         url: window.location.href,
         timestamp: Date.now(),
+        title: document.title,
       },
     });
 
