@@ -26,13 +26,18 @@ export default defineConfig(({ mode }) => ({
       manifest: () => {
         const base = require("./src/manifest.json");
         if (mode === "firefox") {
+          const { background, ...rest } = base;
           return {
-            ...base,
+            ...rest,
             browser_specific_settings: {
               gecko: {
                 id: "mindease@architects.ensit",
                 strict_min_version: "109.0",
               },
+            },
+            background: {
+              scripts: [base.background.service_worker],
+              type: "module",
             },
           };
         }
