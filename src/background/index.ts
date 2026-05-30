@@ -91,21 +91,19 @@ browser.runtime.onMessage.addListener(
 
       (async () => {
         const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
-        const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_FULL_PROFILE;
+        const stored = result[STORAGE_KEYS.PROFILE] as Record<string, unknown> | undefined;
+        const fullProfile: FullCognitiveProfile = (stored?.transformationParams
+          ? stored
+          : DEFAULT_FULL_PROFILE) as FullCognitiveProfile;
 
         try {
           console.log("[Background] Starting transform for:", pageType);
           const chunks = await transformContent(
             text,
             pageType,
-            (fullProfile as FullCognitiveProfile).transformationParams,
+            fullProfile.transformationParams,
           );
           console.log("[Background] Transform complete, chunks:", chunks.length);
-          startSession(
-            (fullProfile as FullCognitiveProfile).userId ?? "guest",
-            fullProfile as unknown as CognitiveProfile,
-          );
-          // Push result directly to the tab
           await browser.tabs.sendMessage(tabId, { type: "TRANSFORMED_CONTENT", chunks });
         } catch (err) {
           console.error("[Background] Transform failed:", err);
@@ -124,12 +122,14 @@ browser.runtime.onMessage.addListener(
         break;
 
       case "SESSION_START": {
-        const { userId } = msg.payload as { userId: string };
-        console.log("[Background] Session started for user:", userId);
+        const payload = msg.payload as Record<string, unknown>;
+        const userId = String(payload?.userId ?? "guest");
         browser.storage.local.get(STORAGE_KEYS.PROFILE).then((res) => {
-          const profile = (res[STORAGE_KEYS.PROFILE] as CognitiveProfile | undefined);
-          if (!profile) console.warn("[Background] No cognitive profile found — starting session with default profile.");
-          startSession(userId, profile ?? (DEFAULT_PROFILE as unknown as CognitiveProfile));
+          const stored = res[STORAGE_KEYS.PROFILE] as Record<string, unknown> | undefined;
+          const profile: CognitiveProfile = (stored?.transformationParams
+            ? stored
+            : DEFAULT_FULL_PROFILE) as unknown as CognitiveProfile;
+          startSession(userId, profile);
         });
         break;
       }
