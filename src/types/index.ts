@@ -130,7 +130,11 @@ export type MessageType =
   | "GET_PROFILE"                // Layer 1 / Layer 3 → Layer 2
   | "PROFILE_DATA"               // Layer 2 → response
   | "ONBOARDING_COMPLETE"        // onboarding → background
-  | "RESET_PROFILE";             // popup → background
+  | "RESET_PROFILE"              // popup → background
+  | "TRANSFORM_CONTENT"           // content → background (Layer 1)
+  | "TRANSFORMED_CONTENT"         // background → content (response)
+  | "TRANSFORM_ERROR"             // background → content (error)
+  | "PING";                       // content → background (keepalive)
 
 export interface ExtensionMessage {
   type:    MessageType;

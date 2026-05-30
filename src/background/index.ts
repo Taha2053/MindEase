@@ -74,30 +74,51 @@ browser.tabs.onRemoved.addListener(async (_tabId) => {
 /* ── Message router ──────────────────────────────────────────────────────────── */
 
 browser.runtime.onMessage.addListener(
-  (message: unknown, sender, sendResponse) => {
-    const msg = message as Record<string, unknown>;
+  (message: unknown, _sender, sendResponse) => {
+    const msg = message as ExtensionMessage;
 
+    if (msg.type === "TRANSFORM_CONTENT") {
+      // Handle async case separately — must return true immediately
+      const { text, pageType } = msg.payload as { text: string; pageType: "website" | "pdf" | "lecture" };
+
+      (async () => {
+        const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
+        const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_FULL_PROFILE;
+
+        try {
+          console.log("[Background] Starting transform for:", pageType);
+          const chunks = await transformContent(text, pageType, fullProfile.transformationParams);
+          console.log("[Background] Transform complete, chunks:", chunks.length);
+          startSession(fullProfile.userId ?? "guest", fullProfile as unknown as CognitiveProfile);
+          sendResponse({ type: "TRANSFORMED_CONTENT", chunks });
+        } catch (err) {
+          console.error("[Background] Transform failed:", err);
+          sendResponse({ type: "TRANSFORM_ERROR", error: String(err) });
+        }
+      })();
+
+      return true; // Keep channel open
+    }
+
+    // All other synchronous cases
     switch (msg.type) {
+      case "PING":
+        sendResponse({ pong: true });
+        break;
+
       case "SESSION_START": {
-        const payload = msg.payload as { userId: string } | undefined;
-        const userId = payload?.userId ?? "guest";
+        const { userId } = msg.payload as { userId: string };
         console.log("[Background] Session started for user:", userId);
-
-        browser.storage.local.get(STORAGE_KEYS.PROFILE).then((result) => {
-          const profile = (result[STORAGE_KEYS.PROFILE] as CognitiveProfile | undefined) ?? DEFAULT_PROFILE;
-
-          if (!result[STORAGE_KEYS.PROFILE]) {
-            console.warn("[Background] No cognitive profile found — starting session with default profile.");
-          }
-
-          startSession(userId, profile);
+        browser.storage.local.get(STORAGE_KEYS.PROFILE).then((res) => {
+          const profile = (res[STORAGE_KEYS.PROFILE] as CognitiveProfile | undefined);
+          if (!profile) console.warn("[Background] No cognitive profile found — starting session with default profile.");
+          startSession(userId, profile ?? (DEFAULT_PROFILE as unknown as CognitiveProfile));
         });
         break;
       }
 
       case "SESSION_END": {
         console.log("[Background] Session ended — triggering synthesis.");
-
         endLayer3Session();
         endLayer2Session();
         break;
@@ -108,35 +129,6 @@ browser.runtime.onMessage.addListener(
         recordEvent(event);
         break;
       }
-
-      case "TRANSFORM_CONTENT": {
-        const { text, pageType } = msg.payload as { text: string; pageType: "website" | "pdf" | "lecture" };
-
-        // Get profile and transform — must use promise chain, not await
-        browser.storage.local.get(STORAGE_KEYS.PROFILE).then(async (result) => {
-          const fullProfile = (result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined) ?? DEFAULT_FULL_PROFILE;
-
-          try {
-            console.log("[Background] Starting transform for:", pageType);
-            const chunks = await transformContent(text, pageType, fullProfile.transformationParams);
-            console.log("[Background] Transform complete, chunks:", chunks.length);
-
-            // Start Layer 3 session with chunks
-            startSession(fullProfile.userId ?? "guest", fullProfile as unknown as CognitiveProfile);
-
-            sendResponse({ type: "TRANSFORMED_CONTENT", chunks });
-          } catch (err) {
-            console.error("[Background] Transform failed:", err);
-            sendResponse({ type: "TRANSFORM_ERROR", error: String(err) });
-          }
-        });
-
-        return true; // CRITICAL: keeps message channel open for async response
-      }
-
-      case "PING":
-        sendResponse({ pong: true });
-        break;
 
       case "ARTIFACT_READY":
         browser.action.setBadgeText({ text: "✓" });
