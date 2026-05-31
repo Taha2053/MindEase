@@ -13,6 +13,7 @@ import type {
   Action,
   RLAgentConfig,
   SignalType,
+  BaselineProfile,
 } from "@/types";
 import {
   ACTION_COUNT,
@@ -92,11 +93,27 @@ export class RLAgent {
     /* 3. Update Q-table */
     await this.learn(profile, reward);
 
-    /* 4. Select and apply best action */
+    /* 4. Select best action */
     const action = this.selectAction(profile.rlState);
-    profile.transformationParams = this.applyAction(profile.transformationParams, action);
 
-    /* 5. Save profile */
+    /* 5. If the action would toggle visual anchors OFF but baseline
+          says the user needs visuals, prevent it — baseline always wins. */
+    if (action === "toggleVisualAnchors") {
+      const wantsVisuals = profile.baseline.formatPreference === "visual"
+        || profile.baseline.needsConceptAnchor === true;
+      if (wantsVisuals && profile.transformationParams.useVisualAnchors) {
+        // Baseline wants visuals and they're currently on — pick a different action
+        const otherActions = ACTIONS.filter(a => a !== "toggleVisualAnchors");
+        const fallback = otherActions[Math.floor(Math.random() * otherActions.length)];
+        profile.transformationParams = this.applyAction(profile.transformationParams, fallback);
+      } else {
+        profile.transformationParams = this.applyAction(profile.transformationParams, action);
+      }
+    } else {
+      profile.transformationParams = this.applyAction(profile.transformationParams, action);
+    }
+
+    /* 6. Save profile */
     profile.updatedAt = Date.now();
     await updateProfile(profile);
     await broadcastProfileUpdate(profile);

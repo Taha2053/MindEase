@@ -6,6 +6,7 @@ import {
   getAppliedTheme, type Theme,
 } from "@/utils/themeManager";
 import { iconHTML } from "@/utils/icons";
+import { renderLatex } from "@/utils/latex";
 import { STORAGE_KEYS } from "@/types";
 import type {
   WorkspaceSession, FullCognitiveProfile, PersonalizedArtifact,
@@ -479,7 +480,7 @@ function renderNotes(artifact: PersonalizedArtifact | null, notes: HighlightNote
     const displayText = cleaned.length > maxLen ? cleaned.slice(0, maxLen) + "\u2026" : cleaned;
     return `
     <div class="note-card">
-      <div class="note-text">\u201C${esc(displayText)}\u201D</div>
+      <div class="note-text">\u201C${renderLatex(esc(displayText))}\u201D</div>
       <div class="note-meta">
         <span class="note-source">${esc(trunc(n.resourceTitle || n.sourceUrl, 35))}</span>
         <span>${new Date(n.timestamp).toLocaleString()}</span>

@@ -10,6 +10,7 @@ import type { ContentChunk, VisualEntry } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
 import { iconHTML } from "@/utils/icons";
+import { renderLatex } from "@/utils/latex";
 import {
   saveSidebarState,
   loadSidebarState,
@@ -379,7 +380,8 @@ function onExtensionStateChange(active: boolean): void {
 
   initBehaviorTracking();
 
-  setTimeout(async () => {
+  /* ── On-demand transformation: only transform when tab is visible ── */
+  async function triggerTransformation(): Promise<void> {
     await wakeServiceWorker();
     if (sourceType === "video") {
       await initYouTubeMode();
@@ -388,7 +390,21 @@ function onExtensionStateChange(active: boolean): void {
     } else {
       initContentTransformation(sourceType ?? "website");
     }
-  }, 5000);
+  }
+
+  if (document.visibilityState === "visible") {
+    // Tab is already visible — wait a moment then transform
+    setTimeout(triggerTransformation, 2000);
+  } else {
+    // Tab is hidden — wait for user to focus it
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        document.removeEventListener("visibilitychange", onVisible);
+        setTimeout(triggerTransformation, 2000);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+  }
 
   /* ── Sidebar recovery: restore overlay if previously visible ── */
   const savedState = await loadSidebarState();
@@ -1151,7 +1167,7 @@ function injectOverlay(chunks: ContentChunk[]): void {
       }
     }
     if (inList) parts.push("</ul>");
-    return parts.join("\n");
+    return renderLatex(parts.join("\n"));
   }
 
   const chunksHTML = chunks.map((chunk, i) => {

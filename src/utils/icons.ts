@@ -1,21 +1,39 @@
-import { createElement, icons } from "lucide";
-import type { IconNode } from "lucide";
+const EMOJI_MAP: Record<string, string> = {
+  brain: "\u{1F9E0}",
+  star: "\u2B50",
+  x: "\u2716",
+  sun: "\u2600\uFE0F",
+  moon: "\uD83C\uDF19",
+  settings: "\u2699\uFE0F",
+  "chevron-down": "\u25BC",
+  "arrow-left-right": "\u2194\uFE0F",
+  "refresh-cw": "\uD83D\uDD04",
+  "arrow-right": "\u27A1\uFE0F",
+  "check-circle": "\u2705",
+  circle: "\u2B55",
+  check: "\u2714\uFE0F",
+  "file-text": "\uD83D\uDCC4",
+  film: "\uD83C\uDFAC",
+  globe: "\uD83C\uDF10",
+  "graduation-cap": "\uD83C\uDF93",
+  "folder-open": "\uD83D\uDCC2",
+  pencil: "\u270F\uFE0F",
+  "bar-chart-3": "\uD83D\uDCCA",
+  link: "\uD83D\uDD17",
+  target: "\uD83C\uDFAF",
+  "alert-triangle": "\u26A0\uFE0F",
+  "message-circle": "\uD83D\uDCAC",
+  "message-square": "\uD83D\uDCAC",
+  image: "\uD83D\uDDBC\uFE0F",
+  timer: "\u23F1\uFE0F",
+  "book-open-text": "\uD83D\uDCD6",
+  "align-start-vertical": "\uD83D\uDCD0",
+  "file-down": "\uD83D\uCCE5",
+  "trending-up": "\uD83D\uDCC8",
+  package: "\uD83D\uDCE6",
+  lightbulb: "\uD83D\uDCA1",
+};
 
 export function iconHTML(name: string, className = ""): string {
-  const iconData = icons[name as keyof typeof icons] as IconNode | undefined;
-  if (!iconData) {
-    console.warn(`[Icons] Unknown icon: ${name}`);
-    return "";
-  }
-  const svg = createElement(iconData, {
-    class: className,
-    width: "1em",
-    height: "1em",
-    stroke: "currentColor",
-    fill: "none",
-    "stroke-width": "2",
-    "stroke-linecap": "round",
-    "stroke-linejoin": "round",
-  });
-  return svg.outerHTML;
+  return EMOJI_MAP[name] ?? "";
 }
