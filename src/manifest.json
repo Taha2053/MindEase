@@ -36,7 +36,8 @@
     "storage",
     "activeTab",
     "scripting",
-    "sidePanel"
+    "sidePanel",
+    "downloads"
   ],
 
   "host_permissions": [

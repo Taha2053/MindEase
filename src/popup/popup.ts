@@ -288,6 +288,8 @@ function cleanNoteText(raw: string): string {
     .replace(/\[CHUNK\s*\d*\]/gi, "")
     .replace(/^---+$/gm, "")
     .replace(/\[\/?[A-Z]+\]/g, "")
+    .replace(/\[CONCEPT:[^\]]+\]/g, "")
+    .replace(/\[SUMMARY:[^\]]+\]/g, "")
     .replace(/\u2605\s*/g, "")
     .replace(/&#9734;\s*/g, "")
     .replace(/\s{3,}/g, "  ")
@@ -471,6 +473,7 @@ async function init(): Promise<void> {
       [STORAGE_KEYS.EXTENSION_ACTIVE]: true,
       [STORAGE_KEYS.WORKSPACE]: null,
       [STORAGE_KEYS.EXCLUDED_TABS]: {},
+      [STORAGE_KEYS.NOTES]: null,
     });
     await browser.runtime.sendMessage({ type: "SESSION_STATE_CHANGED", payload: { active: true } }).catch(() => {});
     // Reload current tabs to activate content script

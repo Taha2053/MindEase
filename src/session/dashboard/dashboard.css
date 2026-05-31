@@ -205,6 +205,16 @@ body { min-height: 100vh; }
 .review-badge-skimmed { background: rgba(234, 179, 8, 0.15); color: var(--warning); }
 .review-badge-rushed { background: rgba(59, 130, 246, 0.15); color: var(--info); }
 
+/* ── Section 5b: Generated Visuals ── */
+.dash-visuals-grid { padding: var(--space-5) var(--space-6); display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-4); }
+.dash-visuals-grid .visual-card { background: var(--bg-surface-alt); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; transition: border-color var(--transition-fast); }
+.dash-visuals-grid .visual-card:hover { border-color: var(--accent); }
+.dash-visuals-grid .visual-card-img { width: 100%; display: block; background: var(--bg-base); object-fit: contain; }
+.dash-visuals-grid .visual-card-footer { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-4); font-size: var(--font-size-xs); color: var(--text-dim); border-top: 1px solid var(--border); }
+.dash-visuals-grid .visual-card-source { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.dash-visuals-grid .visual-card-source.napkin { background: color-mix(in srgb, #7C3AED 15%, transparent); color: #a78bfa; }
+.dash-visuals-grid .visuals-placeholder { text-align: center; padding: var(--space-8); color: var(--text-dim); font-size: var(--font-size-sm); }
+
 /* ── Section 6: Notes ── */
 .notes-list { padding: var(--space-5) var(--space-6); }
 
@@ -309,6 +319,7 @@ body { min-height: 100vh; }
 .dash-section:nth-child(6) { animation-delay: 0.3s; }
 .dash-section:nth-child(7) { animation-delay: 0.35s; }
 .dash-section:nth-child(8) { animation-delay: 0.4s; }
+.dash-section:nth-child(9) { animation-delay: 0.45s; }
 
 /* ── Print styles ── */
 @media print {

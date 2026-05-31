@@ -9,7 +9,6 @@ import browser from "webextension-polyfill";
 import type { VisualEntry, VisualsCache, TransformationParams } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { generateNapkinVisuals, type NapkinStyle } from "./napkinClient";
-import { generateFluxImages } from "./fluxClient";
 
 /* ── Cache helpers ──────────────────────────────────────────────── */
 
@@ -54,6 +53,14 @@ export async function generateVisualsForConcepts(
   const napkinResults = await generateNapkinVisuals(uniqueConcepts.slice(0, 5), style);
 
   for (const nr of napkinResults) {
+    const ext = nr.format === "png" ? "png" : "svg";
+    const filename = `MindEase/visuals/${sanitizeFilename(nr.concept)}.${ext}`;
+    browser.downloads.download({
+      url: nr.dataUrl,
+      filename,
+      saveAs: false,
+    }).catch(() => {}); // silent if downloads fail (e.g. no permission)
+
     entries.push({
       id: uuidv4(),
       concept: nr.concept,
@@ -63,24 +70,7 @@ export async function generateVisualsForConcepts(
       width: nr.width,
       height: nr.height,
       generatedAt: now,
-      expiresAt: now + 25 * 60 * 1000, // 25 min (Napkin URLs expire at 30)
-    });
-  }
-
-  // 2. Flux illustrative images (optional enhancement)
-  // Flux adds another visual perspective beyond diagrams
-  const fluxMap = await generateFluxImages(uniqueConcepts.slice(0, 5));
-  for (const [concept, result] of fluxMap) {
-    entries.push({
-      id: uuidv4(),
-      concept,
-      source: "flux",
-      format: "png",
-      dataUrl: result.dataUrl,
-      width: result.width,
-      height: result.height,
-      generatedAt: now,
-      expiresAt: now + 60 * 60 * 1000, // 1h for Flux blobs
+      expiresAt: now + 25 * 60 * 1000,
     });
   }
 
@@ -114,4 +104,13 @@ export async function getCachedVisuals(concepts: string[]): Promise<VisualEntry[
   return cache.entries.filter(
     (e) => concepts.includes(e.concept) && e.expiresAt > now,
   );
+}
+
+function sanitizeFilename(name: string): string {
+  return name
+    .replace(/[<>:"/\\|?*]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 100) || "visual";
 }

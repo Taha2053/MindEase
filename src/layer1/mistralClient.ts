@@ -49,6 +49,7 @@ Rules:
 - If summaryFrequency=high, add [SUMMARY: ...] after every chunk
 - Each chunk must cover one coherent topic
 - Add --- between chunks for clear separation
+- IMPORTANT: Output any math formulas or equations using LaTeX with $...$ for inline and $$...$$ for display math. For example: $E = mc^2$, $$\psi(x) = \sqrt{2}\sin(n\pi x / L)$$
 Return clean readable text only. Content: ${content}`;
 
   return callMistral(prompt);
@@ -69,6 +70,7 @@ Rules:
 - Simplification level 1=light edit, 2=simpler vocab, 3=plain language
 - If useVisualAnchors=true, add [CONCEPT: ...] before key ideas
 - If summaryFrequency=high, add [SUMMARY: ...] after every chunk
+- IMPORTANT: Output any math formulas or equations using LaTeX with $...$ for inline and $$...$$ for display math
 Be warm, clear, encouraging. Content: ${content}`;
 
   return callMistral(prompt);

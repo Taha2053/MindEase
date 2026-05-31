@@ -2,9 +2,12 @@
    layer1/napkinClient.ts — Napkin AI Visual Generation
    Napkin AI turns text into professional diagrams/infographics.
    Async 3-step workflow: create → poll status → download.
+   In dev, requests go through a local proxy (napkin-proxy.mjs)
+   to avoid Napkin's server-side Origin check on moz-extension://.
    ============================================================ */
 
-const NAPKIN_API_BASE = "https://api.napkin.ai/v1";
+// In dev, use local proxy. For production, swap to the deployed proxy URL.
+const NAPKIN_API_BASE = "http://localhost:3001";
 const NAPKIN_API_KEY = import.meta.env.VITE_NAPKIN_API_KEY as string | undefined;
 
 /* ── Types ───────────────────────────────────────────────────────── */
@@ -48,6 +51,7 @@ function headers(): Record<string, string> {
   return {
     Authorization: `Bearer ${NAPKIN_API_KEY}`,
     "Content-Type": "application/json",
+    Accept: "application/json",
   };
 }
 
@@ -64,7 +68,6 @@ async function createVisualRequest(
     content: text,
     style,
     format,
-    language: "auto",
   };
   if (contextBefore) body.context_before = contextBefore;
   if (contextAfter) body.context_after = contextAfter;
@@ -77,9 +80,6 @@ async function createVisualRequest(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => res.statusText);
-    if (res.status === 403 && errText.includes("CORS")) {
-      console.warn("[NapkinClient] API rejected extension origin. Try using a CORS proxy or contact Napkin support to whitelist your extension ID.");
-    }
     throw new Error(`[NapkinClient] Create visual failed (${res.status}): ${errText}`);
   }
 
@@ -114,7 +114,6 @@ async function pollStatus(
         );
       case "pending":
       case "processing":
-        // Exponential backoff
         await sleep(intervalMs * Math.min(2 ** i, 8));
         continue;
     }
@@ -126,7 +125,7 @@ async function pollStatus(
 /* ── Step 3: Download file ──────────────────────────────────────── */
 
 async function downloadFile(fileUrl: string): Promise<Blob> {
-  const res = await fetch(fileUrl, { headers: headers() });
+  const res = await fetch(fileUrl);
 
   if (!res.ok) {
     throw new Error(`[NapkinClient] Download failed (${res.status})`);
@@ -137,9 +136,6 @@ async function downloadFile(fileUrl: string): Promise<Blob> {
 
 /* ── Public API ─────────────────────────────────────────────────── */
 
-/**
- * Full pipeline: generate a Napkin visual for a single concept.
- */
 export async function generateNapkinVisual(
   concept: string,
   style: NapkinStyle = "formal",
@@ -147,7 +143,6 @@ export async function generateNapkinVisual(
   contextBefore?: string,
   contextAfter?: string,
 ): Promise<NapkinResult> {
-  // Build a concise text from the concept
   const text = `Explain the concept: ${concept}`;
 
   const requestId = await createVisualRequest(text, style, format, contextBefore, contextAfter);
@@ -171,9 +166,6 @@ export async function generateNapkinVisual(
   };
 }
 
-/**
- * Generate Napkin visuals for multiple concepts in parallel.
- */
 export async function generateNapkinVisuals(
   concepts: string[],
   style: NapkinStyle = "formal",

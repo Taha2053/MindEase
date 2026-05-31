@@ -13,7 +13,7 @@ import type {
   ResourceEntry, KeyConceptEntry, StudyCard, Gap, HighlightNote,
   Connection, TabResource, FocusSummary, StateTransition,
   SessionState, AdaptationExplanation, ExplanationMap,
-  CrossSourceConnection, CrossSourceResource,
+  CrossSourceConnection, CrossSourceResource, VisualEntry,
 } from "@/types";
 import { loadExplanations } from "@/layer2/explainer";
 
@@ -46,6 +46,8 @@ function cleanNote(raw: string): string {
     .replace(/\[CHUNK\s*\d*\]/gi, "")
     .replace(/^---+$/gm, "")
     .replace(/\[\/?[A-Z]+\]/g, "")
+    .replace(/\[CONCEPT:[^\]]+\]/g, "")
+    .replace(/\[SUMMARY:[^\]]+\]/g, "")
     .replace(/\u2605\s*/g, "")
     .replace(/&#9734;\s*/g, "")
     .replace(/\s{3,}/g, "  ")
@@ -102,6 +104,14 @@ async function init(): Promise<void> {
       el.outerHTML = svg;
     }
   });
+  // Inject KaTeX CSS for math rendering
+  if (!document.getElementById("mindease-katex-css")) {
+    const link = document.createElement("link");
+    link.id = "mindease-katex-css";
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    document.head.appendChild(link);
+  }
   setupThemeToggle();
   await loadDashboard();
 }
@@ -130,6 +140,7 @@ interface DashboardData {
   artifact: PersonalizedArtifact | null;
   profile: FullCognitiveProfile | null;
   notes: HighlightNote[];
+  visuals: VisualEntry[];
 }
 
 async function loadData(): Promise<DashboardData> {
@@ -138,18 +149,21 @@ async function loadData(): Promise<DashboardData> {
     "latestArtifact",
     STORAGE_KEYS.PROFILE,
     STORAGE_KEYS.NOTES,
+    STORAGE_KEYS.VISUALS_CACHE,
   ]);
 
   const session = result[STORAGE_KEYS.WORKSPACE] as WorkspaceSession | null;
   const artifact = result["latestArtifact"] as PersonalizedArtifact | null;
   const profile = result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | null;
   const notesCol = result[STORAGE_KEYS.NOTES] as { notes: HighlightNote[] } | null;
+  const visualsCache = result[STORAGE_KEYS.VISUALS_CACHE] as { entries: VisualEntry[]; updatedAt: number } | null;
 
   return {
     session,
     artifact,
     profile,
     notes: notesCol?.notes ?? [],
+    visuals: visualsCache?.entries ?? [],
   };
 }
 
@@ -435,6 +449,33 @@ async function renderExplanations(): Promise<void> {
       </div>
     `;
   }).join("");
+}
+
+/* ─── Section 5b: Generated Visuals ──────────────────────────────────────────── */
+
+function renderVisuals(visuals: VisualEntry[]): void {
+  const grid = $("dash-visuals-grid");
+  if (!grid) return;
+
+  if (visuals.length === 0) {
+    grid.innerHTML = `<p class="visuals-placeholder">${iconHTML("image")} No visuals were generated during this session.</p>`;
+    return;
+  }
+
+  grid.innerHTML = visuals.map((v) => `
+    <div class="visual-card">
+      <img class="visual-card-img"
+           src="${v.dataUrl}"
+           alt="${esc(v.concept)}"
+           loading="lazy"
+           style="aspect-ratio:${v.width ?? 800}/${v.height ?? 600}"
+      />
+      <div class="visual-card-footer">
+        <span>${esc(v.concept)}</span>
+        <span class="visual-card-source napkin">Napkin</span>
+      </div>
+    </div>
+  `).join("");
 }
 
 /* ─── Section 5: Needs Review ──────────────────────────────────────────────── */
@@ -724,6 +765,7 @@ async function loadDashboard(): Promise<void> {
     renderResources(data.artifact, data.session);
     renderLearned(data.artifact);
     await renderExplanations();
+    renderVisuals(data.visuals);
     renderReview(data.artifact);
     renderNotes(data.artifact, data.notes);
     renderInsights(data.artifact);

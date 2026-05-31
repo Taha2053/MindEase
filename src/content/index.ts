@@ -247,6 +247,8 @@ function handleTextSelection(): void {
     .replace(/\[CHUNK\s*\d*\]/gi, "")
     .replace(/^---+$/gm, "")
     .replace(/\[\/?[A-Z]+\]/g, "")
+    .replace(/\[CONCEPT:[^\]]+\]/g, "")
+    .replace(/\[SUMMARY:[^\]]+\]/g, "")
     .replace(/\u2605\s*/g, "")
     .replace(/&#9734;\s*/g, "")
     .replace(/\s{3,}/g, "  ")
@@ -380,31 +382,35 @@ function onExtensionStateChange(active: boolean): void {
 
   initBehaviorTracking();
 
-  /* ── On-demand transformation: only transform when tab is visible ── */
+  /* ── On-demand transformation: only transform when user is engaged ── */
   async function triggerTransformation(): Promise<void> {
     await wakeServiceWorker();
     if (sourceType === "video") {
-      await initYouTubeMode();
+      // For video: wait for the user to actually play before transforming
+      const video = document.querySelector("video") as HTMLVideoElement;
+      if (video && !video.paused) {
+        await initYouTubeMode();
+      } else if (video) {
+        video.addEventListener("play", () => initYouTubeMode(), { once: true });
+      }
     } else if (sourceType === "pdf") {
       await initPDFMode();
     } else {
-      initContentTransformation(sourceType ?? "website");
+      if (document.visibilityState === "visible") {
+        setTimeout(() => initContentTransformation(sourceType ?? "website"), 2000);
+      } else {
+        const onVisible = () => {
+          if (document.visibilityState === "visible") {
+            document.removeEventListener("visibilitychange", onVisible);
+            setTimeout(() => initContentTransformation(sourceType ?? "website"), 2000);
+          }
+        };
+        document.addEventListener("visibilitychange", onVisible);
+      }
     }
   }
 
-  if (document.visibilityState === "visible") {
-    // Tab is already visible — wait a moment then transform
-    setTimeout(triggerTransformation, 2000);
-  } else {
-    // Tab is hidden — wait for user to focus it
-    const onVisible = () => {
-      if (document.visibilityState === "visible") {
-        document.removeEventListener("visibilitychange", onVisible);
-        setTimeout(triggerTransformation, 2000);
-      }
-    };
-    document.addEventListener("visibilitychange", onVisible);
-  }
+  triggerTransformation();
 
   /* ── Sidebar recovery: restore overlay if previously visible ── */
   const savedState = await loadSidebarState();
@@ -464,7 +470,7 @@ function renderNotesList(notes?: Array<Record<string, unknown>>): void {
   const recent = notes.slice(-20).reverse();
   container.innerHTML = recent.map((n) => `
     <div class="mindease-note-card">
-      <div class="mindease-note-text">\u201C${_escHtml(String(n.text ?? ""))}\u201D</div>
+      <div class="mindease-note-text">\u201C${renderLatex(_escHtml(String(n.text ?? "")))}\u201D</div>
       <div class="mindease-note-meta">
         <span class="mindease-note-source">${_escHtml(_trunc(String(n.resourceTitle ?? n.sourceUrl ?? ""), 40))}</span>
         <span>${new Date(Number(n.timestamp ?? 0)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
@@ -489,7 +495,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     removeReopenButton();
     injectOverlay(msg.chunks);
   }
-  if (msg.type === "VISUALS_READY" && msg.visuals && msg.visuals.length > 0) {
+  if (msg.type === "VISUALS_READY" && msg.visuals) {
     renderVisuals(msg.visuals);
   }
   if (msg.type === "TRANSFORM_ERROR") {
@@ -565,7 +571,7 @@ function generateOverlayStyles(): string {
         position: fixed;
         top: 0;
         right: 0;
-        width: var(--overlay-width, min(420px, 90vw));
+        width: var(--overlay-width, min(520px, 92vw));
         height: var(--overlay-height, 100vh);
         max-height: 100vh;
         background: var(--bg-overlay);
@@ -1099,6 +1105,10 @@ function generateOverlayStyles(): string {
         #mindease-logo .logo-badge { display: none; }
       }
 
+      @media (min-width: 1600px) {
+        #mindease-overlay { width: var(--overlay-width, 580px); }
+      }
+
       @media (max-height: 500px) {
         #mindease-header { padding: 8px 14px; }
         #mindease-stats-bar .s-num { font-size: 0.9rem; }
@@ -1127,6 +1137,15 @@ function injectOverlay(chunks: ContentChunk[]): void {
   document.getElementById("mindease-overlay")?.remove();
   document.getElementById("mindease-pdf-loader")?.remove();
   removeReopenButton();
+
+  // Inject KaTeX CSS for math rendering
+  if (!document.getElementById("mindease-katex-css")) {
+    const link = document.createElement("link");
+    link.id = "mindease-katex-css";
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    document.head.appendChild(link);
+  }
 
   const conceptChunks = chunks.filter(c => c.text.includes("[CONCEPT:"));
   const regularChunks = chunks.filter(c => !c.text.includes("[CONCEPT:"));
@@ -1626,12 +1645,17 @@ function renderVisuals(visuals: VisualEntry[]): void {
   }
 
   if (visuals.length === 0) {
-    grid.innerHTML = `<p class="visuals-placeholder">No visuals generated for this page.</p>`;
+    grid.innerHTML = `<p class="visuals-placeholder">
+      ${iconHTML("image")} Generating visuals...<br>
+      <span style="font-size:0.7rem;color:var(--text-muted);display:block;margin-top:6px">
+        Make sure the local proxy is running: <code>npm run napkin-proxy</code>
+      </span>
+    </p>`;
     return;
   }
 
   grid.innerHTML = visuals.map((v) => {
-    const sourceLabel = v.source === "napkin" ? "Napkin" : "Flux";
+    const sourceLabel = "Napkin";
     return `
       <div class="visual-card">
         <img class="visual-card-img"

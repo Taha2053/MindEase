@@ -191,27 +191,29 @@ browser.runtime.onMessage.addListener(
             fullProfile.transformationParams,
           );
           console.log("[Background] Transform complete, chunks:", chunks.length);
-          await browser.tabs.sendMessage(tabId, { type: "TRANSFORMED_CONTENT", chunks });
+          await browser.tabs.sendMessage(tabId, { type: "TRANSFORMED_CONTENT", chunks }).catch(() => {});
 
           // Fire visual generation asynchronously (don't block transform response)
           if (fullProfile.transformationParams.useVisualAnchors) {
             const concepts = extractConceptsFromChunks(chunks);
-            if (concepts.length > 0) {
-              generateVisualsForConcepts(concepts, fullProfile.transformationParams)
-                .then((visuals) => {
-                  if (visuals.length > 0) {
-                    return browser.tabs.sendMessage(tabId, {
-                      type: "VISUALS_READY",
-                      visuals,
-                    });
-                  }
-                })
-                .catch((err) => console.error("[Background] Visual generation error:", err));
-            }
+            generateVisualsForConcepts(concepts, fullProfile.transformationParams)
+              .then((visuals) => {
+                return browser.tabs.sendMessage(tabId, {
+                  type: "VISUALS_READY",
+                  visuals: visuals ?? [],
+                }).catch(() => {});
+              })
+              .catch((err) => {
+                console.warn("[Background] Visual generation error:", err);
+                browser.tabs.sendMessage(tabId, {
+                  type: "VISUALS_READY",
+                  visuals: [],
+                }).catch(() => {});
+              });
           }
         } catch (err) {
-          console.error("[Background] Transform failed:", err);
-          await browser.tabs.sendMessage(tabId, { type: "TRANSFORM_ERROR", error: String(err) });
+          console.warn("[Background] Transform error:", err);
+          browser.tabs.sendMessage(tabId, { type: "TRANSFORM_ERROR", error: String(err) }).catch(() => {});
         }
       })();
 
