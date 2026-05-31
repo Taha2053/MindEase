@@ -59,11 +59,11 @@ export class RLAgent {
     return this.config.epsilon;
   }
 
-  /* ─── Process a behavior signal → update profile → return reward ─── */
+  /* ─── Process a behavior signal → update profile → return reward and action ─── */
   async processSignal(
     profile: FullCognitiveProfile,
     signal: SignalType,
-  ): Promise<{ reward: number; updatedProfile: FullCognitiveProfile }> {
+  ): Promise<{ reward: number; updatedProfile: FullCognitiveProfile; actionTaken: Action }> {
     const { rlState } = profile;
 
     /* 1. Update rlState counters */
@@ -101,7 +101,7 @@ export class RLAgent {
     await updateProfile(profile);
     await broadcastProfileUpdate(profile);
 
-    return { reward, updatedProfile: profile };
+    return { reward, updatedProfile: profile, actionTaken: action };
   }
 
   /* ─── Q-Learning Update Step ─── */

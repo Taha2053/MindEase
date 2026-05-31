@@ -8,7 +8,7 @@
    ============================================================ */
 
 import { v4 as uuidv4 } from "uuid";
-import { transformWebContent, transformPDF, transformLecture } from "./geminiClient";
+import { transformWebContent, transformPDF, transformLecture } from "./mistralClient";
 import type { TransformationParams, ContentChunk } from "@/types";
 
 /**
@@ -54,10 +54,21 @@ export async function transformContent(
   for (const line of lines) {
     if (
       line.startsWith("[CHUNK") ||
-      line.startsWith("[SUMMARY") ||
       line.startsWith("---") ||
       line.match(/^\*\*/)
     ) {
+      if (currentChunk.trim().length > 0) {
+        chunks.push({
+          id: uuidv4(),
+          sourceId,
+          sourceType,
+          text: currentChunk.trim(),
+          conceptTags: extractConcepts(currentChunk),
+          position: chunkIndex++,
+        });
+      }
+      currentChunk = "";
+    } else if (line.startsWith("[SUMMARY")) {
       if (currentChunk.trim().length > 0) {
         chunks.push({
           id: uuidv4(),

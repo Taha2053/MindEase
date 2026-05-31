@@ -19,6 +19,8 @@
     "vitest": "^4.1.7"
   },
   "dependencies": {
+    "@huggingface/inference": "^4.13.18",
+    "lucide": "^1.17.0",
     "uuid": "^14.0.0",
     "vite-plugin-web-extension": "^4.5.1",
     "webextension-polyfill": "^0.12.0"

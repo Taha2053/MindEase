@@ -54,13 +54,13 @@
 
   /* ── Typography ── */
   --font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  --font-size-xs:   0.65rem;
-  --font-size-sm:   0.73rem;
-  --font-size-base: 0.83rem;
-  --font-size-md:   0.88rem;
-  --font-size-lg:   1rem;
-  --font-size-xl:   1.35rem;
-  --font-size-2xl:  1.6rem;
+  --font-size-xs:   0.75rem;
+  --font-size-sm:   0.85rem;
+  --font-size-base: 0.95rem;
+  --font-size-md:   1rem;
+  --font-size-lg:   1.1rem;
+  --font-size-xl:   1.5rem;
+  --font-size-2xl:  1.75rem;
 
   /* ── Spacing ── */
   --space-1: 4px;

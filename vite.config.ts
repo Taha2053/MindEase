@@ -47,6 +47,7 @@ export default defineConfig(({ mode }) => ({
       watchFilePaths: ["src/**/*.ts", "src/manifest.json"],
       additionalInputs: [
         "src/layer2/onboarding/onboarding.html",
+        "src/session/dashboard/dashboard.html",
       ],
     }),
   ],

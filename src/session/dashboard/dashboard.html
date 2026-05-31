@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MindEase — Session Reflection</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app" role="main" aria-live="polite">
+    <div class="loading-screen" id="loading-screen">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">Assembling your reflection...</div>
+    </div>
+    <div class="dashboard" id="dashboard" style="display:none">
+      <!-- Header -->
+      <header class="dash-header">
+        <div class="dash-header-inner">
+          <div class="dash-brand">
+            <div class="dash-brand-icon"><i data-lucide="brain" style="width:24px;height:24px"></i></div>
+            <div>
+              <div class="dash-brand-name">MindEase</div>
+              <div class="dash-brand-tagline">Session Reflection</div>
+            </div>
+          </div>
+          <div class="dash-header-right">
+            <button id="export-pdf" class="theme-toggle-btn" aria-label="Export PDF" title="Export as PDF"><i data-lucide="file-down"></i></button>
+            <button id="theme-toggle" class="theme-toggle-btn" aria-label="Toggle theme"><i data-lucide="sun"></i></button>
+            <button id="close-dashboard" class="theme-toggle-btn" aria-label="Close"><i data-lucide="x"></i></button>
+          </div>
+        </div>
+      </header>
+
+      <main class="dash-content">
+        <!-- Section 1: Session Overview -->
+        <section class="dash-section" id="section-overview">
+          <div class="section-header">
+            <div class="section-icon"><i data-lucide="bar-chart-3"></i></div>
+            <h2 class="section-title">Session Overview</h2>
+          </div>
+          <div class="overview-grid" id="overview-grid">
+            <div class="stat-card-lg">
+              <div class="stat-icon"><i data-lucide="timer"></i></div>
+              <div class="stat-body">
+                <div class="stat-value" id="ov-duration">--</div>
+                <div class="stat-label">Duration</div>
+              </div>
+            </div>
+            <div class="stat-card-lg">
+              <div class="stat-icon"><i data-lucide="folder-open"></i></div>
+              <div class="stat-body">
+                <div class="stat-value" id="ov-resources">0</div>
+                <div class="stat-label">Resources Used</div>
+              </div>
+            </div>
+            <div class="stat-card-lg">
+              <div class="stat-icon"><i data-lucide="brain"></i></div>
+              <div class="stat-body">
+                <div class="stat-value" id="ov-concepts">0</div>
+                <div class="stat-label">Concepts Explored</div>
+              </div>
+            </div>
+            <div class="stat-card-lg">
+              <div class="stat-icon"><i data-lucide="file-text"></i></div>
+              <div class="stat-body">
+                <div class="stat-value" id="ov-notes">0</div>
+                <div class="stat-label">Notes Captured</div>
+              </div>
+            </div>
+            <div class="stat-card-lg stat-card-accent">
+              <div class="stat-icon"><i data-lucide="target"></i></div>
+              <div class="stat-body">
+                <div class="stat-value" id="ov-focus-score">0%</div>
+                <div class="stat-label">Focus Score</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 2: Focus Visualization -->
+        <section class="dash-section" id="section-focus">
+          <div class="section-header">
+            <div class="section-icon"><i data-lucide="trending-up"></i></div>
+            <h2 class="section-title">Focus Visualization</h2>
+          </div>
+          <div class="focus-container">
+            <div class="focus-timeline-wrap">
+              <div class="subsection-label">Focus Timeline</div>
+              <div class="timeline-canvas-wrap">
+                <canvas id="focus-timeline-canvas" width="800" height="60"></canvas>
+              </div>
+              <div class="timeline-legend">
+                <span class="legend-item"><span class="legend-dot legend-active"></span> Active</span>
+                <span class="legend-item"><span class="legend-dot legend-passive"></span> Passive</span>
+                <span class="legend-item"><span class="legend-dot legend-suspended"></span> Suspended</span>
+              </div>
+            </div>
+            <div class="focus-metrics-grid">
+              <div class="focus-metric-card">
+                <div class="fm-value" id="foc-interruptions">0</div>
+                <div class="fm-label">Interruptions</div>
+                <div class="fm-bar"><div class="fm-bar-fill" id="foc-interruptions-bar"></div></div>
+              </div>
+              <div class="focus-metric-card">
+                <div class="fm-value" id="foc-passive-periods">0</div>
+                <div class="fm-label">Passive Periods</div>
+                <div class="fm-bar"><div class="fm-bar-fill" id="foc-passive-bar"></div></div>
+              </div>
+              <div class="focus-metric-card">
+                <div class="fm-value" id="foc-longest-break">--</div>
+                <div class="fm-label">Longest Break</div>
+                <div class="fm-bar"><div class="fm-bar-fill" id="foc-longest-bar"></div></div>
+              </div>
+              <div class="focus-metric-card">
+                <div class="fm-value" id="foc-total-break">--</div>
+                <div class="fm-label">Total Break Time</div>
+                <div class="fm-bar"><div class="fm-bar-fill" id="foc-total-break-bar"></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 3: Resource Breakdown -->
+        <section class="dash-section" id="section-resources">
+          <div class="section-header">
+            <div class="section-icon"><i data-lucide="package"></i></div>
+            <h2 class="section-title">Resource Breakdown</h2>
+          </div>
+          <div class="resource-categories" id="resource-categories"></div>
+          <div class="resource-table-wrap">
+            <table class="resource-table" id="resource-table">
+              <thead>
+                <tr><th>Resource</th><th>Type</th><th>Time</th><th>Notes</th><th>Concepts</th></tr>
+              </thead>
+              <tbody id="resource-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Section 4: What You Learned -->
+        <section class="dash-section" id="section-learned">
+          <div class="section-header">
+            <div class="section-icon"><i data-lucide="book-open"></i></div>
+            <h2 class="section-title">What You Learned</h2>
+          </div>
+          <div class="learned-cards" id="learned-cards"></div>
+        </section>
+
+        <!-- Section 4b: Why MindEase Adapted This Content -->
+        <section class="dash-section" id="section-explanations">
+          <div class="section-header">
+            <div class="section-icon"><i data-lucide="message-circle"></i></div>
+            <h2 class="section-title">Why MindEase Adapted This Content</h2>
+          </div>
+          <div class="explanations-list" id="explanations-list"></div>
+        </section>
+
+        <!-- Section 5: Needs Review -->
+        <section class="dash-section" id="section-review">
+          <div class="section-header">
+            <div class="section-icon"><i data-lucide="refresh-cw"></i></div>
+            <h2 class="section-title">Needs Review</h2>
+          </div>
+          <div class="review-list" id="review-list"></div>
+        </section>
+
+        <!-- Section 6: Your Notes -->
+        <section class="dash-section" id="section-notes">
+          <div class="section-header">
+            <div class="section-icon"><i data-lucide="file-text"></i></div>
+            <h2 class="section-title">Your Notes</h2>
+          </div>
+          <div class="notes-list" id="notes-list"></div>
+        </section>
+
+        <!-- Section 7: Learning Insights -->
+        <section class="dash-section" id="section-insights">
+          <div class="section-header">
+            <div class="section-icon"><i data-lucide="lightbulb"></i></div>
+            <h2 class="section-title">Learning Insights</h2>
+          </div>
+          <div class="insights-grid" id="insights-grid"></div>
+        </section>
+
+        <!-- Section 8: Progress Summary -->
+        <section class="dash-section" id="section-progress">
+          <div class="section-header">
+            <div class="section-icon"><i data-lucide="target"></i></div>
+            <h2 class="section-title">Progress Summary</h2>
+          </div>
+          <div class="progress-summary" id="progress-summary"></div>
+        </section>
+      </main>
+
+      <footer class="dash-footer">
+        <div class="footer-inner">
+          <span>MindEase &mdash; Adaptive Learning</span>
+          <span class="footer-session" id="footer-session"></span>
+        </div>
+      </footer>
+    </div>
+  </div>
+  <script type="module" src="dashboard.ts"></script>
+</body>
+</html>

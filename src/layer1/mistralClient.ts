@@ -43,10 +43,12 @@ export async function transformWebContent(
 Profile: chunkSize=${profile.chunkSize}, simplificationLevel=${profile.simplificationLevel}, 
 useVisualAnchors=${profile.useVisualAnchors}, summaryFrequency=${profile.summaryFrequency}.
 Rules:
-- Split into chunks based on chunkSize (small=150 words, medium=300, large=500)
+- Split into labeled chunks using [CHUNK 1], [CHUNK 2], etc. based on chunkSize (small=150 words, medium=300, large=500)
 - Simplification level 1=light edit, 2=simpler vocab, 3=plain language
 - If useVisualAnchors=true, add a [CONCEPT: ...] tag before each key idea
 - If summaryFrequency=high, add [SUMMARY: ...] after every chunk
+- Each chunk must cover one coherent topic
+- Add --- between chunks for clear separation
 Return clean readable text only. Content: ${content}`;
 
   return callMistral(prompt);

@@ -8,7 +8,7 @@
 
 export type LearningStyle  = "visual" | "text" | "audio" | "mixed";
 export type AttentionSpan  = "short" | "medium" | "long";
-export type CognitiveNeed  = "dyslexia" | "adhd" | "multilingual" | "none";
+export type CognitiveNeed  = "dyslexia" | "adhd" | "autism" | "multilingual" | "none";
 
 export interface CognitiveProfile {
   userId:        string;
@@ -93,6 +93,24 @@ export interface Connection {
   similarityScore: number;       // 0.0 → 1.0
 }
 
+/** A single resource participating in a cross-source connection */
+export interface CrossSourceResource {
+  id:     string;                // sourceId or tabId
+  title:  string;
+  url:    string;
+  type:   string;                // display type: "PDF", "Video", "Website", "Documentation", "AI Assistant"
+  snippet: string;               // excerpt of relevant content
+}
+
+/** Cross-source connection with full resource metadata */
+export interface CrossSourceConnection {
+  conceptLabel: string;
+  resources:    CrossSourceResource[];
+  matchCount:   number;           // number of resources the concept appears in
+  matchType:    "exact" | "similar";
+  confidence:   number;           // 0.0 → 1.0
+}
+
 // ── Layer 3 — Study Card types ────────────────────────────────────────────────
 
 export type CardFormat = "visual" | "chunked-text" | "spaced-list" | "audio-note";
@@ -118,6 +136,68 @@ export interface KnowledgeArtifact {
   generatedAt: number;
 }
 
+// ── Layer 3 — Personalized Artifact (complete 7-section study summary) ──────────
+
+export interface ResourceEntry {
+  url: string;
+  title: string;
+  sourceType: "pdf" | "video" | "website" | "lecture";
+  timeSpentMs: number;
+  notesCount: number;
+  conceptsFound: string[];
+  joinedAt: number;
+  lastActiveAt: number;
+}
+
+export interface KeyConceptEntry {
+  label: string;
+  sources: string[];
+  occurrences: number;
+  engagementScore: number;
+}
+
+export interface FocusMetrics {
+  totalDurationMs: number;
+  focusedTimeMs: number;
+  interruptionCount: number;
+  longestInterruptionMs: number;
+  focusScore: number;
+}
+
+export interface PersonalizedArtifact {
+  sessionId:   string;
+  userId:      string;
+  profile:     CognitiveProfile;
+  generatedAt: number;
+
+  // 1. Resources Used
+  resourcesUsed: ResourceEntry[];
+
+  // 2. Key Concepts
+  keyConcepts: KeyConceptEntry[];
+
+  // 3. User Notes (aggregated highlights)
+  userNotes: HighlightNote[];
+
+  // 4. Needs Review (gaps)
+  needsReview: Gap[];
+
+  // 5. Study Cards
+  studyCards: StudyCard[];
+
+  // 6. Focus Summary
+  focusSummary: FocusMetrics;
+
+  // 7. Resource Summary (per-resource breakdown)
+  resourceSummary: ResourceEntry[];
+
+  // Legacy fields for backward compatibility
+  learnedCards: StudyCard[];
+  gaps: Gap[];
+  connections: Connection[];
+  crossSourceConnections: CrossSourceConnection[];
+}
+
 // ── Inter-layer messaging (chrome.runtime.sendMessage) ───────────────────────
 
 export type MessageType =
@@ -139,7 +219,12 @@ export type MessageType =
   | "HIGHLIGHT_NOTE"             // content → background (rich highlight)
   | "HIGHLIGHTS_GET"             // popup/overlay → background (fetch all notes)
   | "HIGHLIGHTS_UPDATED"         // background → popup/overlay (notes changed)
-  | "ACTIVITY_PING";             // content → background (reset idle timer)
+  | "ACTIVITY_PING"              // content → background (reset idle timer)
+  | "CONTROLS_CHANGED"          // popup → background (user changed overrides)
+  | "VISUALS_READY"             // background → content (visuals generated)
+  | "GENERATE_VISUALS"          // content → background (request visuals for concepts)
+  | "SESSION_STATE_CHANGED"     // popup → all (session started/ended)
+  | "EXTENSION_STATE_CHANGED";  // popup → content (extension activated/deactivated)
 
 export interface ExtensionMessage {
   type:    MessageType;
@@ -185,6 +270,12 @@ export interface FocusSummary {
   suspendedTimeMs: number;
 }
 
+export interface StateTransition {
+  fromState: SessionState;
+  toState: SessionState;
+  timestamp: number;
+}
+
 export interface WorkspaceSession {
   sessionId: string;
   userId: string;
@@ -201,6 +292,7 @@ export interface WorkspaceSession {
   interruptionCount: number;
   longestDistractionMs: number;
   distractionStart: number | null;
+  stateTransitions: StateTransition[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -373,6 +465,42 @@ export function stateToKey(state: DiscreteState): string {
   return `${state.highlightLevel}-${state.pauseLevel}-${state.reReadLevel}-${state.skipLevel}`;
 }
 
+// ── Explainability Layer — Adaptation Explanations ─────────────────────────────
+
+export type ExplanationCategory =
+  | "chunkSize"
+  | "simplification"
+  | "visualMode"
+  | "captionPacing"
+  | "readingDensity";
+
+export interface AdaptationExplanation {
+  category: ExplanationCategory;
+  title: string;
+  explanation: string;
+  actionLabel: string;
+  timestamp: number;
+}
+
+export type ExplanationMap = Record<ExplanationCategory, AdaptationExplanation | null>;
+
+// ── User Controls — Manual Overrides ──────────────────────────────────────────
+
+/**
+ * User-specified overrides that take precedence over RL agent decisions.
+ * Each field is optional — unset fields defer to the RL agent.
+ * When `enabled` is false, all overrides are ignored.
+ */
+export interface UserOverrides {
+  chunkSize?:           ChunkSize;
+  simplificationLevel?: SimplificationLevel;
+  captionSpeed?:        CaptionSpeed;
+  useVisualAnchors?:    boolean;
+  summaryFrequency?:    SummaryFrequency;
+  enabled:              boolean;
+  updatedAt:            number;
+}
+
 // ── Storage Keys ──────────────────────────────────────────────────────────────
 
 export const STORAGE_KEYS = {
@@ -383,4 +511,38 @@ export const STORAGE_KEYS = {
   SESSION_STATS:   "mindease_session_stats",
   WORKSPACE:       "mindease_workspace",
   NOTES:           "mindease_notes",
+  EXPLANATIONS:    "mindease_explanations",
+  OVERRIDES:       "mindease_overrides",
+  VISUALS_CACHE:   "mindease_visuals_cache",
+  EXTENSION_ACTIVE: "mindease_extension_active",
+  EXCLUDED_TABS: "mindease_excluded_tabs",
 } as const;
+
+// ── Visual Generation Types ──────────────────────────────────────────
+
+export type VisualSource = "napkin" | "flux";
+
+export interface VisualEntry {
+  id: string;
+  concept: string;
+  source: VisualSource;
+  format: "svg" | "png";
+  dataUrl: string;               // base64 data URL or blob URL
+  width?: number;
+  height?: number;
+  generatedAt: number;
+  expiresAt: number;             // Napkin download URLs expire after 30 min
+}
+
+export interface VisualsCache {
+  entries: VisualEntry[];
+  updatedAt: number;
+}
+
+export interface GenerateVisualPayload {
+  tabId: number;
+  sourceUrl: string;
+  sourceTitle: string;
+  concepts: string[];
+  useFlux: boolean;              // also generate Flux illustrative images
+}

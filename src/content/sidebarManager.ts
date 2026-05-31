@@ -16,7 +16,7 @@ export interface SidebarState {
   visible: boolean;
   minimized: boolean;
   onRight: boolean;
-  activeTab: "content" | "profile" | "session";
+  activeTab: "content" | "visuals" | "profile" | "session";
   lastScrollY: number;
 }
 

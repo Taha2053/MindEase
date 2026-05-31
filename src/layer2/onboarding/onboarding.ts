@@ -1,10 +1,11 @@
 import browser from "webextension-polyfill";
-import type { BaselineProfile, FullCognitiveProfile } from "@/types";
+import type { BaselineProfile, FullCognitiveProfile, CognitiveNeed } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { initTheme, toggleTheme as themeManagerToggle, getAppliedTheme, type Theme } from "@/utils/themeManager";
+import { iconHTML } from "@/utils/icons";
 
 interface Question {
-  id: keyof BaselineProfile;
+  id: keyof BaselineProfile | "condition";
   title: string;
   subtitle?: string;
   options: { icon: string; label: string; description: string; value: string }[];
@@ -16,8 +17,8 @@ const QUESTIONS: Question[] = [
     title: "How do you learn best?",
     subtitle: "Choose the style that feels most natural to you.",
     options: [
-      { icon: "\u{1F4CB}", label: "Visual \u2014 Diagrams & Images", description: "Charts, mind maps, illustrations help concepts click.", value: "visual" },
-      { icon: "\u{1F4DD}", label: "Text \u2014 Written Explanations", description: "Reading and writing works best for absorbing new ideas.", value: "text" },
+      { icon: "clipboard-list", label: "Visual - Diagrams & Images", description: "Charts, mind maps, illustrations help concepts click.", value: "visual" },
+      { icon: "file-text", label: "Text - Written Explanations", description: "Reading and writing works best for absorbing new ideas.", value: "text" },
     ],
   },
   {
@@ -25,8 +26,8 @@ const QUESTIONS: Question[] = [
     title: "How do you prefer new topics to be introduced?",
     subtitle: "This helps us structure how we present content.",
     options: [
-      { icon: "\u{1F4A1}", label: "Examples first", description: "Show me concrete examples, then explain the theory behind them.", value: "example-first" },
-      { icon: "\u{1F4D6}", label: "Theory first", description: "Explain the concept first, then show examples to illustrate it.", value: "theory-first" },
+      { icon: "lightbulb", label: "Examples first", description: "Show me concrete examples, then explain the theory behind them.", value: "example-first" },
+      { icon: "book-open-text", label: "Theory first", description: "Explain the concept first, then show examples to illustrate it.", value: "theory-first" },
     ],
   },
   {
@@ -34,27 +35,38 @@ const QUESTIONS: Question[] = [
     title: "How much detail do you prefer in your learning material?",
     subtitle: "This adjusts content density and chunk size.",
     options: [
-      { icon: "\u{1F4A8}", label: "Concise \u2014 Key points only", description: "Short, focused summaries with the essentials.", value: "concise" },
-      { icon: "\u{1F4DA}", label: "Detailed \u2014 In-depth explanations", description: "Thorough explanations with all the nuance.", value: "detailed" },
+      { icon: "zap", label: "Concise - Key points only", description: "Short, focused summaries with the essentials.", value: "concise" },
+      { icon: "library", label: "Detailed - In-depth explanations", description: "Thorough explanations with all the nuance.", value: "detailed" },
     ],
   },
   {
     id: "attentionSpan",
     title: "How long can you focus before needing a break?",
-    subtitle: "Be honest \u2014 this helps us set the right pace.",
+    subtitle: "Be honest - this helps us set the right pace.",
     options: [
-      { icon: "\u26A1", label: "Short \u2014 Under 10 min", description: "Frequent short bursts keep you sharp.", value: "short" },
-      { icon: "\u{1F9D0}", label: "Medium \u2014 10\u201325 min", description: "Solid focus sessions with a breather in between.", value: "medium" },
-      { icon: "\u{1F30A}", label: "Long \u2014 25+ minutes", description: "You can dive deep for extended periods.", value: "long" },
+      { icon: "zap", label: "Short - Under 10 min", description: "Frequent short bursts keep you sharp.", value: "short" },
+      { icon: "search", label: "Medium - 10-25 min", description: "Solid focus sessions with a breather in between.", value: "medium" },
+      { icon: "waves", label: "Long - 25+ minutes", description: "You can dive deep for extended periods.", value: "long" },
+    ],
+  },
+  {
+    id: "condition",
+    title: "Do you have any of the following?",
+    subtitle: "This helps us tailor content presentation for your needs.",
+    options: [
+      { icon: "brain", label: "Dyslexia", description: "Adjust text formatting, simplify sentences, use visual aids.", value: "dyslexia" },
+      { icon: "zap", label: "ADHD", description: "Shorter chunks, frequent summaries, minimize distractions.", value: "adhd" },
+      { icon: "smile-plus", label: "Autism / ASD", description: "Clear structure, literal language, predictable formatting.", value: "autism" },
+      { icon: "thumbs-up", label: "None of the above", description: "Standard adaptation based on your learning preferences.", value: "none" },
     ],
   },
   {
     id: "secondLanguageLearner",
-    title: "Are you studying in a language that\u2019s not your native one?",
+    title: "Are you studying in a language that's not your native one?",
     subtitle: "We adjust sentence complexity when needed.",
     options: [
-      { icon: "\u{1F30D}", label: "Yes \u2014 second language", description: "Simpler sentences and slower captions help.", value: "true" },
-      { icon: "\u{1F3F4}", label: "No \u2014 native language", description: "I am comfortable reading in this language.", value: "false" },
+      { icon: "globe", label: "Yes - second language", description: "Simpler sentences and slower captions help.", value: "true" },
+      { icon: "flag", label: "No - native language", description: "I am comfortable reading in this language.", value: "false" },
     ],
   },
   {
@@ -62,9 +74,9 @@ const QUESTIONS: Question[] = [
     title: "How fast do you read and absorb new material?",
     subtitle: "This helps us adjust text density and caption speed.",
     options: [
-      { icon: "\u{1F423}", label: "I need to go slow", description: "Careful reading, re-reading key parts.", value: "slow" },
-      { icon: "\u{1F43E}", label: "Moderate pace", description: "Comfortable reading through most material.", value: "moderate" },
-      { icon: "\u{1F680}", label: "I read quickly", description: "Fast skimmer, good at picking out key points.", value: "fast" },
+      { icon: "egg", label: "I need to go slow", description: "Careful reading, re-reading key parts.", value: "slow" },
+      { icon: "footprints", label: "Moderate pace", description: "Comfortable reading through most material.", value: "moderate" },
+      { icon: "rocket", label: "I read quickly", description: "Fast skimmer, good at picking out key points.", value: "fast" },
     ],
   },
   {
@@ -72,15 +84,15 @@ const QUESTIONS: Question[] = [
     title: "Do you need the big picture before diving into details?",
     subtitle: "How do you prefer new topics to be introduced?",
     options: [
-      { icon: "\u{1F30D}", label: "Yes \u2014 start with overview", description: "Show me the map before I explore the terrain.", value: "true" },
-      { icon: "\u{1F50D}", label: "No \u2014 details first", description: "Build up to the big picture step by step.", value: "false" },
+      { icon: "globe", label: "Yes - start with overview", description: "Show me the map before I explore the terrain.", value: "true" },
+      { icon: "search", label: "No - details first", description: "Build up to the big picture step by step.", value: "false" },
     ],
   },
 ];
 
 interface OnboardingState {
   currentStep: number;
-  answers: Partial<Record<keyof BaselineProfile, string>>;
+  answers: Partial<Record<keyof BaselineProfile | "condition", string>>;
   isEditMode: boolean;
   existingProfile: FullCognitiveProfile | null;
 }
@@ -103,7 +115,7 @@ async function loadTheme(): Promise<void> {
 async function toggleThemeLocal(): Promise<void> {
   const next = await themeManagerToggle();
   const btn = $("#theme-toggle");
-  if (btn) btn.textContent = next === "light" ? "\u{1F319}" : "\u2600\uFE0F";
+  if (btn) btn.innerHTML = iconHTML(next === "light" ? "moon" : "sun");
 }
 
 /* ─── Render ─── */
@@ -139,12 +151,12 @@ function renderStep(): void {
         const selected = state.answers[question.id] === opt.value;
         return `
           <div class="option ${selected ? "selected" : ""}" data-value="${opt.value}">
-            <div class="option-icon">${opt.icon}</div>
+            <div class="option-icon">${iconHTML(opt.icon)}</div>
             <div class="option-text">
               <span class="option-label">${opt.label}</span>
               <span class="option-desc">${opt.description}</span>
             </div>
-            <div class="option-check">${selected ? "\u2713" : ""}</div>
+            <div class="option-check">${selected ? iconHTML("check") : ""}</div>
           </div>
         `;
       }
@@ -157,7 +169,8 @@ function renderStep(): void {
       optionsEl.querySelectorAll(".option").forEach((o) => o.classList.remove("selected"));
       optionsEl.querySelectorAll(".option-check").forEach((c) => (c.textContent = ""));
       el.classList.add("selected");
-      el.querySelector(".option-check")!.textContent = "\u2713";
+      const checkEl = el.querySelector(".option-check");
+      if (checkEl) checkEl.innerHTML = iconHTML("check");
       nextBtn.classList.add("enabled");
     });
   });
@@ -168,9 +181,9 @@ function renderStep(): void {
     if (state.answers[question.id]) {
       nextBtn.classList.add("enabled");
     }
-    nextBtn.textContent = "Done \u2726";
+    nextBtn.textContent = "Done";
   } else {
-    nextBtn.textContent = "Next \u2192";
+    nextBtn.textContent = "Next";
     if (state.answers[question.id]) {
       nextBtn.classList.add("enabled");
     } else {
@@ -260,6 +273,16 @@ function generateProfileSummary(baseline: BaselineProfile): string {
     parts.push("and you can dive deep into material for extended periods");
   }
 
+  // Include condition info
+  const condition = state.answers.condition;
+  if (condition === "dyslexia") {
+    parts.push("We'll adjust text formatting and use visual anchors to support your reading");
+  } else if (condition === "adhd") {
+    parts.push("We'll keep content in shorter focused chunks with frequent checkpoints");
+  } else if (condition === "autism") {
+    parts.push("We'll provide clear structure and predictable formatting throughout");
+  }
+
   if (baseline.secondLanguageLearner) {
     parts.push("Since you\u2019re learning in a second language, we\u2019ll keep sentences simple and captions slower");
   }
@@ -288,13 +311,22 @@ async function saveProfile(): Promise<void> {
     learningApproach: state.answers.learningApproach as BaselineProfile["learningApproach"],
   };
 
+  // Map the condition answer to the CognitiveNeed type
+  const rawCondition = state.answers.condition;
+  const mappedCondition: CognitiveNeed =
+    rawCondition === "dyslexia" || rawCondition === "adhd" || rawCondition === "autism"
+      ? rawCondition
+      : baseline.secondLanguageLearner
+        ? "multilingual"
+        : "none";
+
   if (state.isEditMode && state.existingProfile) {
     const profile: FullCognitiveProfile = {
       ...state.existingProfile,
       learningStyle: baseline.formatPreference === "visual" ? "visual" as const : "text" as const,
       attentionSpan: baseline.attentionSpan,
       anchorNeed: baseline.needsConceptAnchor,
-      condition: (baseline.secondLanguageLearner ? "multilingual" : "none") as "multilingual" | "none",
+      condition: mappedCondition,
       updatedAt: Date.now(),
       baseline,
       transformationParams: getTransformationParamsFromBaseline(baseline),
@@ -311,7 +343,7 @@ async function saveProfile(): Promise<void> {
     learningStyle: baseline.formatPreference === "visual" ? "visual" as const : "text" as const,
     attentionSpan: baseline.attentionSpan,
     anchorNeed: baseline.needsConceptAnchor,
-    condition: (baseline.secondLanguageLearner ? "multilingual" : "none") as "multilingual" | "none",
+    condition: mappedCondition,
     updatedAt: Date.now(),
     createdAt: new Date().toISOString(),
     baseline,
@@ -363,8 +395,8 @@ function renderCompleteScreen(): void {
 
   card.innerHTML = `
     <div class="complete-screen">
-      <div class="complete-icon">${state.isEditMode ? "\u270F\uFE0F" : "\u{1F9E0}"}</div>
-      <div class="complete-title">${state.isEditMode ? "Profile Updated" : "You\u2019re all set!"}</div>
+      <div class="complete-icon">${iconHTML(state.isEditMode ? "pencil" : "brain", "complete-icon-svg")}</div>
+      <div class="complete-title">${state.isEditMode ? "Profile Updated" : "You are all set!"}</div>
       <div class="profile-summary">${summary}</div>
       <div class="profile-preview">
         <div class="preview-row"><span>Format</span><span>${baseline.formatPreference}</span></div>
@@ -379,7 +411,7 @@ function renderCompleteScreen(): void {
       </div>
       <div class="nav" style="justify-content:center">
         <button id="start-btn" class="btn-next enabled" style="padding:12px 40px;font-size:0.95rem">
-          ${state.isEditMode ? "Done \u2714" : "Start Learning \u2192"}
+          ${state.isEditMode ? "Done" : "Start Learning"}
         </button>
       </div>
     </div>
@@ -393,12 +425,19 @@ function renderCompleteScreen(): void {
 /* ─── Init ─── */
 
 async function init(): Promise<void> {
+  document.querySelectorAll("[data-lucide]").forEach(el => {
+    const name = el.getAttribute("data-lucide");
+    if (name) {
+      const svg = iconHTML(name, el.getAttribute("class") || "");
+      el.outerHTML = svg;
+    }
+  });
   loadTheme();
 
   const themeBtn = $("theme-toggle");
   if (themeBtn) {
     const current = getAppliedTheme();
-    themeBtn.textContent = current === "light" ? "\u{1F319}" : "\u2600\uFE0F";
+    themeBtn.innerHTML = iconHTML(current === "light" ? "moon" : "sun");
     themeBtn.addEventListener("click", toggleThemeLocal);
   }
 

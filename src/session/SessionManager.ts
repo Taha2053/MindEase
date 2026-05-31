@@ -10,6 +10,7 @@ import type {
   SignalType,
   FullCognitiveProfile,
   CognitiveProfile,
+  StateTransition,
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { v4 as uuidv4 } from "uuid";
@@ -31,7 +32,12 @@ export class SessionManager {
   // Callbacks — set by background to wire into existing layers
   public onLayer2Signal: ((signal: SignalType, url: string, sectionId: string) => Promise<void>) | null = null;
   public onLayer3Event: ((event: CognitiveEvent) => void) | null = null;
-  public onLayer3EndSession: ((chunks?: ContentChunk[]) => Promise<void>) | null = null;
+  public onLayer3EndSession: ((
+    chunks?: ContentChunk[],
+    highlights?: HighlightNote[] | null,
+    tabs?: TabResource[] | null,
+    focus?: FocusSummary | null,
+  ) => Promise<void>) | null = null;
   public onLayer2EndSession: (() => Promise<FullCognitiveProfile | null>) | null = null;
   public getProfile: (() => Promise<FullCognitiveProfile | null>) | null = null;
 
@@ -136,6 +142,7 @@ export class SessionManager {
         interruptionCount: 0,
         longestDistractionMs: 0,
         distractionStart: null,
+        stateTransitions: [],
       };
     }
 
@@ -201,6 +208,7 @@ export class SessionManager {
 
     // Transition back to active
     const wasNotActive = this.session.state !== "active";
+    if (wasNotActive) this.recordTransition("active");
     this.session.state = "active";
     this.session.lastActivityAt = now;
     this.session.enteredPassiveAt = null;
@@ -250,19 +258,26 @@ export class SessionManager {
   async endSession(): Promise<void> {
     if (!this.session) return;
 
+    this.recordTransition("ended");
     this.session.state = "ended";
     this.session.endTime = Date.now();
     this.clearTimers();
     await this.persist();
 
-    // Call Layer 3 endSession with Layer 1 chunks from storage
+    // Call Layer 3 endSession with workspace data
     if (this.onLayer3EndSession) {
       try {
         const stored = await browser.storage.local.get("sessionChunks");
         const chunks = (stored.sessionChunks ?? []) as ContentChunk[];
-        await this.onLayer3EndSession(chunks);
+        const highlights = this.getHighlights();
+        const tabs = this.getTabs();
+        const focus = this.getFocusSummary();
+        await this.onLayer3EndSession(chunks, highlights, tabs, focus);
       } catch {
-        await this.onLayer3EndSession();
+        const highlights = this.getHighlights();
+        const tabs = this.getTabs();
+        const focus = this.getFocusSummary();
+        await this.onLayer3EndSession(undefined, highlights, tabs, focus);
       }
     }
 
@@ -284,8 +299,15 @@ export class SessionManager {
 
   /* ─── State Transitions (private) ────────────────────────────────────── */
 
+  private recordTransition(toState: SessionState): void {
+    if (!this.session) return;
+    const fromState = this.session.state;
+    this.session.stateTransitions.push({ fromState, toState, timestamp: Date.now() });
+  }
+
   private transitionToPassive(): void {
     if (!this.session || this.session.state !== "active") return;
+    this.recordTransition("passive");
     this.session.state = "passive";
     this.session.enteredPassiveAt = Date.now();
     this.persist();
@@ -295,6 +317,7 @@ export class SessionManager {
     if (!this.session || this.session.state === "suspended" || this.session.state === "ended") return;
 
     const now = Date.now();
+    this.recordTransition("suspended");
 
     // Track time spent in previous state
     if (this.session.state === "active" && this.session.enteredPassiveAt) {

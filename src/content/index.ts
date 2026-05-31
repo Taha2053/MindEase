@@ -6,8 +6,10 @@
    ============================================================ */
 
 import browser from "webextension-polyfill";
-import type { ContentChunk } from "@/types";
+import type { ContentChunk, VisualEntry } from "@/types";
+import { STORAGE_KEYS } from "@/types";
 import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
+import { iconHTML } from "@/utils/icons";
 import {
   saveSidebarState,
   loadSidebarState,
@@ -240,7 +242,14 @@ function handleTextSelection(): void {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed) return;
 
-  const text = selection.toString().trim();
+  const text = selection.toString().trim()
+    .replace(/\[CHUNK\s*\d*\]/gi, "")
+    .replace(/^---+$/gm, "")
+    .replace(/\[\/?[A-Z]+\]/g, "")
+    .replace(/\u2605\s*/g, "")
+    .replace(/&#9734;\s*/g, "")
+    .replace(/\s{3,}/g, "  ")
+    .trim();
   if (text.length < 3) return;
 
   const range = selection.getRangeAt(0);
@@ -300,12 +309,56 @@ function initBehaviorTracking(): void {
 /* ── Entry point ─────────────────────────────────────────────────────────────── */
 
 let _theme: Theme = "dark";
+let _extensionActive = false;
+
+/**
+ * Check if the extension is globally active (user started a session).
+ */
+async function isExtensionActive(): Promise<boolean> {
+  try {
+    const result = await browser.storage.local.get(STORAGE_KEYS.EXTENSION_ACTIVE);
+    return result[STORAGE_KEYS.EXTENSION_ACTIVE] === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * React to extension state changes.
+ */
+function onExtensionStateChange(active: boolean): void {
+  _extensionActive = active;
+  if (!active) {
+    // Remove overlay if it exists
+    const overlay = document.getElementById("mindease-overlay");
+    if (overlay) overlay.remove();
+    document.getElementById("mindease-pdf-loader")?.remove();
+    removeReopenButton();
+  } else {
+    // Re-activate: reload the page logic
+    window.location.reload();
+  }
+}
 
 (async () => {
   _theme = await initTheme();
 
   if (!shouldActivate()) {
     console.log("[MindEase] Skipping non-educational site:", window.location.hostname);
+    return;
+  }
+
+  // Check if extension is globally active (user started a session)
+  _extensionActive = await isExtensionActive();
+  if (!_extensionActive) {
+    console.log("[MindEase] Extension is inactive. Waiting for user to start a session.");
+    // Listen for activation message
+    browser.runtime.onMessage.addListener((message: unknown) => {
+      const msg = message as { type: string; active?: boolean };
+      if (msg.type === "EXTENSION_STATE_CHANGED") {
+        onExtensionStateChange(msg.active ?? false);
+      }
+    });
     return;
   }
 
@@ -404,12 +457,24 @@ function renderNotesList(notes?: Array<Record<string, unknown>>): void {
   `).join("");
 }
 
+function fmtDurationLocal(ms: number): string {
+  const sec = Math.floor(ms / 1000);
+  const min = Math.floor(sec / 60);
+  const hr = Math.floor(min / 60);
+  if (hr > 0) return `${hr}h ${min % 60}m`;
+  if (min > 0) return `${min}m ${sec % 60}s`;
+  return `${sec}s`;
+}
+
 /* Receive pushed response from background */
 browser.runtime.onMessage.addListener((message: unknown) => {
-  const msg = message as { type: string; chunks?: ContentChunk[]; error?: string };
+  const msg = message as { type: string; chunks?: ContentChunk[]; error?: string; payload?: unknown; visuals?: VisualEntry[] };
   if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks && msg.chunks.length > 0) {
     removeReopenButton();
     injectOverlay(msg.chunks);
+  }
+  if (msg.type === "VISUALS_READY" && msg.visuals && msg.visuals.length > 0) {
+    renderVisuals(msg.visuals);
   }
   if (msg.type === "TRANSFORM_ERROR") {
     console.error("[MindEase Content] Transform error:", msg.error);
@@ -419,6 +484,10 @@ browser.runtime.onMessage.addListener((message: unknown) => {
       const data = updated.mindease_notes as { notes?: Array<Record<string, unknown>> } | undefined;
       renderNotesList(data?.notes);
     });
+  }
+  if (msg.type === "ARTIFACT_READY") {
+    /* Store latest artifact for overlay to pick up */
+    browser.storage.local.set({ latestArtifact: msg.payload });
   }
 });
 
@@ -677,28 +746,197 @@ function generateOverlayStyles(): string {
         display: inline-flex;
         align-items: center;
         gap: 5px;
-        color: var(--accent);
         font-size: 0.7rem;
         font-weight: 600;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
-        margin-bottom: 8px;
-        background: color-mix(in srgb, var(--accent) 10%, transparent);
-        padding: 3px 8px;
-        border-radius: 4px;
+        margin-bottom: 10px;
+        padding: 4px 10px;
+        border-radius: 6px;
       }
-      .chunk-text {
+
+      .chunk-body {
         color: var(--text-primary);
         font-size: 0.855rem;
-        line-height: 1.7;
+        line-height: 1.75;
       }
+      .chunk-body p {
+        margin: 0 0 8px;
+      }
+      .chunk-body p:last-child {
+        margin-bottom: 0;
+      }
+      .chunk-body h4.chunk-subtitle {
+        font-size: 0.88rem;
+        font-weight: 700;
+        margin: 12px 0 6px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+      }
+      .chunk-body ul {
+        margin: 6px 0;
+        padding-left: 18px;
+        list-style: none;
+      }
+      .chunk-body ul li {
+        position: relative;
+        padding-left: 14px;
+        margin-bottom: 4px;
+      }
+      .chunk-body ul li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0.5em;
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: currentColor;
+        opacity: 0.5;
+      }
+      .chunk-body blockquote {
+        margin: 8px 0;
+        padding: 8px 12px;
+        border-left: 3px solid;
+        border-radius: 0 6px 6px 0;
+        font-style: italic;
+        font-size: 0.82rem;
+        opacity: 0.9;
+      }
+      .chunk-body code {
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 0.78rem;
+        padding: 1px 5px;
+        border-radius: 3px;
+        background: color-mix(in srgb, currentColor 8%, transparent);
+      }
+      .chunk-body strong {
+        font-weight: 700;
+      }
+
+      /* ── Chunk color variants ── */
+      .mindease-chunk.color-accent {
+        --chunk-theme: var(--accent);
+        --chunk-bg: color-mix(in srgb, var(--accent) 6%, var(--bg-surface));
+      }
+      .mindease-chunk.color-secondary {
+        --chunk-theme: var(--accent-secondary);
+        --chunk-bg: color-mix(in srgb, var(--accent-secondary) 6%, var(--bg-surface));
+      }
+      .mindease-chunk.color-tertiary {
+        --chunk-theme: #10b981;
+        --chunk-bg: color-mix(in srgb, #10b981 6%, var(--bg-surface));
+      }
+      .mindease-chunk.color-quaternary {
+        --chunk-theme: #f59e0b;
+        --chunk-bg: color-mix(in srgb, #f59e0b 6%, var(--bg-surface));
+      }
+      .mindease-chunk.color-accent,
+      .mindease-chunk.color-secondary,
+      .mindease-chunk.color-tertiary,
+      .mindease-chunk.color-quaternary {
+        border-color: color-mix(in srgb, var(--chunk-theme) 20%, var(--border));
+        background: var(--chunk-bg);
+      }
+      .mindease-chunk:hover.color-accent { border-color: color-mix(in srgb, var(--chunk-theme) 50%, var(--border-hover)); }
+      .mindease-chunk:hover.color-secondary { border-color: color-mix(in srgb, var(--chunk-theme) 50%, var(--border-hover)); }
+      .mindease-chunk:hover.color-tertiary { border-color: color-mix(in srgb, var(--chunk-theme) 50%, var(--border-hover)); }
+      .mindease-chunk:hover.color-quaternary { border-color: color-mix(in srgb, var(--chunk-theme) 50%, var(--border-hover)); }
+
+      .color-accent .chunk-concept-tag { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+      .color-secondary .chunk-concept-tag { color: var(--accent-secondary); background: color-mix(in srgb, var(--accent-secondary) 12%, transparent); }
+      .color-tertiary .chunk-concept-tag { color: #10b981; background: color-mix(in srgb, #10b981 12%, transparent); }
+      .color-quaternary .chunk-concept-tag { color: #f59e0b; background: color-mix(in srgb, #f59e0b 12%, transparent); }
+
+      .color-accent .chunk-body h4.chunk-subtitle { color: var(--accent); }
+      .color-secondary .chunk-body h4.chunk-subtitle { color: var(--accent-secondary); }
+      .color-tertiary .chunk-body h4.chunk-subtitle { color: #10b981; }
+      .color-quaternary .chunk-body h4.chunk-subtitle { color: #f59e0b; }
+
+      .color-accent .chunk-body blockquote { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+      .color-secondary .chunk-body blockquote { border-left-color: var(--accent-secondary); background: color-mix(in srgb, var(--accent-secondary) 6%, transparent); }
+      .color-tertiary .chunk-body blockquote { border-left-color: #10b981; background: color-mix(in srgb, #10b981 6%, transparent); }
+      .color-quaternary .chunk-body blockquote { border-left-color: #f59e0b; background: color-mix(in srgb, #f59e0b 6%, transparent); }
+
       .chunk-summary {
-        margin-top: 10px;
+        margin-top: 12px;
         padding-top: 10px;
         border-top: 1px solid var(--border);
+        font-size: 0.8rem;
+        color: var(--text-dim);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      /* ── Visuals grid ── */
+      .visuals-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 4px 0;
+      }
+      .visual-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        transition: border-color 0.2s;
+      }
+      .visual-card:hover { border-color: var(--accent); }
+      .visual-card-img {
+        width: 100%;
+        display: block;
+        background: var(--bg-base);
+        object-fit: contain;
+      }
+      .visual-card-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        font-size: 0.72rem;
+        color: var(--text-dim);
+        border-top: 1px solid var(--border);
+      }
+      .visual-card-source {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.65rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .visual-card-source.napkin {
+        background: color-mix(in srgb, #7C3AED 15%, transparent);
+        color: #a78bfa;
+      }
+      .visual-card-source.flux {
+        background: color-mix(in srgb, #f59e0b 15%, transparent);
+        color: #fbbf24;
+      }
+      .visuals-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        font-size: 0.6rem;
+        font-weight: 700;
+        padding: 0 4px;
+        background: var(--accent);
+        color: #fff;
+        margin-left: 4px;
+      }
+      .visuals-placeholder {
+        color: var(--text-muted);
         font-size: 0.78rem;
-        color: var(--accent-secondary);
-        font-style: italic;
+        text-align: center;
+        padding: 24px 12px;
       }
 
       .mindease-section-title {
@@ -887,6 +1125,35 @@ function injectOverlay(chunks: ContentChunk[]): void {
   const totalConcepts = conceptChunks.length;
   const summaryChunks = chunks.filter(c => c.text.includes("[SUMMARY:"));
 
+  const palette = ["accent", "secondary", "tertiary", "quaternary"];
+
+  function formatChunkText(raw: string): string {
+    const lines = raw.split("\n").filter(l => l.trim());
+    const parts: string[] = [];
+    let inList = false;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (/^>\s/.test(trimmed)) {
+        if (inList) { parts.push("</ul>"); inList = false; }
+        parts.push(`<blockquote>${trimmed.replace(/^>\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</blockquote>`);
+      } else if (/^[-*]\s/.test(trimmed)) {
+        if (!inList) { parts.push("<ul>"); inList = true; }
+        parts.push(`<li>${trimmed.replace(/^[-*]\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`);
+      } else if (/^\*\*(.+?)\*\*:?\s*/.test(trimmed)) {
+        if (inList) { parts.push("</ul>"); inList = false; }
+        parts.push(`<h4 class="chunk-subtitle">${trimmed.replace(/\*\*(.+?)\*\*/g, "$1")}</h4>`);
+      } else {
+        if (inList) { parts.push("</ul>"); inList = false; }
+        const formatted = trimmed
+          .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+          .replace(/`([^`]+)`/g, "<code>$1</code>");
+        parts.push(`<p>${formatted}</p>`);
+      }
+    }
+    if (inList) parts.push("</ul>");
+    return parts.join("\n");
+  }
+
   const chunksHTML = chunks.map((chunk, i) => {
     const hasConcept = chunk.text.includes("[CONCEPT:");
     const conceptMatch = chunk.text.match(/\[CONCEPT:\s*([^\]]+)\]/);
@@ -894,16 +1161,21 @@ function injectOverlay(chunks: ContentChunk[]): void {
     const cleanText = chunk.text
       .replace(/\[CONCEPT:[^\]]+\]/g, "")
       .replace(/\[SUMMARY:[^\]]+\]/g, "")
+      .replace(/\[CHUNK\s*\d*\]/gi, "")
+      .replace(/^---+$/gm, "")
       .trim();
     const concept = conceptMatch?.[1]?.trim() ?? "";
     const summary = summaryMatch?.[1]?.trim() ?? "";
 
+    const colorKey = palette[i % palette.length];
+    const bodyHTML = formatChunkText(cleanText);
+
     return `
-      <div class="mindease-chunk ${hasConcept ? "has-concept" : ""}"
+      <div class="mindease-chunk ${hasConcept ? "has-concept" : ""} color-${colorKey}"
            style="animation-delay: ${i * 0.04}s">
-        ${concept ? `<div class="chunk-concept-tag">&#9734; ${concept}</div>` : ""}
-        <div class="chunk-text">${cleanText}</div>
-        ${summary ? `<div class="chunk-summary">&#8618; ${summary}</div>` : ""}
+        ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${concept}</div>` : ""}
+        <div class="chunk-body">${bodyHTML}</div>
+        ${summary ? `<div class="chunk-summary">${iconHTML("arrow-right")} ${summary}</div>` : ""}
       </div>
     `;
   }).join("");
@@ -912,18 +1184,19 @@ function injectOverlay(chunks: ContentChunk[]): void {
     ${generateOverlayStyles()}
     <div id="mindease-header">
       <div id="mindease-logo">
-        <div class="logo-icon">&#x1F9E0;</div>
+        <div class="logo-icon">${iconHTML("brain")}</div>
         <span class="logo-text">MindEase</span>
         <span class="logo-badge">ADAPTIVE</span>
       </div>
       <div id="mindease-controls">
         <button class="mindease-ctrl-btn" id="mindease-minimize" title="Minimize" aria-label="Minimize panel">&minus;</button>
-        <button class="mindease-ctrl-btn" id="mindease-close" title="Close" aria-label="Close panel">&#x2715;</button>
+        <button class="mindease-ctrl-btn" id="mindease-close" title="Close" aria-label="Close panel">${iconHTML("x")}</button>
       </div>
     </div>
 
     <div id="mindease-tabs" role="tablist" aria-label="Panel sections">
       <button class="mindease-tab active" data-tab="content" role="tab" aria-selected="true" aria-controls="tab-content">Content</button>
+      <button class="mindease-tab" data-tab="visuals" role="tab" aria-selected="false" aria-controls="tab-visuals">Visuals <span class="visuals-badge" id="visuals-badge" style="display:none">0</span></button>
       <button class="mindease-tab" data-tab="profile" role="tab" aria-selected="false" aria-controls="tab-profile">Profile</button>
       <button class="mindease-tab" data-tab="session" role="tab" aria-selected="false" aria-controls="tab-session">Session</button>
     </div>
@@ -953,6 +1226,13 @@ function injectOverlay(chunks: ContentChunk[]): void {
           ? '<p style="color:var(--text-muted);text-align:center;padding:24px">No content chunks yet.</p>'
           : chunksHTML
         }
+      </div>
+
+      <div class="mindease-tab-content" id="tab-visuals" role="tabpanel" aria-label="Visuals" style="display:none">
+        <div class="mindease-section-title">Generated Visuals</div>
+        <div id="mindease-visuals-grid" class="visuals-grid">
+          <p class="visuals-placeholder">Visuals will appear here when generated.</p>
+        </div>
       </div>
 
       <div class="mindease-tab-content" id="tab-profile" role="tabpanel" aria-label="Profile">
@@ -1017,6 +1297,20 @@ function injectOverlay(chunks: ContentChunk[]): void {
           <div class="rl-bar-label"><span>Overall</span><span id="sess-score">0.0</span></div>
           <div class="rl-bar"><div class="rl-bar-fill" id="sess-score-bar" style="width:0%;background:var(--accent-gradient)"></div></div>
         </div>
+        <div class="mindease-section-title">Focus Metrics</div>
+        <div class="profile-grid">
+          <div class="profile-card"><div class="pc-label">Duration</div><div class="pc-value" id="sess-duration">&mdash;</div></div>
+          <div class="profile-card"><div class="pc-label">Focused</div><div class="pc-value" id="sess-focused">&mdash;</div></div>
+          <div class="profile-card"><div class="pc-label">Interruptions</div><div class="pc-value" id="sess-interruptions">&mdash;</div></div>
+          <div class="profile-card"><div class="pc-label">Longest Break</div><div class="pc-value" id="sess-longest">&mdash;</div></div>
+        </div>
+        <div class="mindease-section-title">Artifact Summary</div>
+        <div class="profile-grid">
+          <div class="profile-card"><div class="pc-label">Resources</div><div class="pc-value" id="sess-resources">0</div></div>
+          <div class="profile-card"><div class="pc-label">Cards</div><div class="pc-value" id="sess-cards">0</div></div>
+          <div class="profile-card"><div class="pc-label">Review</div><div class="pc-value" id="sess-review-cards">0</div></div>
+          <div class="profile-card"><div class="pc-label">Gaps</div><div class="pc-value" id="sess-gaps">0</div></div>
+        </div>
         <div class="mindease-section-title">Personal Notes</div>
         <div id="mindease-notes-list">
           <p style="color:var(--text-muted);font-size:0.78rem;text-align:center;padding:12px">Highlight text on the page to create notes.</p>
@@ -1026,11 +1320,12 @@ function injectOverlay(chunks: ContentChunk[]): void {
 
     <div id="mindease-footer">
       <button class="mindease-btn mindease-btn-primary" id="mindease-end-session">End Session</button>
-      <button class="mindease-btn mindease-btn-ghost" id="mindease-toggle-side">&#x21C4; Side</button>
+      <button class="mindease-btn mindease-btn-ghost" id="mindease-toggle-side">${iconHTML("arrow-left-right")} Side</button>
     </div>
   `;
 
   document.body.appendChild(overlay);
+
 
   /* ── Focus trap ── */
   function focusTrap(e: KeyboardEvent): void {
@@ -1191,9 +1486,12 @@ function injectOverlay(chunks: ContentChunk[]): void {
   });
 
   /* ── Load profile + stats ── */
-  browser.storage.local.get(["mindease_profile", "mindease_session_stats", "mindease_notes"]).then((result: Record<string, unknown>) => {
+  Promise.all([
+    browser.storage.local.get(["mindease_profile", "mindease_session_stats", "mindease_notes", "latestArtifact"]),
+  ]).then(([result]) => {
     const profile = result.mindease_profile as Record<string, unknown> | undefined;
     const stats = result.mindease_session_stats as Record<string, unknown> | undefined;
+    const artifact = result.latestArtifact as Record<string, unknown> | undefined;
 
     // Render aggregated notes
     const notesData = result.mindease_notes as { notes?: Array<Record<string, unknown>> } | undefined;
@@ -1248,6 +1546,39 @@ function injectOverlay(chunks: ContentChunk[]): void {
       const scoreBarEl = document.getElementById("sess-score-bar");
       if (scoreBarEl) scoreBarEl.style.width = `${Math.min(score * 10, 100)}%`;
     }
+
+    // Render focus summary from artifact if available
+    if (artifact) {
+      const focus = artifact.focusSummary as Record<string, unknown> | undefined;
+      if (focus) {
+        const durationEl = document.getElementById("sess-duration");
+        if (durationEl) durationEl.textContent = fmtDurationLocal(Number(focus.totalDurationMs ?? 0));
+        const focusedEl = document.getElementById("sess-focused");
+        if (focusedEl) focusedEl.textContent = fmtDurationLocal(Number(focus.focusedTimeMs ?? 0));
+        const interruptEl = document.getElementById("sess-interruptions");
+        if (interruptEl) interruptEl.textContent = String(focus.interruptionCount ?? 0);
+        const longestEl = document.getElementById("sess-longest");
+        if (longestEl) longestEl.textContent = fmtDurationLocal(Number(focus.longestInterruptionMs ?? 0));
+      }
+      const resources = artifact.resourcesUsed as Array<Record<string, unknown>> | undefined;
+      if (resources) {
+        const resEl = document.getElementById("sess-resources");
+        if (resEl) resEl.textContent = String(resources.length);
+      }
+      const cards = artifact.studyCards as Array<Record<string, unknown>> | undefined;
+      if (cards) {
+        const cardsEl = document.getElementById("sess-cards");
+        if (cardsEl) cardsEl.textContent = String(cards.length);
+        const reviewCards = cards.filter(c => c.reviewFlag).length;
+        const reviewEl = document.getElementById("sess-review-cards");
+        if (reviewEl) reviewEl.textContent = String(reviewCards);
+      }
+      const gaps = artifact.needsReview as Array<Record<string, unknown>> | undefined;
+      if (gaps) {
+        const gapsEl = document.getElementById("sess-gaps");
+        if (gapsEl) gapsEl.textContent = String(gaps.length);
+      }
+    }
   });
 
   /* ── Save visible state ── */
@@ -1261,8 +1592,52 @@ function injectOverlay(chunks: ContentChunk[]): void {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   YouTube Mode
+   Visuals Display
    ═══════════════════════════════════════════════════════════════════════════════ */
+
+let _visualEntries: VisualEntry[] = [];
+
+function renderVisuals(visuals: VisualEntry[]): void {
+  _visualEntries = visuals;
+
+  const grid = document.getElementById("mindease-visuals-grid");
+  const badge = document.getElementById("visuals-badge");
+  if (!grid) return;
+
+  if (badge) {
+    badge.textContent = String(visuals.length);
+    badge.style.display = "inline-flex";
+  }
+
+  if (visuals.length === 0) {
+    grid.innerHTML = `<p class="visuals-placeholder">No visuals generated for this page.</p>`;
+    return;
+  }
+
+  grid.innerHTML = visuals.map((v) => {
+    const sourceLabel = v.source === "napkin" ? "Napkin" : "Flux";
+    return `
+      <div class="visual-card">
+        <img class="visual-card-img"
+             src="${v.dataUrl}"
+             alt="${_escHtml(v.concept)}"
+             loading="lazy"
+             style="aspect-ratio:${v.width}/${v.height}"
+        />
+        <div class="visual-card-footer">
+          <span>${_escHtml(v.concept)}</span>
+          <span class="visual-card-source ${v.source}">${sourceLabel}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  // Switch to visuals tab so user sees them immediately
+  const visualsTab = document.querySelector('.mindease-tab[data-tab="visuals"]') as HTMLElement | null;
+  if (visualsTab) {
+    visualsTab.click();
+  }
+}
 
 async function initYouTubeMode(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 3000));
@@ -1374,7 +1749,7 @@ async function initPDFMode(): Promise<void> {
     gap: 8px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.2);
   `;
-  loader.innerHTML = '<span style="animation: mindease-spin 1s linear infinite; display:inline-block">&#x27F3;</span> MindEase &mdash; Simplifying PDF...';
+  loader.innerHTML = '<span style="display:inline-flex;animation:mindease-spin 1s linear infinite">${iconHTML("refresh-cw")}</span> MindEase &mdash; Simplifying PDF...';
   document.body?.appendChild(loader);
 
   browser.runtime.sendMessage({

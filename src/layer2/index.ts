@@ -20,6 +20,7 @@ import type {
   SessionEndPayload,
   BaselineProfile,
 } from "@/types";
+import { STORAGE_KEYS } from "@/types";
 import { RLAgent } from "./rlAgent";
 import {
   createProfile,
@@ -33,6 +34,8 @@ import {
   freshSessionStats,
   broadcastProfileUpdate,
 } from "./profileManager";
+import { generateExplanation, recordExplanation } from "./explainer";
+import { loadOverrides, applyOverridesToParams } from "./userControls";
 
 /* ─── Singleton RL Agent ─── */
 let agent: RLAgent | null = null;
@@ -84,7 +87,20 @@ export async function handleBehaviorSignal(
 
   /* Update RL agent */
   const rlAgent = await ensureAgent();
-  const { reward, updatedProfile } = await rlAgent.processSignal(profile, signal);
+  const { reward, updatedProfile, actionTaken } = await rlAgent.processSignal(profile, signal);
+
+  /* Apply user overrides on top of RL params (user always wins) */
+  const overrides = await loadOverrides();
+  if (overrides.enabled) {
+    updatedProfile.transformationParams = applyOverridesToParams(
+      updatedProfile.transformationParams,
+      overrides,
+    );
+  }
+
+  /* Generate and store human-readable explanation for this adaptation */
+  const explanation = generateExplanation(actionTaken, updatedProfile.rlState, updatedProfile.baseline, updatedProfile.transformationParams);
+  await recordExplanation(explanation);
 
   /* Update session stats */
   const stats = await getSessionStats();
@@ -209,6 +225,22 @@ export function setupLayer2Listeners(): void {
       case "SESSION_END": {
         /* Handle session end triggered externally (e.g., tab close) */
         await endSession();
+        return { received: true };
+      }
+
+      case "CONTROLS_CHANGED": {
+        /* User changed overrides in popup — re-apply and broadcast */
+        const profile = await getProfile();
+        if (!profile) return { received: true };
+        const overrides = await loadOverrides();
+        if (overrides.enabled) {
+          profile.transformationParams = applyOverridesToParams(
+            profile.transformationParams,
+            overrides,
+          );
+          await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
+          await broadcastProfileUpdate(profile);
+        }
         return { received: true };
       }
 

@@ -11,11 +11,13 @@ import { v4 as uuidv4 } from "uuid";
 import type {
   CognitiveEvent, CognitiveProfile, FullCognitiveProfile,
   ExtensionMessage, ContentChunk, SignalType, HighlightNote, NotesCollection,
+  TabResource, FocusSummary,
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session, getCurrentProfile } from "@/layer2";
 import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
 import { transformContent } from "@/layer1/index";
+import { generateVisualsForConcepts } from "@/layer1/visualOrchestrator";
 import { SessionManager } from "@/session/SessionManager";
 
 /* ── Aggregated notes helpers ────────────────────────────────────────────────── */
@@ -34,6 +36,27 @@ async function saveAggregatedNote(note: HighlightNote): Promise<void> {
   collection.notes.push(note);
   collection.updatedAt = Date.now();
   await browser.storage.local.set({ [STORAGE_KEYS.NOTES]: collection });
+}
+
+/* ── Extract concepts from ContentChunk[] ─────────────────────────────────────── */
+
+function extractConceptsFromChunks(chunks: ContentChunk[]): string[] {
+  const concepts = new Set<string>();
+  for (const chunk of chunks) {
+    for (const tag of chunk.conceptTags) {
+      const cleaned = tag.trim();
+      if (cleaned) concepts.add(cleaned);
+    }
+    // Also extract from [CONCEPT: ...] inline markers
+    const matches = chunk.text.match(/\[CONCEPT:\s*([^\]]+)\]/g);
+    if (matches) {
+      for (const m of matches) {
+        const concept = m.replace(/\[CONCEPT:\s*|\]/g, "").trim();
+        if (concept) concepts.add(concept);
+      }
+    }
+  }
+  return [...concepts];
 }
 
 /* ── Default profile when storage has none ──────────────────────────────────── */
@@ -87,8 +110,18 @@ sessionManager.onLayer2Signal = async (signal: SignalType, url: string, sectionI
 sessionManager.onLayer3Event = (event: CognitiveEvent) => {
   recordEvent(event);
 };
-sessionManager.onLayer3EndSession = async (chunks?: ContentChunk[]) => {
-  await endLayer3Session(chunks);
+sessionManager.onLayer3EndSession = async (
+  chunks?: ContentChunk[],
+  highlights?: HighlightNote[] | null,
+  tabs?: TabResource[] | null,
+  focus?: FocusSummary | null,
+) => {
+  await endLayer3Session(chunks, highlights, tabs, focus);
+  // Auto-open dashboard after session ends
+  browser.tabs.create({
+    url: browser.runtime.getURL("src/session/dashboard/dashboard.html"),
+    active: true,
+  }).catch(() => {});
 };
 sessionManager.onLayer2EndSession = async () => {
   return endLayer2Session();
@@ -159,6 +192,23 @@ browser.runtime.onMessage.addListener(
           );
           console.log("[Background] Transform complete, chunks:", chunks.length);
           await browser.tabs.sendMessage(tabId, { type: "TRANSFORMED_CONTENT", chunks });
+
+          // Fire visual generation asynchronously (don't block transform response)
+          if (fullProfile.transformationParams.useVisualAnchors) {
+            const concepts = extractConceptsFromChunks(chunks);
+            if (concepts.length > 0) {
+              generateVisualsForConcepts(concepts, fullProfile.transformationParams)
+                .then((visuals) => {
+                  if (visuals.length > 0) {
+                    return browser.tabs.sendMessage(tabId, {
+                      type: "VISUALS_READY",
+                      visuals,
+                    });
+                  }
+                })
+                .catch((err) => console.error("[Background] Visual generation error:", err));
+            }
+          }
         } catch (err) {
           console.error("[Background] Transform failed:", err);
           await browser.tabs.sendMessage(tabId, { type: "TRANSFORM_ERROR", error: String(err) });
