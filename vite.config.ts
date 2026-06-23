@@ -26,14 +26,21 @@ export default defineConfig(({ mode }) => ({
       manifest: () => {
         const base = require("./src/manifest.json");
         if (mode === "firefox") {
-          const { background, ...rest } = base;
+          const { background, permissions, ...rest } = base;
           return {
             ...rest,
+            permissions: (permissions as string[]).filter(
+              (p) => p !== "sidePanel" && p !== "downloads",
+            ),
             browser_specific_settings: {
               gecko: {
                 id: "mindease@architects.ensit",
                 strict_min_version: "109.0",
               },
+            },
+            content_security_policy: {
+              extension_pages:
+                "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline';",
             },
             background: {
               scripts: [base.background.service_worker],

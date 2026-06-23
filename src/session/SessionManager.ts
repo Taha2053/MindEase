@@ -20,6 +20,7 @@ import { v4 as uuidv4 } from "uuid";
 const IDLE_TO_PASSIVE_MS = 5 * 60 * 1000;     // 5 min inactivity → passive
 const PASSIVE_TO_SUSPENDED_MS = 30 * 60 * 1000; // 30 min passive → suspended
 const SUSPENDED_TO_ENDED_MS = 60 * 60 * 1000;   // 60 min suspended → auto-end
+const MAX_HIGHLIGHTS_PER_TAB = 500;              // cap to prevent unbounded memory growth
 
 /* ─── SessionManager ─────────────────────────────────────────────────────── */
 
@@ -57,15 +58,18 @@ export class SessionManager {
       if (!saved || saved.state === "ended") return false;
 
       this.session = saved;
+      const now = Date.now();
+      const inactiveTime = now - saved.lastActivityAt;
 
-      // If was active but last activity was > IDLE timeout ago, transition
-      if (saved.state === "active" && Date.now() - saved.lastActivityAt > IDLE_TO_PASSIVE_MS) {
-        this.session.state = "passive";
-        this.session.enteredPassiveAt = Date.now();
-      }
-      if (saved.state === "passive" && Date.now() - (saved.enteredPassiveAt ?? saved.lastActivityAt) > PASSIVE_TO_SUSPENDED_MS) {
+      // Determine correct state based on total inactive time
+      if (inactiveTime >= IDLE_TO_PASSIVE_MS + PASSIVE_TO_SUSPENDED_MS) {
         this.session.state = "suspended";
-        this.session.enteredSuspendedAt = Date.now();
+        this.session.enteredSuspendedAt = now;
+        this.session.enteredPassiveAt = null;
+      } else if (inactiveTime >= IDLE_TO_PASSIVE_MS) {
+        this.session.state = "passive";
+        this.session.enteredPassiveAt = now;
+        this.session.enteredSuspendedAt = null;
       }
 
       this.startTimers();
@@ -77,7 +81,11 @@ export class SessionManager {
 
   private async persist(): Promise<void> {
     if (!this.session) return;
-    await browser.storage.local.set({ [STORAGE_KEYS.WORKSPACE]: this.session });
+    try {
+      await browser.storage.local.set({ [STORAGE_KEYS.WORKSPACE]: this.session });
+    } catch (err) {
+      console.warn("[MindEase] Workspace save failed:", err);
+    }
   }
 
   /* ─── Getters ────────────────────────────────────────────────────────── */
@@ -172,10 +180,10 @@ export class SessionManager {
     if (!this.session) return;
     this.session.tabs = this.session.tabs.filter(t => t.tabId !== tabId);
 
-    // If no more tabs, start end timer
+    // If no more tabs, end session immediately
     if (this.session.tabs.length === 0) {
-      this.transitionToSuspended();
-      this.scheduleEndIfNoTabs();
+      this.endSession();
+      return;
     }
 
     this.persist();
@@ -250,6 +258,9 @@ export class SessionManager {
     };
 
     tab.highlights.push(note);
+    if (tab.highlights.length > MAX_HIGHLIGHTS_PER_TAB) {
+      tab.highlights = tab.highlights.slice(-MAX_HIGHLIGHTS_PER_TAB);
+    }
     this.persist();
   }
 
@@ -294,7 +305,11 @@ export class SessionManager {
   async reset(): Promise<void> {
     this.clearTimers();
     this.session = null;
-    await browser.storage.local.remove(STORAGE_KEYS.WORKSPACE);
+    try {
+      await browser.storage.local.remove(STORAGE_KEYS.WORKSPACE);
+    } catch (err) {
+      console.warn("[MindEase] Workspace remove failed:", err);
+    }
   }
 
   /* ─── State Transitions (private) ────────────────────────────────────── */

@@ -15,7 +15,7 @@ import type {
   ChunkEngagement,
   EngagementLevel,
 } from "@/types";
-import { saveActiveSession, loadActiveSession } from "./storage";
+import { saveActiveSession, saveSessionLog, loadActiveSession } from "./storage";
 
 // ── Engagement scoring rules ──────────────────────────────────────────────────
 // Each event type contributes a score delta to the chunk's engagement score.
@@ -104,6 +104,7 @@ export class SessionTracker {
    */
   endSession(): SessionLog {
     this.log.endTime = Date.now();
+    saveSessionLog(this.log);
     return this.log;
   }
 

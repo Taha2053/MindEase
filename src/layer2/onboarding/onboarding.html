@@ -5,29 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MindEase — Welcome</title>
   <link rel="stylesheet" href="onboarding.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
 </head>
 <body>
-  <div class="container" id="app" role="main" aria-live="polite">
-    <div class="brand">
-      <div class="brand-icon"><i data-lucide="brain" style="width:24px;height:24px;stroke-width:2.5"></i></div>
-      <div>
-        <div class="brand-name">MindEase</div>
-        <div class="brand-tagline" id="header-title">Adaptive Learning</div>
-      </div>
-      <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">☀</button>
-    </div>
-    <div class="progress-track" id="step-indicator" aria-hidden="true"></div>
-    <div class="card" id="card">
-      <div class="step-num" id="step-num">STEP 1 OF 7</div>
-      <h1 id="title" class="question">How do you learn best?</h1>
-      <p id="subtitle" class="question-sub">Select the option that best describes you.</p>
-      <div id="options-container" class="options" role="radiogroup"></div>
-      <div id="nav" class="nav">
-        <button id="prev-btn" class="btn-back" disabled>&larr; Back</button>
-        <button id="next-btn" class="btn-next">Next &rarr;</button>
-      </div>
-    </div>
-  </div>
-  <script type="module" src="onboarding.ts"></script>
+  <div id="root"></div>
+  <script type="module" src="onboarding.tsx"></script>
 </body>
 </html>

@@ -34,6 +34,6 @@ const EMOJI_MAP: Record<string, string> = {
   lightbulb: "\uD83D\uDCA1",
 };
 
-export function iconHTML(name: string, className = ""): string {
+export function iconHTML(name: string, _className = ""): string {
   return EMOJI_MAP[name] ?? "";
 }

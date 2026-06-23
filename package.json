@@ -13,6 +13,8 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.1.42",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "@types/uuid": "^10.0.0",
     "@types/webextension-polyfill": "^0.12.5",
     "typescript": "^6.0.3",
@@ -23,6 +25,9 @@
     "@huggingface/inference": "^4.13.18",
     "katex": "^0.17.0",
     "lucide": "^1.17.0",
+    "lucide-react": "^1.21.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "uuid": "^14.0.0",
     "vite-plugin-web-extension": "^4.5.1",
     "webextension-polyfill": "^0.12.0"

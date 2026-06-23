@@ -6,7 +6,7 @@
    ============================================================ */
 
 import browser from "webextension-polyfill";
-import type { ContentChunk, VisualEntry } from "@/types";
+import type { ContentChunk, VisualEntry, QTable } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
 import { iconHTML } from "@/utils/icons";
@@ -271,7 +271,6 @@ function handleTextSelection(): void {
       text,
       url: window.location.href,
       title: document.title,
-      tabId: 0,
       sectionId,
     },
   }).catch(() => {});
@@ -292,7 +291,9 @@ function throttledScroll(): void {
   scrollTimer = setTimeout(handleScroll, 150);
 }
 
-/* ─── Init behavior tracking ────────────────────────────────────────────────── */
+/* ─── Init / destroy behavior tracking ─────────────────────────────────────── */
+
+let _mutationObserver: MutationObserver | null = null;
 
 function initBehaviorTracking(): void {
   buildSections();
@@ -303,10 +304,22 @@ function initBehaviorTracking(): void {
   document.addEventListener("click", sendActivityPing);
   document.addEventListener("keydown", sendActivityPing);
 
-  const observer = new MutationObserver(() => {
+  _mutationObserver = new MutationObserver(() => {
     buildSections();
   });
-  observer.observe(document.body, { childList: true, subtree: true });
+  _mutationObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+function destroyBehaviorTracking(): void {
+  if (_mutationObserver) {
+    _mutationObserver.disconnect();
+    _mutationObserver = null;
+  }
+  window.removeEventListener("scroll", throttledScroll);
+  document.removeEventListener("mouseup", handleTextSelection);
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+  document.removeEventListener("click", sendActivityPing);
+  document.removeEventListener("keydown", sendActivityPing);
 }
 
 /* ── Entry point ─────────────────────────────────────────────────────────────── */
@@ -332,13 +345,12 @@ async function isExtensionActive(): Promise<boolean> {
 function onExtensionStateChange(active: boolean): void {
   _extensionActive = active;
   if (!active) {
-    // Remove overlay if it exists
+    destroyBehaviorTracking();
     const overlay = document.getElementById("mindease-overlay");
     if (overlay) overlay.remove();
     document.getElementById("mindease-pdf-loader")?.remove();
     removeReopenButton();
   } else {
-    // Re-activate: reload the page logic
     window.location.reload();
   }
 }
@@ -517,9 +529,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
    Overlay Styles — Injected CSS string with theme variables
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-function generateOverlayStyles(): string {
-  return `
-    <style id="mindease-overlay-styles">
+const OVERLAY_CSS = `
       /* ── Theme variables (scoped to overlay) ── */
       #mindease-overlay[data-theme="dark"] {
         --bg-base:        #060d18;
@@ -1125,9 +1135,7 @@ function generateOverlayStyles(): string {
           transition: none !important;
         }
       }
-    </style>
-  `;
-}
+`;
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    Floating Overlay Panel
@@ -1215,8 +1223,15 @@ function injectOverlay(chunks: ContentChunk[]): void {
     `;
   }).join("");
 
+  // Inject overlay styles as a proper style element (avoids Firefox CSP block on inline <style>)
+  if (!document.getElementById("mindease-overlay-styles")) {
+    const styleEl = document.createElement("style");
+    styleEl.id = "mindease-overlay-styles";
+    styleEl.textContent = OVERLAY_CSS;
+    document.head.appendChild(styleEl);
+  }
+
   overlay.innerHTML = `
-    ${generateOverlayStyles()}
     <div id="mindease-header">
       <div id="mindease-logo">
         <div class="logo-icon">${iconHTML("brain")}</div>
@@ -1573,13 +1588,14 @@ function injectOverlay(chunks: ContentChunk[]): void {
       if (pauseEl) pauseEl.textContent = String(stats.totalPauses ?? 0);
       const skipEl = document.getElementById("sess-skips");
       if (skipEl) skipEl.textContent = String(stats.totalSkips ?? 0);
+      const rl = profile?.rlState as Record<string, unknown> | undefined;
       const rereadEl = document.getElementById("sess-rereads");
-      if (rereadEl) rereadEl.textContent = String(stats.totalReReads ?? 0);
-      const score = Number(stats.totalEngagementScore ?? 0);
+      if (rereadEl) rereadEl.textContent = String(rl?.reReadRate ?? 0);
+      const score = Number(rl?.totalEngagementScore ?? 0);
       const scoreEl = document.getElementById("sess-score");
       if (scoreEl) scoreEl.textContent = score.toFixed(1);
       const scoreBarEl = document.getElementById("sess-score-bar");
-      if (scoreBarEl) scoreBarEl.style.width = `${Math.min(score * 10, 100)}%`;
+      if (scoreBarEl) scoreBarEl.style.width = `${Math.min(Math.max(score * 10, 0), 100)}%`;
     }
 
     // Render focus summary from artifact if available
@@ -1789,7 +1805,7 @@ async function initPDFMode(): Promise<void> {
     gap: 8px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.2);
   `;
-  loader.innerHTML = '<span style="display:inline-flex;animation:mindease-spin 1s linear infinite">${iconHTML("refresh-cw")}</span> MindEase &mdash; Simplifying PDF...';
+  loader.innerHTML = `<span style="display:inline-flex;animation:mindease-spin 1s linear infinite">${iconHTML("refresh-cw")}</span> MindEase &mdash; Simplifying PDF...`;
   document.body?.appendChild(loader);
 
   browser.runtime.sendMessage({
@@ -1798,4 +1814,107 @@ async function initPDFMode(): Promise<void> {
   }).catch(() => {});
 
   setTimeout(() => loader?.remove(), 30000);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Q-Table Visualizer — debug panel showing RL agent state
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+let qPanel: HTMLDivElement | null = null;
+let qPollTimer: ReturnType<typeof setInterval> | null = null;
+
+const ACTIONS_LABELS = [
+  "chunk+", "chunk-", "simpl+", "simpl-", "pace+", "pace-", "visuals", "summ+", "summ-",
+];
+
+function renderQTablePanel(qTable: QTable): void {
+  if (!qPanel) {
+    qPanel = document.createElement("div");
+    qPanel.id = "mindease-qtable-panel";
+    qPanel.style.cssText = `
+      position: fixed; bottom: 10px; right: 10px;
+      background: #0d1829; color: #4EB8FF;
+      padding: 10px 12px; font-size: 10px; font-family: monospace;
+      z-index: 2147483646; border: 1px solid #4EB8FF;
+      max-height: 220px; overflow-y: auto; width: 260px;
+      border-radius: 8px; opacity: 0.92;
+      pointer-events: none; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    `;
+    document.body.appendChild(qPanel);
+  }
+
+  const entries = Object.entries(qTable);
+  if (entries.length === 0) {
+    qPanel.innerHTML = `<div style="color:#888;">Q-Table: empty (no signals yet)</div>`;
+    return;
+  }
+
+  // Show top 5 states by max Q-value
+  const ranked = entries
+    .map(([key, vals]) => ({ key, maxQ: Math.max(...vals), vals }))
+    .sort((a, b) => b.maxQ - a.maxQ)
+    .slice(0, 5);
+
+  qPanel.innerHTML = `
+    <div style="font-weight:bold;margin-bottom:4px;color:#fff;font-size:11px;">
+      Q-Table (${entries.length} states)
+    </div>
+    ${ranked.map(e => `
+      <div style="margin-bottom:3px;border-bottom:1px solid rgba(78,184,255,0.15);padding-bottom:2px;">
+        <div style="color:#8899b4;font-size:8px;">${e.key}</div>
+        <div>${e.vals.map((v, i) => `
+          <span style="color:${v > 0 ? '#4ade80' : v < 0 ? '#f87171' : '#64748b'};margin-right:4px;">
+            ${ACTIONS_LABELS[i]}:${v.toFixed(2)}
+          </span>
+        `).join('')}</div>
+      </div>
+    `).join('')}
+    <div style="color:#64748b;font-size:8px;margin-top:2px;">
+      max: ${ranked[0]?.maxQ.toFixed(3) ?? "—"}
+    </div>
+  `;
+}
+
+async function pollQTable(): Promise<void> {
+  try {
+    const result = await browser.storage.local.get(STORAGE_KEYS.QTABLE);
+    const qTable = (result[STORAGE_KEYS.QTABLE] as QTable) ?? {};
+    renderQTablePanel(qTable);
+  } catch {
+    // storage not available yet
+  }
+}
+
+function startQTablePolling(): void {
+  if (qPollTimer) return;
+  // Initial render after short delay
+  setTimeout(pollQTable, 2000);
+  qPollTimer = setInterval(pollQTable, 5000);
+}
+
+function stopQTablePolling(): void {
+  if (qPollTimer) {
+    clearInterval(qPollTimer);
+    qPollTimer = null;
+  }
+  if (qPanel) {
+    qPanel.remove();
+    qPanel = null;
+  }
+}
+
+// Start polling when the extension becomes active
+const origOnStateChange = onExtensionStateChange;
+onExtensionStateChange = (active: boolean) => {
+  origOnStateChange(active);
+  if (active) {
+    startQTablePolling();
+  } else {
+    stopQTablePolling();
+  }
+};
+
+// If already active, start immediately
+if (_extensionActive) {
+  setTimeout(startQTablePolling, 3000);
 }

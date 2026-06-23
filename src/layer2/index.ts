@@ -19,6 +19,7 @@ import type {
   SessionStats,
   SessionEndPayload,
   BaselineProfile,
+  CognitiveNeed,
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { RLAgent } from "./rlAgent";
@@ -176,8 +177,11 @@ export async function resetEverything(): Promise<void> {
 }
 
 /* ─── Create profile from onboarding baseline ─── */
-export async function createProfileFromOnboarding(baseline: BaselineProfile): Promise<FullCognitiveProfile> {
-  const profile = await createProfile(baseline);
+export async function createProfileFromOnboarding(
+  baseline: BaselineProfile,
+  condition?: CognitiveNeed,
+): Promise<FullCognitiveProfile> {
+  const profile = await createProfile(baseline, condition);
 
   /* Trigger session start */
   try {

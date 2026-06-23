@@ -35,7 +35,11 @@ async function saveAggregatedNote(note: HighlightNote): Promise<void> {
   const collection = await loadAggregatedNotes();
   collection.notes.push(note);
   collection.updatedAt = Date.now();
-  await browser.storage.local.set({ [STORAGE_KEYS.NOTES]: collection });
+  try {
+    await browser.storage.local.set({ [STORAGE_KEYS.NOTES]: collection });
+  } catch (err) {
+    console.warn("[MindEase] Notes save failed:", err);
+  }
 }
 
 /* ── Extract concepts from ContentChunk[] ─────────────────────────────────────── */
@@ -247,6 +251,8 @@ browser.runtime.onMessage.addListener(
               ? stored
               : DEFAULT_FULL_PROFILE) as unknown as CognitiveProfile;
             startSession(userId, profile);
+          }).catch(() => {
+            startSession(userId, DEFAULT_FULL_PROFILE as unknown as CognitiveProfile);
           });
         }
         break;
@@ -267,10 +273,10 @@ browser.runtime.onMessage.addListener(
 
       case "HIGHLIGHT_NOTE": {
         const notePayload = msg.payload as {
-          text: string; url?: string; title?: string; tabId: number; sectionId?: string;
+          text: string; url?: string; title?: string; tabId?: number; sectionId?: string;
         };
         const senderTab = (sender as { tab?: { id?: number; url?: string; title?: string } } | undefined)?.tab;
-        const actualTabId = senderTab?.id ?? notePayload.tabId;
+        const actualTabId = senderTab?.id ?? notePayload.tabId ?? 0;
         const url = notePayload.url ?? senderTab?.url ?? "";
         const title = notePayload.title ?? senderTab?.title ?? "";
 

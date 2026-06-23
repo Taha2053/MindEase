@@ -40,7 +40,10 @@ function defaultRLState(): RLState {
 }
 
 /* ─── Baseline → Initial Transformation Params ─── */
-function initialTransformationParams(baseline: BaselineProfile): TransformationParams {
+function initialTransformationParams(
+  baseline: BaselineProfile,
+  condition?: CognitiveNeed,
+): TransformationParams {
   let chunkSize: TransformationParams["chunkSize"] = "medium";
   let simplificationLevel: TransformationParams["simplificationLevel"] = 2;
   let captionSpeed: TransformationParams["captionSpeed"] = "normal";
@@ -79,27 +82,56 @@ function initialTransformationParams(baseline: BaselineProfile): TransformationP
     simplificationLevel = Math.min(3, simplificationLevel + 1) as TransformationParams["simplificationLevel"];
   }
 
+  // ─── Condition-based overrides ───
+  if (condition === "dyslexia") {
+    chunkSize = "small";
+    simplificationLevel = 3;
+    useVisualAnchors = true;
+    if (captionSpeed === "fast") captionSpeed = "normal";
+  } else if (condition === "adhd") {
+    chunkSize = "small";
+    summaryFrequency = "high";
+    useVisualAnchors = true;
+  } else if (condition === "autism") {
+    simplificationLevel = Math.max(simplificationLevel, 2) as TransformationParams["simplificationLevel"];
+    useVisualAnchors = true;
+  }
+
   return { chunkSize, simplificationLevel, captionSpeed, useVisualAnchors, summaryFrequency };
 }
 
 /* ─── Profile CRUD ─── */
 
-export async function createProfile(baseline: BaselineProfile): Promise<FullCognitiveProfile> {
+export async function createProfile(
+  baseline: BaselineProfile,
+  condition?: CognitiveNeed,
+): Promise<FullCognitiveProfile> {
   const now = new Date().toISOString();
+  const mappedCondition: CognitiveNeed =
+    condition === "dyslexia" || condition === "adhd" || condition === "autism"
+      ? condition
+      : baseline.secondLanguageLearner
+        ? "multilingual"
+        : "none";
+
   const profile: FullCognitiveProfile = {
     userId: generateUUID(),
     learningStyle: baseline.formatPreference === "visual" ? "visual" : "text",
     attentionSpan: baseline.attentionSpan,
     anchorNeed: baseline.needsConceptAnchor,
-    condition: baseline.secondLanguageLearner ? "multilingual" : "none",
+    condition: mappedCondition,
     updatedAt: Date.now(),
     createdAt: now,
     baseline,
     rlState: defaultRLState(),
-    transformationParams: initialTransformationParams(baseline),
+    transformationParams: initialTransformationParams(baseline, mappedCondition),
   };
 
-  await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
+  try {
+    await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
+  } catch (err) {
+    console.warn("[MindEase] Profile create failed:", err);
+  }
   return profile;
 }
 
@@ -110,7 +142,11 @@ export async function getProfile(): Promise<FullCognitiveProfile | null> {
 
 export async function updateProfile(profile: FullCognitiveProfile): Promise<void> {
   profile.updatedAt = Date.now();
-  await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
+  try {
+    await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
+  } catch (err) {
+    console.warn("[MindEase] Profile save failed:", err);
+  }
 }
 
 export async function deleteProfile(): Promise<void> {
@@ -131,7 +167,11 @@ export async function getQTable(): Promise<QTable> {
 }
 
 export async function saveQTable(qTable: QTable): Promise<void> {
-  await browser.storage.local.set({ [STORAGE_KEYS.QTABLE]: qTable });
+  try {
+    await browser.storage.local.set({ [STORAGE_KEYS.QTABLE]: qTable });
+  } catch (err) {
+    console.warn("[MindEase] Q-table save failed:", err);
+  }
 }
 
 /* ─── Session Stats CRUD ─── */
@@ -153,7 +193,11 @@ export async function getSessionStats(): Promise<SessionStats> {
 }
 
 export async function saveSessionStats(stats: SessionStats): Promise<void> {
-  await browser.storage.local.set({ [STORAGE_KEYS.SESSION_STATS]: stats });
+  try {
+    await browser.storage.local.set({ [STORAGE_KEYS.SESSION_STATS]: stats });
+  } catch (err) {
+    console.warn("[MindEase] Session stats save failed:", err);
+  }
 }
 
 export async function clearSessionStats(): Promise<void> {

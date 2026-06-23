@@ -7,7 +7,9 @@
    ============================================================ */
 
 // In dev, use local proxy. For production, swap to the deployed proxy URL.
-const NAPKIN_API_BASE = "http://localhost:3001";
+const NAPKIN_API_BASE = import.meta.env.DEV
+  ? "http://localhost:3001"
+  : "https://api.napkin.ai/v1";
 const NAPKIN_API_KEY = import.meta.env.VITE_NAPKIN_API_KEY as string | undefined;
 
 /* ── Types ───────────────────────────────────────────────────────── */

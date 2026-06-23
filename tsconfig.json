@@ -11,8 +11,9 @@
     "paths": {
       "@/*": ["src/*"]
     },
+    "jsx": "react-jsx",
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["node_modules", "dist"]
 }

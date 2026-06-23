@@ -45,6 +45,8 @@ const SIGNAL_REWARDS: Record<SignalType, number> = {
 export class RLAgent {
   private config: RLAgentConfig;
   private qTable: QTable = {};
+  private prevStateKey: string | null = null;
+  private prevAction: Action | null = null;
 
   constructor(config: Partial<RLAgentConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -60,14 +62,23 @@ export class RLAgent {
     return this.config.epsilon;
   }
 
-  /* ─── Process a behavior signal → update profile → return reward and action ─── */
+  /* ─── Process a behavior signal → update profile → return reward and action ───
+       RL flow:
+         1. Signal arrives → reward from signal
+         2. Update rlState counters (state transitions)
+         3. Compute next state key
+         4. Q-update: Q(prevState, prevAction) += lr * (reward + gamma * maxQ(nextState) - Q(prevState, prevAction))
+         5. Select new action via epsilon-greedy from next state
+         6. Apply action to transformation params
+         7. Store (stateKey, action) for next iteration
+  */
   async processSignal(
     profile: FullCognitiveProfile,
     signal: SignalType,
   ): Promise<{ reward: number; updatedProfile: FullCognitiveProfile; actionTaken: Action }> {
     const { rlState } = profile;
 
-    /* 1. Update rlState counters */
+    /* 1. Update rlState counters — this changes the state */
     switch (signal) {
       case "highlight":
         rlState.highlightRate += 1;
@@ -82,7 +93,7 @@ export class RLAgent {
         rlState.skipRate += 1;
         break;
       case "tabSwitch":
-        rlState.skipRate += 0.5; /* tab switch is a mild skip */
+        rlState.skipRate += 0.5;
         break;
     }
 
@@ -90,19 +101,38 @@ export class RLAgent {
     const reward = SIGNAL_REWARDS[signal];
     rlState.totalEngagementScore += reward;
 
-    /* 3. Update Q-table */
-    await this.learn(profile, reward);
+    /* 3. Compute next state key (state AFTER this signal) */
+    const nextState = discretizeState(rlState);
+    const nextKey = stateToKey(nextState);
 
-    /* 4. Select best action */
-    const action = this.selectAction(profile.rlState);
+    /* Ensure Q-table entry exists for next state */
+    if (!this.qTable[nextKey]) {
+      this.qTable[nextKey] = new Array(ACTION_COUNT).fill(0);
+    }
 
-    /* 5. If the action would toggle visual anchors OFF but baseline
-          says the user needs visuals, prevent it — baseline always wins. */
+    /* 4. Q-learning update: Q(s, a) += lr * (r + gamma * maxQ(s') - Q(s, a))
+          Only update if we have a previous state/action to learn from. */
+    if (this.prevStateKey !== null && this.prevAction !== null) {
+      if (!this.qTable[this.prevStateKey]) {
+        this.qTable[this.prevStateKey] = new Array(ACTION_COUNT).fill(0);
+      }
+      const prevQ = this.qTable[this.prevStateKey];
+      const actionIdx = ACTIONS.indexOf(this.prevAction);
+      const maxNextQ = Math.max(...this.qTable[nextKey]);
+      const tdTarget = reward + this.config.discountFactor * maxNextQ;
+      prevQ[actionIdx] = prevQ[actionIdx] + this.config.learningRate * (tdTarget - prevQ[actionIdx]);
+      await saveQTable(this.qTable);
+    }
+
+    /* 5. Select new action from next state */
+    const action = this.selectAction(rlState);
+
+    /* 6. Apply action to transformation params
+          If action would toggle visuals OFF but baseline needs visuals, prevent it. */
     if (action === "toggleVisualAnchors") {
       const wantsVisuals = profile.baseline.formatPreference === "visual"
         || profile.baseline.needsConceptAnchor === true;
       if (wantsVisuals && profile.transformationParams.useVisualAnchors) {
-        // Baseline wants visuals and they're currently on — pick a different action
         const otherActions = ACTIONS.filter(a => a !== "toggleVisualAnchors");
         const fallback = otherActions[Math.floor(Math.random() * otherActions.length)];
         profile.transformationParams = this.applyAction(profile.transformationParams, fallback);
@@ -113,42 +143,16 @@ export class RLAgent {
       profile.transformationParams = this.applyAction(profile.transformationParams, action);
     }
 
-    /* 6. Save profile */
+    /* 7. Store current state/action for next iteration */
+    this.prevStateKey = nextKey;
+    this.prevAction = action;
+
+    /* 8. Save profile */
     profile.updatedAt = Date.now();
     await updateProfile(profile);
     await broadcastProfileUpdate(profile);
 
     return { reward, updatedProfile: profile, actionTaken: action };
-  }
-
-  /* ─── Q-Learning Update Step ─── */
-  private async learn(profile: FullCognitiveProfile, reward: number): Promise<void> {
-    const state = discretizeState(profile.rlState);
-    const key = stateToKey(state);
-
-    /* Initialize Q-values for unseen states */
-    if (!this.qTable[key]) {
-      this.qTable[key] = new Array(ACTION_COUNT).fill(0);
-    }
-
-    /* Get current Q-values */
-    const qValues = this.qTable[key];
-
-    /* Compute max Q for next state (bootstrap) — we use current state as proxy */
-    const maxNextQ = Math.max(...qValues);
-
-    /* For each action, update Q(s,a) = Q(s,a) + lr * (reward + discount * maxQ' - Q(s,a)) */
-    /* We apply the update weighted across all actions, but primarily for the "chosen" one.
-       In practice, Q-learning updates for the action that was taken. Since we learn from
-       the signal reward (not from a specific action), we update all actions proportionally. */
-    for (let i = 0; i < ACTION_COUNT; i++) {
-      const oldQ = qValues[i];
-      const tdTarget = reward + this.config.discountFactor * maxNextQ;
-      qValues[i] = oldQ + this.config.learningRate * (tdTarget - oldQ);
-    }
-
-    this.qTable[key] = qValues;
-    await saveQTable(this.qTable);
   }
 
   /* ─── Epsilon-Greedy Action Selection ─── */
