@@ -4,18 +4,13 @@ import { defineConfig } from "vite";
 import webExtension from "vite-plugin-web-extension";
 
 export default defineConfig(({ mode }) => ({
-  // ── Build output ────────────────────────────────────────────────────────────
   build: {
     outDir: mode === "firefox" ? "dist/firefox" : "dist/chrome",
     emptyOutDir: true,
   },
-
-  // ── Path aliases ─────────────────────────────────────────────────────────────
   resolve: {
     alias: {
       "@": "/src",
-      // During tests, replace webextension-polyfill with a Node-safe stub so
-      // its CJS runtime check doesn't throw outside a browser extension context.
       ...(process.env.VITEST
         ? {
             "webextension-polyfill": path.resolve(
@@ -26,20 +21,30 @@ export default defineConfig(({ mode }) => ({
         : {}),
     },
   },
-
-  // ── Extension plugin ─────────────────────────────────────────────────────────
   plugins: [
     webExtension({
       manifest: () => {
         const base = require("./src/manifest.json");
         if (mode === "firefox") {
+          const { background, permissions, ...rest } = base;
           return {
-            ...base,
+            ...rest,
+            permissions: (permissions as string[]).filter(
+              (p) => p !== "sidePanel" && p !== "downloads",
+            ),
             browser_specific_settings: {
               gecko: {
                 id: "mindease@architects.ensit",
                 strict_min_version: "109.0",
               },
+            },
+            content_security_policy: {
+              extension_pages:
+                "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline';",
+            },
+            background: {
+              scripts: [base.background.service_worker],
+              type: "module",
             },
           };
         }
@@ -47,12 +52,13 @@ export default defineConfig(({ mode }) => ({
       },
       browser: mode === "firefox" ? "firefox" : "chrome",
       watchFilePaths: ["src/**/*.ts", "src/manifest.json"],
+      additionalInputs: [
+        "src/layer2/onboarding/onboarding.html",
+        "src/session/dashboard/dashboard.html",
+      ],
     }),
   ],
-
-  // ── Vitest ───────────────────────────────────────────────────────────────────
   test: {
-    // Layer 3 modules are pure logic — no browser DOM needed
     environment: "node",
   },
 }));

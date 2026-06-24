@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MindEase",
   "version": "0.1.0",
-  "description": "Learn the way your brain was meant to — AI-native adaptive learning extension",
+  "description": "Learn the way your brain was meant to - AI-native adaptive learning extension",
 
   "icons": {
     "16":  "icons/icon-16.png",
@@ -36,10 +36,22 @@
     "storage",
     "activeTab",
     "scripting",
-    "sidePanel"
+    "sidePanel",
+    "downloads"
   ],
 
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "https://api.mistral.ai/*"
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/layer2/onboarding/onboarding.html",
+        "src/session/dashboard/dashboard.html"
+      ],
+      "matches": ["<all_urls>"]
+    }
   ]
 }

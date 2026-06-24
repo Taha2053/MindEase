@@ -1,5 +1,5 @@
 // ============================================================
-// layer3/storage.ts — Chrome Storage Wrapper
+// layer3/storage.ts - Chrome Storage Wrapper
 // Handles all read/write operations for Layer 3 data.
 // Uses chrome.storage.local for persistence across sessions.
 // ============================================================

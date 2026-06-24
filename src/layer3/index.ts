@@ -1,5 +1,5 @@
 // ============================================================
-// layer3/index.ts — Layer 3 Entry Point
+// layer3/index.ts - Layer 3 Entry Point
 // Owner: Eya
 //
 // Wires together all Layer 3 modules and exposes the public API
@@ -7,7 +7,11 @@
 // ============================================================
 
 import browser from "webextension-polyfill";
-import type { CognitiveEvent, ContentChunk, CognitiveProfile, ExtensionMessage } from "@/types";
+import type {
+  CognitiveEvent, ContentChunk, CognitiveProfile,
+  ExtensionMessage, FullCognitiveProfile,
+  HighlightNote, TabResource, FocusSummary,
+} from "@/types";
 import { SessionTracker }  from "./sessionTracker";
 import { assembleArtifact } from "./knowledgeArtifact";
 
@@ -29,9 +33,17 @@ export function startSession(userId: string, profile: CognitiveProfile): void {
  * End the current session and run the full synthesis pipeline.
  * Called by the background worker when SESSION_END message arrives.
  *
- * @param chunks  Content chunks collected by Layer 1 during the session
+ * @param chunks      Content chunks from Layer 1 (optional)
+ * @param highlights  Aggregated user highlight notes from workspace
+ * @param tabs        Workspace tab resources for resource sections
+ * @param focus       Workspace focus summary for focus metrics
  */
-export async function endSession(chunks: ContentChunk[]): Promise<void> {
+export async function endSession(
+  chunks?: ContentChunk[],
+  highlights?: HighlightNote[] | null,
+  tabs?: TabResource[] | null,
+  focus?: FocusSummary | null,
+): Promise<void> {
   if (!tracker) {
     console.warn("[Layer 3] endSession called but no active session found.");
     return;
@@ -41,8 +53,15 @@ export async function endSession(chunks: ContentChunk[]): Promise<void> {
   const log     = tracker.endSession();
   const profile = log.profile;
 
-  // Run the synthesis pipeline
-  const artifact = await assembleArtifact(log, chunks, profile);
+  // Run the full synthesis pipeline with workspace data
+  const artifact = await assembleArtifact(
+    log,
+    chunks ?? [],
+    profile,
+    highlights,
+    tabs,
+    focus,
+  );
 
   // Notify popup that the artifact is ready
   browser.runtime.sendMessage({
@@ -67,22 +86,3 @@ export function recordEvent(event: CognitiveEvent): void {
   }
   tracker.recordEvent(event);
 }
-
-// ── Message listener ──────────────────────────────────────────────────────────
-// Layer 3 listens directly for messages routed by the background worker.
-
-browser.runtime.onMessage.addListener((message: unknown) => {
-  const msg = message as ExtensionMessage;
-
-  switch (msg.type) {
-    case "COGNITIVE_EVENT":
-      recordEvent(msg.payload as CognitiveEvent);
-      break;
-
-    case "SESSION_END": {
-      const { chunks } = msg.payload as { chunks: ContentChunk[] };
-      endSession(chunks);
-      break;
-    }
-  }
-});

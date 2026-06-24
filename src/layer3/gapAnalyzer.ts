@@ -1,9 +1,9 @@
 // ============================================================
-// layer3/gapAnalyzer.ts — Flagged Gaps List
+// layer3/gapAnalyzer.ts - Flagged Gaps List
 // Owner: Eya
 //
 // Reads the completed session log and identifies content chunks
-// the learner didn't absorb — classifying them by severity.
+// the learner didn't absorb - classifying them by severity.
 // ============================================================
 
 import type { SessionLog, Gap, GapSeverity, ContentChunk } from "@/types";
@@ -21,7 +21,7 @@ function classifySeverity(score: number): GapSeverity | null {
   if (score < SKIPPED_THRESHOLD)  return "skipped";
   if (score < GAP_THRESHOLD)      return "skimmed";
   if (score < RUSHED_THRESHOLD)   return "rushed";
-  return null; // score is acceptable — not a gap
+  return null; // score is acceptable - not a gap
 }
 
 // ── Gap Analyzer ─────────────────────────────────────────────────────────────
