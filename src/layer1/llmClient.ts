@@ -1,30 +1,34 @@
 import type { TransformationParams, BaselineProfile } from "@/types";
 
-const MISTRAL_API_KEY = import.meta.env.VITE_MISTRAL_API_KEY as string;
+const NVIDIA_API_KEY = import.meta.env.VITE_NVIDIA_API_KEY as string;
+
+const API_BASE = "https://integrate.api.nvidia.com/v1";
+const MODEL = "deepseek-ai/deepseek-v4-pro";
 
 interface FullTransformParams {
   transformationParams: TransformationParams;
   baseline: BaselineProfile;
 }
 
-async function callMistral(prompt: string, maxTokens = 4096): Promise<string> {
-  const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+async function callLLM(prompt: string, maxTokens = 4096, temperature = 0.3): Promise<string> {
+  const response = await fetch(`${API_BASE}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${MISTRAL_API_KEY}`,
+      Authorization: `Bearer ${NVIDIA_API_KEY}`,
     },
     body: JSON.stringify({
-      model: "mistral-small-latest",
+      model: MODEL,
       messages: [{ role: "user", content: prompt }],
       max_tokens: maxTokens,
-      temperature: 0.3,
+      temperature,
+      top_p: 0.95,
     }),
   });
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Mistral error ${response.status}: ${err}`);
+    throw new Error(`NVIDIA LLM error ${response.status}: ${err}`);
   }
 
   const data = (await response.json()) as {
@@ -79,7 +83,7 @@ ${ANNOTATION_RULES}
 Content to annotate:
 ${content}`;
 
-  return callMistral(prompt, 4096);
+  return callLLM(prompt, 4096);
 }
 
 export async function transformPDF(
@@ -95,7 +99,7 @@ ${ANNOTATION_RULES}
 PDF Content to annotate:
 ${content}`;
 
-  return callMistral(prompt, 4096);
+  return callLLM(prompt, 4096);
 }
 
 export async function transformVideoTranscript(
@@ -127,7 +131,7 @@ RULES:
 Transcript:
 ${transcript}`;
 
-  return callMistral(prompt, 4096);
+  return callLLM(prompt, 4096);
 }
 
 export async function classifyContent(
@@ -145,7 +149,7 @@ Rules:
 Title: ${title}
 Snippet: ${snippet.slice(0, 1500)}`;
 
-  const result = await callMistral(prompt, 256);
+  const result = await callLLM(prompt, 256, 0.1);
   const clean = result.trim().toLowerCase();
   if (clean.startsWith("educational")) return "educational";
   return "entertainment";
@@ -170,5 +174,5 @@ RULES:
 
 Lecture text: ${text}`;
 
-  return callMistral(prompt, 2048);
+  return callLLM(prompt, 2048);
 }

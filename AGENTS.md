@@ -16,6 +16,19 @@ Browser extension (MV3) for neurodiverse learners. Chrome + Firefox builds.
 
 No lint, format, or typecheck scripts. `tsc --noEmit` works manually. `strict: true`. No CI (no `.github/`).
 
+## Content Adaptation Architecture
+
+L1 uses an **annotation-only** approach: Mistral never rewrites the original text. It inserts structural tags (`[CHUNK]`, `[CONCEPT:]`, `[DEF:]`, `[EXAMPLE]`/`[EXAMPLE_END]`, `[FORMULA]`/`[/FORMULA]`, `[SUMMARY:]`) around existing content. The parser `parseAnnotatedContent()` strips code fences and extracts metadata into `ContentChunk` objects (fields: `conceptTags`, `summary`, `isExample`, `hasDefinitions`). All adaptation happens at the rendering layer in the content script.
+
+**Progressive loading**: Background sends Mistral results in batches of 3 chunks with a 150ms inter-batch delay. First batch uses `append: false` → `injectOverlay()`, subsequent batches use `append: true` → `appendToOverlay()`. Final batch sets `done: true` to hide the loading marker.
+
+**Adaptive rendering** in `injectOverlay()`:
+- `learningApproach=example-first` reorders chunks: examples before theory
+- `secondLanguageLearner=true` highlights `[DEF:]` terms as interactive tooltips
+- `readingPace` controls font-size via CSS class
+- `infoDensity=concise` collapses example chunks (hidden behind toggle)
+- `[FORMULA]` rendered with KaTeX in both inline and block mode
+
 ## Architecture
 
 **5-entrypoint extension** — background service worker, content script, popup, onboarding, dashboard. Cross-layer communication via `browser.runtime.sendMessage` / `browser.runtime.onMessage` (24 typed message types in `src/types/index.ts`).

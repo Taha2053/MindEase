@@ -226,12 +226,6 @@ export function setupLayer2Listeners(): void {
         return { received: true };
       }
 
-      case "SESSION_END": {
-        /* Handle session end triggered externally (e.g., tab close) */
-        await endSession();
-        return { received: true };
-      }
-
       case "CONTROLS_CHANGED": {
         /* User changed overrides in popup - re-apply and broadcast */
         const profile = await getProfile();

@@ -44,9 +44,12 @@ export interface ContentChunk {
   id:          string;
   sourceId:    string;
   sourceType:  "pdf" | "website" | "video" | "lecture";
-  text:        string;          // the actual content text
+  text:        string;          // the actual content text (inline [DEF:] [FORMULA] tags preserved)
   conceptTags: string[];        // key concepts extracted by Layer 1
   position:    number;          // order in the source (0-indexed)
+  summary?:    string;          // optional summary for this chunk
+  isExample?:  boolean;         // true if this chunk contains example content
+  hasDefinitions?: boolean;     // true if chunk contains [DEF:] tags
 }
 
 // ── Layer 3 - Session Tracker types ──────────────────────────────────────────
@@ -224,7 +227,9 @@ export type MessageType =
   | "VISUALS_READY"             // background → content (visuals generated)
   | "GENERATE_VISUALS"          // content → background (request visuals for concepts)
   | "SESSION_STATE_CHANGED"     // popup → all (session started/ended)
-  | "EXTENSION_STATE_CHANGED";  // popup → content (extension activated/deactivated)
+  | "EXTENSION_STATE_CHANGED"  // popup → content (extension activated/deactivated)
+  | "CLASSIFY_CONTENT"         // content → background (ask LLM: educational or entertainment)
+  | "CLASSIFY_CONTENT_RESULT"; // background → content (classification result)
 
 export interface ExtensionMessage {
   type:    MessageType;

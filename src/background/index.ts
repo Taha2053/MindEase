@@ -17,6 +17,7 @@ import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session, getCurrentProfile } from "@/layer2";
 import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
 import { transformContent } from "@/layer1/index";
+import { classifyContent } from "@/layer1/mistralClient";
 import { generateVisualsForConcepts } from "@/layer1/visualOrchestrator";
 import { SessionManager } from "@/session/SessionManager";
 
@@ -178,7 +179,7 @@ browser.runtime.onMessage.addListener(
         const sourceType = pageType === "lecture" ? "website" : pageType;
         const url = (sender as { tab?: { url?: string } } | undefined)?.tab?.url ?? "";
         const title = (sender as { tab?: { title?: string } } | undefined)?.tab?.title ?? "";
-        sessionManager.registerTab(tabId, url, sourceType as "pdf" | "video" | "website", title);
+        await sessionManager.registerTab(tabId, url, sourceType as "pdf" | "video" | "website", title);
         sessionManager.onActivity();
 
         const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
@@ -192,10 +193,29 @@ browser.runtime.onMessage.addListener(
           const chunks = await transformContent(
             text,
             pageType,
-            fullProfile.transformationParams,
+            {
+              transformationParams: fullProfile.transformationParams,
+              baseline: fullProfile.baseline,
+            },
           );
           console.log("[Background] Transform complete, chunks:", chunks.length);
-          await browser.tabs.sendMessage(tabId, { type: "TRANSFORMED_CONTENT", chunks }).catch(() => {});
+
+          // Send chunks in progressive batches: first batch immediately, then append
+          const batchSize = 3;
+          for (let i = 0; i < chunks.length; i += batchSize) {
+            const batch = chunks.slice(i, i + batchSize);
+            await browser.tabs.sendMessage(tabId, {
+              type: "TRANSFORMED_CONTENT",
+              chunks: batch,
+              baseline: fullProfile.baseline,
+              transformationParams: fullProfile.transformationParams,
+              append: i > 0,
+              done: i + batchSize >= chunks.length,
+            }).catch(() => {});
+            if (i + batchSize < chunks.length) {
+              await new Promise(resolve => setTimeout(resolve, 150));
+            }
+          }
 
           // Fire visual generation asynchronously (don't block transform response)
           if (fullProfile.transformationParams.useVisualAnchors) {
@@ -237,12 +257,7 @@ browser.runtime.onMessage.addListener(
         const sourceType = (payload?.sourceType ?? "website") as "pdf" | "video" | "website" | "lecture";
         const title = String(payload?.title ?? (sender as { tab?: { title?: string } } | undefined)?.tab?.title ?? "");
 
-        // Register tab in workspace
-        if (tabId) {
-          sessionManager.registerTab(tabId, url, sourceType === "lecture" ? "website" : sourceType, title);
-        }
-
-        // Start Layer 3 session if not already started
+        // Start Layer 3 session if not already started (check BEFORE registerTab)
         if (!sessionManager.getSessionId()) {
           const userId = String(payload?.userId ?? "guest");
           browser.storage.local.get(STORAGE_KEYS.PROFILE).then((res) => {
@@ -254,6 +269,13 @@ browser.runtime.onMessage.addListener(
           }).catch(() => {
             startSession(userId, DEFAULT_FULL_PROFILE as unknown as CognitiveProfile);
           });
+        }
+
+        // Register tab in workspace (creates workspace session if none exists)
+        if (tabId) {
+          (async () => {
+            await sessionManager.registerTab(tabId, url, sourceType === "lecture" ? "website" : sourceType, title);
+          })();
         }
         break;
       }
@@ -318,6 +340,28 @@ browser.runtime.onMessage.addListener(
         browser.action.setBadgeText({ text: "✓" });
         browser.action.setBadgeBackgroundColor({ color: "#7C3AED" });
         break;
+
+      case "CLASSIFY_CONTENT": {
+        const { title, snippet } = msg.payload as { title: string; snippet: string };
+        const tabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
+        if (!tabId) break;
+        (async () => {
+          try {
+            const classification = await classifyContent(title, snippet);
+            await browser.tabs.sendMessage(tabId, {
+              type: "CLASSIFY_CONTENT_RESULT",
+              payload: { classification },
+            }).catch(() => {});
+          } catch (err) {
+            console.warn("[Background] Classification error, defaulting to educational:", err);
+            await browser.tabs.sendMessage(tabId, {
+              type: "CLASSIFY_CONTENT_RESULT",
+              payload: { classification: "educational" },
+            }).catch(() => {});
+          }
+        })();
+        break;
+      }
 
       default:
         break;

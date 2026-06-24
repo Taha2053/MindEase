@@ -6,7 +6,7 @@
    ============================================================ */
 
 import browser from "webextension-polyfill";
-import type { ContentChunk, VisualEntry, QTable } from "@/types";
+import type { ContentChunk, VisualEntry, QTable, BaselineProfile, TransformationParams } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
 import { iconHTML } from "@/utils/icons";
@@ -19,38 +19,102 @@ import {
   ensureReopenStyles,
   type SidebarState,
 } from "@/content/sidebarManager";
+import { showDiscoveryPrompt } from "@/content/discoveryPrompt";
 
-function shouldActivate(): boolean {
-  const url = window.location.href;
-  const hostname = window.location.hostname;
+interface ActivationResult {
+  decision: boolean;
+  ambiguous: boolean;
+}
 
-  const blacklist = [
-    "instagram.com", "twitter.com", "x.com", "facebook.com",
-    "tiktok.com", "snapchat.com", "reddit.com", "pinterest.com",
+function shouldActivate(): ActivationResult {
+  const { hostname, href: url } = window.location;
+  const title = document.title;
+
+  const neverEducational = [
     "netflix.com", "twitch.tv", "discord.com", "whatsapp.com",
-    "linkedin.com", "tumblr.com", "imgur.com",
+    "snapchat.com",
   ];
-  if (blacklist.some(b => hostname.includes(b))) return false;
+  if (neverEducational.some(d => hostname.includes(d))) return { decision: false, ambiguous: false };
 
-  const whitelist = [
-    "wikipedia.org", "youtube.com", "coursera.org", "edx.org",
-    "khanacademy.org", "udemy.com", "scholar.google.com",
-    "arxiv.org", "pubmed.ncbi.nlm.nih.gov", "jstor.org",
-    "researchgate.net", "academia.edu", "mit.edu", "stanford.edu",
-    "medium.com", "dev.to", "docs.google.com", "notion.so",
-    "github.com", "stackoverflow.com", "moodle", "blackboard",
-    "brightspace.com", "canvas.instructure.com",
+  // Asset & search sites — not study content, show discovery prompt instead
+  const promptOnlyHosts = [
+    "unsplash.com", "pexels.com", "pixabay.com", "gettyimages.com",
+    "shutterstock.com", "istockphoto.com", "imgur.com",
+    "flaticon.com", "icons8.com", "iconfinder.com", "fontawesome.com",
+    "fonts.google.com", "dafont.com",
+    "freepik.com", "vecteezy.com", "storyset.com",
+    "duckduckgo.com",
   ];
-  if (whitelist.some(w => hostname.includes(w))) return true;
+  if (promptOnlyHosts.some(d => hostname.includes(d))) return { decision: false, ambiguous: false };
+  // Search engine result pages (check URL path, not just hostname)
+  if (/google\.\w{2,4}\/search/.test(url) || /bing\.com\/search/.test(url) || /search\.yahoo\.com/.test(url)) {
+    return { decision: false, ambiguous: false };
+  }
 
-  if (url.endsWith(".pdf") || document.contentType === "application/pdf") return true;
+  if (url.endsWith(".pdf") || document.contentType === "application/pdf") return { decision: true, ambiguous: false };
+
+  const signals: boolean[] = [];
+
+  const eduUrlPatterns = [
+    /\/learn/, /\/course/, /\/tutorial/, /\/lecture/,
+    /\/r\/learn/, /\/r\/science/, /\/r\/math/, /\/r\/cs/,
+    /\/r\/programming/, /\/r\/MachineLearning/,
+  ];
+  if (eduUrlPatterns.some(p => p.test(url))) signals.push(true);
+
+  const ogType = document.querySelector('meta[property="og:type"]')?.getAttribute("content");
+  if (ogType === "article") signals.push(true);
+  if (ogType && ["video.other", "music.song", "video.episode"].includes(ogType)) signals.push(false);
+
+  if (hostname.includes("youtube.com") && url.includes("/watch")) {
+    const genre = document.querySelector('meta[itemprop="genre"]')?.getAttribute("content");
+    if (genre && ["Education", "Science & Technology"].includes(genre)) signals.push(true);
+    if (url.includes("/shorts/")) signals.push(false);
+    const durationMeta = document.querySelector('meta[itemprop="duration"]')?.getAttribute("content");
+    if (durationMeta) {
+      const mins = parseInt(durationMeta.match(/(\d+)M/)?.[1] ?? "0");
+      if (mins > 0 && mins < 3) signals.push(false);
+    }
+  }
+
+  const lowerTitle = title.toLowerCase();
+  const eduKeywords = [
+    "lecture", "tutorial", "course", "lesson", "explained",
+    "research", "paper", "documentation", "guide", "how to",
+    "introduction", "understanding", "proof", "theorem",
+    "analysis", "theory", "fundamentals", "algorithm",
+    "mathematics", "physics", "chemistry", "biology",
+    "programming", "coding", "learn", "crash course",
+  ];
+  const entKeywords = [
+    "funny", "vlog", "gameplay", "reaction", "highlights",
+    "compilation", "music video", "review", "unboxing",
+    "prank", "challenge", "fail", "cute", "meme",
+    "entertainment", "gaming", "live stream", "best of",
+    "montage", "satisfying", "asmr",
+  ];
+  const eduScore = eduKeywords.filter(k => lowerTitle.includes(k)).length;
+  const entScore = entKeywords.filter(k => lowerTitle.includes(k)).length;
+  if (eduScore > entScore) signals.push(true);
+  if (entScore > eduScore) signals.push(false);
 
   const hasArticle = !!document.querySelector("article, .article, [role='main'], main");
   const hasLongText = document.body?.innerText?.length > 2000;
   const hasHeadings = document.querySelectorAll("h1,h2,h3").length >= 2;
-  const isNotApp = !document.querySelector("[data-reactroot], #__next, #app:not(body)");
+  const hasCode = !!document.querySelector("pre code, code, .code, .highlight, .code-block");
+  const hasCitations = !!document.querySelector(
+    "cite, .citation, .reference, [class*='ref'], .bibliography, .footnote",
+  );
+  if (hasArticle && hasLongText && hasHeadings) signals.push(true);
+  if (hasCode) signals.push(true);
+  if (hasCitations) signals.push(true);
 
-  return hasArticle && hasLongText && hasHeadings && isNotApp;
+  if (signals.length === 0) return { decision: false, ambiguous: false };
+  const trueCount = signals.filter(Boolean).length;
+  const falseCount = signals.length - trueCount;
+  const diff = Math.abs(trueCount - falseCount);
+  const ambiguous = signals.length >= 2 && diff <= 1;
+  return { decision: trueCount >= signals.length / 2, ambiguous };
 }
 
 /* ─── Keepalive ping - wake service worker before heavy messages ──────────── */
@@ -328,6 +392,24 @@ let _theme: Theme = "dark";
 let _extensionActive = false;
 let _cleanupYouTube: (() => void) | null = null;
 
+const defaultBaseline: BaselineProfile = {
+  formatPreference: "text",
+  attentionSpan: "medium",
+  readingPace: "moderate",
+  needsConceptAnchor: false,
+  secondLanguageLearner: false,
+  infoDensity: "detailed",
+  learningApproach: "theory-first",
+};
+
+const chunkParams: TransformationParams = {
+  chunkSize: "medium",
+  simplificationLevel: 2,
+  captionSpeed: "normal",
+  useVisualAnchors: false,
+  summaryFrequency: "medium",
+};
+
 /**
  * Check if the extension is globally active (user started a session).
  */
@@ -347,43 +429,52 @@ function onExtensionStateChange(active: boolean): void {
   _extensionActive = active;
   if (!active) {
     destroyBehaviorTracking();
-    const overlay = document.getElementById("mindease-overlay");
-    if (overlay) overlay.remove();
+    document.getElementById("mindease-overlay")?.remove();
     document.getElementById("mindease-pdf-loader")?.remove();
     removeReopenButton();
     _cleanupYouTube?.();
     _cleanupYouTube = null;
+    stopQTablePolling();
   } else {
-    window.location.reload();
+    const { decision, ambiguous } = shouldActivate();
+    if (!decision) return;
+    const sourceType = detectSourceType();
+    if (!sourceType) return;
+    if (ambiguous) {
+      requestLLMClassification(sourceType);
+    } else {
+      activateForSession(sourceType);
+    }
+    startQTablePolling();
   }
 }
 
-(async () => {
-  _theme = await initTheme();
-
-  if (!shouldActivate()) {
-    console.log("[MindEase] Skipping non-educational site:", window.location.hostname);
-    return;
-  }
-
-  // Check if extension is globally active (user started a session)
-  _extensionActive = await isExtensionActive();
-  if (!_extensionActive) {
-    console.log("[MindEase] Extension is inactive. Waiting for user to start a session.");
-    // Listen for activation message
-    browser.runtime.onMessage.addListener((message: unknown) => {
-      const msg = message as { type: string; active?: boolean };
-      if (msg.type === "EXTENSION_STATE_CHANGED") {
-        onExtensionStateChange(msg.active ?? false);
+function requestLLMClassification(sourceType: string): void {
+  browser.runtime.sendMessage({
+    type: "CLASSIFY_CONTENT",
+    payload: {
+      title: document.title,
+      snippet: document.body.innerText.slice(0, 1500),
+    },
+  }).catch(() => {});
+  const handler = (message: unknown) => {
+    const msg = message as { type: string; payload?: { classification: string } };
+    if (msg.type === "CLASSIFY_CONTENT_RESULT") {
+      browser.runtime.onMessage.removeListener(handler);
+      if (msg.payload?.classification === "educational" && _extensionActive) {
+        const sourceType = detectSourceType();
+        if (sourceType) {
+          activateForSession(sourceType);
+          startQTablePolling();
+        }
       }
-    });
-    return;
-  }
+    }
+  };
+  browser.runtime.onMessage.addListener(handler);
+}
 
-  const sourceType = detectSourceType();
-  if (!sourceType) return;
-
-  console.log(`[MindEase Content] Detected source: ${sourceType}`);
+async function activateForSession(sourceType: string): Promise<void> {
+  console.log(`[MindEase Content] Activating for ${sourceType}`);
 
   browser.runtime.sendMessage({
     type: "SESSION_START",
@@ -396,57 +487,91 @@ function onExtensionStateChange(active: boolean): void {
   });
 
   initBehaviorTracking();
+  triggerContentTransformation(sourceType);
 
-  /* ── On-demand transformation: only transform when user is engaged ── */
-  async function triggerTransformation(): Promise<void> {
-    await wakeServiceWorker();
-    if (sourceType === "video") {
-      // For video: wait for the user to actually play before transforming
-      const video = document.querySelector("video") as HTMLVideoElement;
-      if (video && !video.paused) {
-        await initYouTubeMode();
-      } else if (video) {
-        video.addEventListener("play", () => initYouTubeMode(), { once: true });
-      }
-    } else if (sourceType === "pdf") {
-      await initPDFMode();
-    } else {
-      if (document.visibilityState === "visible") {
-        setTimeout(() => initContentTransformation(sourceType ?? "website"), 2000);
-      } else {
-        const onVisible = () => {
-          if (document.visibilityState === "visible") {
-            document.removeEventListener("visibilitychange", onVisible);
-            setTimeout(() => initContentTransformation(sourceType ?? "website"), 2000);
-          }
-        };
-        document.addEventListener("visibilitychange", onVisible);
-      }
-    }
-  }
-
-  triggerTransformation();
-
-  /* ── Sidebar recovery: restore overlay if previously visible ── */
   const savedState = await loadSidebarState();
   if (savedState.visible) {
-    /* The overlay will be injected when TRANSFORMED_CONTENT arrives */
-  } else {
-    ensureReopenStyles();
-    const btn = injectReopenButton(_theme);
-    btn.addEventListener("click", async () => {
-      removeReopenButton();
-      await saveSidebarState({ visible: true });
-      /* Trigger content re-transformation */
-      const text = document.body.innerText.slice(0, 4000);
-      if (text.trim().length >= 50) {
-        browser.runtime.sendMessage({
-          type: "TRANSFORM_CONTENT",
-          payload: { text, pageType: "website" },
-        }).catch(() => {});
-      }
-    });
+    return;
   }
+  ensureReopenStyles();
+  const btn = injectReopenButton(_theme);
+  btn.addEventListener("click", async () => {
+    removeReopenButton();
+    await saveSidebarState({ visible: true });
+    const text = document.body.innerText.slice(0, 4000);
+    if (text.trim().length >= 50) {
+      browser.runtime.sendMessage({
+        type: "TRANSFORM_CONTENT",
+        payload: { text, pageType: "website" },
+      }).catch(() => {});
+    }
+  });
+}
+
+async function triggerContentTransformation(sourceType: string): Promise<void> {
+  await wakeServiceWorker();
+  if (sourceType === "video") {
+    const video = document.querySelector("video") as HTMLVideoElement;
+    if (video && !video.paused) {
+      await initYouTubeMode();
+    } else if (video) {
+      video.addEventListener("play", () => initYouTubeMode(), { once: true });
+    }
+  } else if (sourceType === "pdf") {
+    await initPDFMode();
+  } else {
+    if (document.visibilityState === "visible") {
+      setTimeout(() => initContentTransformation(sourceType), 2000);
+    } else {
+      const onVisible = () => {
+        if (document.visibilityState === "visible") {
+          document.removeEventListener("visibilitychange", onVisible);
+          setTimeout(() => initContentTransformation(sourceType), 2000);
+        }
+      };
+      document.addEventListener("visibilitychange", onVisible);
+    }
+  }
+}
+
+(async () => {
+  _theme = await initTheme();
+
+  // Always listen for state changes — handles tabs opened during a session too
+  browser.runtime.onMessage.addListener((message: unknown) => {
+    const msg = message as { type: string; active?: boolean };
+    if (msg.type === "EXTENSION_STATE_CHANGED") {
+      onExtensionStateChange(msg.active ?? false);
+    }
+  });
+
+  if (!shouldActivate().decision) {
+    showDiscoveryPrompt(_theme, () => {
+      _extensionActive = true;
+      browser.runtime.sendMessage({
+        type: "SESSION_START",
+        payload: {
+          sourceType: "website",
+          url: window.location.href,
+          timestamp: Date.now(),
+          title: document.title,
+        },
+      });
+      triggerContentTransformation("website");
+    });
+    return;
+  }
+
+  _extensionActive = await isExtensionActive();
+  if (!_extensionActive) {
+    console.log("[MindEase] Extension is inactive. Waiting for user to start a session.");
+    return;
+  }
+
+  const sourceType = detectSourceType();
+  if (!sourceType) return;
+  await activateForSession(sourceType);
+  startQTablePolling();
 })();
 
 /* ─── Layer 1: Content Transformation ──────────────────────────────────────────── */
@@ -505,10 +630,23 @@ function fmtDurationLocal(ms: number): string {
 
 /* Receive pushed response from background */
 browser.runtime.onMessage.addListener((message: unknown) => {
-  const msg = message as { type: string; chunks?: ContentChunk[]; error?: string; payload?: unknown; visuals?: VisualEntry[] };
+  const msg = message as {
+    type: string; chunks?: ContentChunk[]; error?: string; payload?: unknown;
+    visuals?: VisualEntry[]; baseline?: BaselineProfile; transformationParams?: TransformationParams;
+    append?: boolean; done?: boolean;
+  };
   if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks && msg.chunks.length > 0) {
+    if (!_extensionActive) return;
     removeReopenButton();
-    injectOverlay(msg.chunks);
+    if (msg.append) {
+      appendToOverlay(msg.chunks);
+    } else {
+      injectOverlay(msg.chunks, msg.baseline, msg.transformationParams);
+    }
+    if (msg.done) {
+      const marker = document.getElementById("mindease-loading-marker");
+      if (marker) marker.style.display = "none";
+    }
   }
   if (msg.type === "VISUALS_READY" && msg.visuals) {
     renderVisuals(msg.visuals);
@@ -535,47 +673,51 @@ browser.runtime.onMessage.addListener((message: unknown) => {
 const OVERLAY_CSS = `
       /* ── Theme variables (scoped to overlay) ── */
       #mindease-overlay[data-theme="dark"] {
-        --bg-base:        #060d18;
-        --bg-surface:     #0d1829;
-        --bg-surface-alt: #0a1422;
-        --bg-overlay:     rgba(6, 13, 24, 0.95);
-        --bg-elevated:    #111d2f;
-        --border:         #1a2d45;
-        --border-hover:   #2a4a6a;
-        --border-focus:   #4EB8FF;
-        --text-primary:   #e8edf5;
-        --text-dim:       #64748b;
-        --text-muted:     #475569;
-        --accent:         #4EB8FF;
-        --accent-secondary: #7B6FFF;
-        --accent-gradient:  linear-gradient(135deg, #4EB8FF, #7B6FFF);
-        --accent-glow:      rgba(78,184,255,0.3);
-        --danger:         #ef4444;
-        --shadow:         -8px 0 48px rgba(0,0,0,0.7);
-        --shadow-right:   8px 0 48px rgba(0,0,0,0.7);
-        --font-family:    'Inter', 'Segoe UI', system-ui, sans-serif;
+        --bg-base:        #1A1D3A;
+        --bg-surface:     #252A55;
+        --bg-surface-alt: #20254A;
+        --bg-elevated:    #2E3366;
+        --bg-overlay:     rgba(26, 29, 58, 0.95);
+        --border:         #7286D3;
+        --border-hover:   #8EA7E9;
+        --border-focus:   #8EA7E9;
+        --text-primary:   #E5E0FF;
+        --text-dim:       #B8B8E0;
+        --text-muted:     #8A8AB8;
+        --accent:         #8EA7E9;
+        --accent-secondary: #E5E0FF;
+        --accent-gradient:  linear-gradient(135deg, #8EA7E9, #E5E0FF);
+        --accent-glow:      rgba(142,167,233,0.25);
+        --danger:         #f87171;
+        --success:        #4ade80;
+        --warning:        #facc15;
+        --shadow:         -8px 0 48px rgba(0,0,0,0.6);
+        --shadow-right:   8px 0 48px rgba(0,0,0,0.6);
+        --font-family:    'Inter', system-ui, -apple-system, sans-serif;
       }
 
       #mindease-overlay[data-theme="light"] {
-        --bg-base:        #f5f7fa;
-        --bg-surface:     #ffffff;
-        --bg-surface-alt: #f0f2f5;
-        --bg-overlay:     rgba(245, 247, 250, 0.97);
-        --bg-elevated:    #e8ecf1;
-        --border:         #d0d7de;
-        --border-hover:   #8b949e;
-        --border-focus:   #3b82f6;
-        --text-primary:   #1a2332;
-        --text-dim:       #6b7280;
-        --text-muted:     #9ca3af;
-        --accent:         #3b82f6;
-        --accent-secondary: #8b5cf6;
-        --accent-gradient:  linear-gradient(135deg, #3b82f6, #8b5cf6);
-        --accent-glow:      rgba(59,130,246,0.3);
+        --bg-base:        #FFF2C6;
+        --bg-surface:     #FFF8DE;
+        --bg-surface-alt: #FFFBE8;
+        --bg-elevated:    #FFFAE8;
+        --bg-overlay:     rgba(255, 242, 198, 0.97);
+        --border:         #AAC4F5;
+        --border-hover:   #8CA9FF;
+        --border-focus:   #8CA9FF;
+        --text-primary:   #2D2B55;
+        --text-dim:       #6E7FA8;
+        --text-muted:     #94A8CC;
+        --accent:         #8CA9FF;
+        --accent-secondary: #AAC4F5;
+        --accent-gradient:  linear-gradient(135deg, #8CA9FF, #AAC4F5);
+        --accent-glow:      rgba(140,169,255,0.20);
         --danger:         #dc2626;
-        --shadow:         -8px 0 48px rgba(0,0,0,0.15);
-        --shadow-right:   8px 0 48px rgba(0,0,0,0.15);
-        --font-family:    'Inter', 'Segoe UI', system-ui, sans-serif;
+        --success:        #16a34a;
+        --warning:        #ca8a04;
+        --shadow:         -8px 0 48px rgba(0,0,0,0.1);
+        --shadow-right:   8px 0 48px rgba(0,0,0,0.1);
+        --font-family:    'Inter', system-ui, -apple-system, sans-serif;
       }
 
       /* ── Base overlay ── */
@@ -1138,18 +1280,256 @@ const OVERLAY_CSS = `
           transition: none !important;
         }
       }
+
+      /* ── Adaptive: DEF Tooltip ── */
+      .m-def-term {
+        border-bottom: 1px dashed var(--accent);
+        cursor: help;
+        position: relative;
+        color: var(--accent);
+      }
+      .m-def-term:hover::after {
+        content: attr(data-def);
+        position: absolute;
+        bottom: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+        font-size: 0.72rem;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        white-space: nowrap;
+        max-width: 280px;
+        white-space: normal;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 10;
+        pointer-events: none;
+      }
+
+      /* ── Adaptive: Formula ── */
+      .m-formula {
+        display: inline-block;
+        padding: 4px 8px;
+        background: var(--bg-surface-alt);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 1rem;
+        margin: 4px 0;
+        overflow-x: auto;
+      }
+
+      /* ── Adaptive: Slow pace - larger text ── */
+      #mindease-overlay[data-pace="slow"] .chunk-body {
+        font-size: 1rem;
+        line-height: 1.8;
+      }
+      #mindease-overlay[data-pace="slow"] .mindease-chunk {
+        padding: 20px;
+      }
+
+      /* ── Adaptive: Second language - prominent DEFs ── */
+      #mindease-overlay[data-second-lang="true"] .m-def-term {
+        border-bottom: 2px solid var(--accent);
+        font-weight: 600;
+      }
+      #mindease-overlay[data-second-lang="true"] .m-def-term:hover::after {
+        font-size: 0.8rem;
+        padding: 8px 14px;
+        background: var(--accent);
+        color: #fff;
+      }
+
+      /* ── Adaptive: Concise info density - collapse examples ── */
+      #mindease-overlay[data-density="concise"] .is-example .chunk-body {
+        opacity: 0.85;
+        font-size: 0.82rem;
+      }
+      .example-detail {
+        margin: 8px 0;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 8px 12px;
+        background: var(--bg-surface-alt);
+      }
+      .example-detail summary {
+        cursor: pointer;
+        font-weight: 600;
+        color: var(--accent);
+        font-size: 0.78rem;
+      }
+      .example-content {
+        margin-top: 8px;
+        font-size: 0.82rem;
+        color: var(--text-dim);
+      }
+
+      /* ── Adaptive: Short attention - chunk page highlight ── */
+      #mindease-overlay[data-attention="short"] .mindease-chunk {
+        animation: fadeIn 0.3s ease;
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      #mindease-overlay[data-attention="short"] .mindease-page {
+        min-height: 120px;
+      }
 `;
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Overlay helpers (module-level for reuse in appendToOverlay)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+function formatChunkText(raw: string): string {
+  const withDefs = raw.replace(
+    /\[DEF:\s*([^\]]+)\]/gi,
+    (_, term) =>
+      `<span class="m-def-term" data-def="${_escHtml(term.trim())}">${_escHtml(term.trim())}</span>`,
+  );
+  const withFormulas = withDefs.replace(
+    /\[FORMULA\]([\s\S]*?)\[\/FORMULA\]/gi,
+    (_, formula) => `<span class="m-formula">${renderLatex(formula.trim())}</span>`,
+  );
+  const lines = withFormulas.split("\n").filter(l => l.trim());
+  const parts: string[] = [];
+  let inList = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^>\s/.test(trimmed)) {
+      if (inList) { parts.push("</ul>"); inList = false; }
+      parts.push(`<blockquote>${trimmed.replace(/^>\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</blockquote>`);
+    } else if (/^[-*]\s/.test(trimmed)) {
+      if (!inList) { parts.push("<ul>"); inList = true; }
+      parts.push(`<li>${trimmed.replace(/^[-*]\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`);
+    } else if (/^\*\*(.+?)\*\*:?\s*/.test(trimmed)) {
+      if (inList) { parts.push("</ul>"); inList = false; }
+      parts.push(`<h4 class="chunk-subtitle">${trimmed.replace(/\*\*(.+?)\*\*/g, "$1")}</h4>`);
+    } else {
+      if (inList) { parts.push("</ul>"); inList = false; }
+      const formatted = trimmed
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>");
+      parts.push(`<p>${formatted}</p>`);
+    }
+  }
+  if (inList) parts.push("</ul>");
+  return renderLatex(parts.join("\n"));
+}
+
+function stripInlineTags(text: string): string {
+  return text
+    .replace(/\[CONCEPT:[^\]]+\]/g, "")
+    .replace(/\[SUMMARY:[^\]]+\]/g, "")
+    .replace(/\[CHUNK\s*\d*\]/gi, "")
+    .replace(/^---+$/gm, "")
+    .trim();
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    Floating Overlay Panel
    ═══════════════════════════════════════════════════════════════════════════════ */
 
-function injectOverlay(chunks: ContentChunk[]): void {
+function appendToOverlay(chunks: ContentChunk[]): void {
+  const container = document.getElementById("tab-content");
+  const marker = document.getElementById("mindease-loading-marker");
+  if (!container) return;
+  const palette = ["accent", "secondary", "tertiary", "quaternary"];
+  const existing = container.querySelectorAll(".mindease-chunk").length;
+  const html = chunks.map((chunk, i) => {
+    const concept = chunk.conceptTags[0] ?? "";
+    const cleanText = chunk.text
+      .replace(/\[CONCEPT:[^\]]+\]/g, "")
+      .replace(/\[SUMMARY:[^\]]+\]/g, "")
+      .replace(/\[CHUNK\s*\d*\]/gi, "")
+      .replace(/^---+$/gm, "")
+      .trim();
+    const bodyHTML = formatChunkText(cleanText);
+    const colorKey = palette[(existing + i) % palette.length];
+    return `
+      <div class="mindease-chunk ${concept ? "has-concept" : ""} color-${colorKey}
+           ${chunk.isExample ? "is-example" : ""} ${chunk.hasDefinitions ? "has-defs" : ""}">
+        ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${_escHtml(concept)}</div>` : ""}
+        <div class="chunk-body">${bodyHTML}</div>
+        ${chunk.summary ? `<div class="chunk-summary">${iconHTML("arrow-right")} ${_escHtml(chunk.summary)}</div>` : ""}
+      </div>
+    `;
+  }).join("");
+  if (marker) {
+    marker.insertAdjacentHTML("beforebegin", html);
+  } else {
+    container.insertAdjacentHTML("beforeend", html);
+  }
+  const statEl = document.getElementById("mindease-engage-count");
+  if (statEl) {
+    const total = container.querySelectorAll(".mindease-chunk").length;
+    statEl.textContent = String(total);
+  }
+}
+
+function injectOverlay(
+  chunks: ContentChunk[],
+  baseline?: BaselineProfile,
+  transformationParams?: TransformationParams,
+): void {
   document.getElementById("mindease-overlay")?.remove();
   document.getElementById("mindease-pdf-loader")?.remove();
   removeReopenButton();
 
-  // Inject KaTeX CSS for math rendering
+  const tParams = transformationParams ?? chunkParams;
+  const baselineProfile = baseline ?? defaultBaseline;
+
+  function renderChunkHTML(chunk: ContentChunk, i: number): string {
+    const concept = chunk.conceptTags[0] ?? "";
+    const summary = chunk.summary ?? "";
+    const cleanText = stripInlineTags(chunk.text);
+    const palette = ["accent", "secondary", "tertiary", "quaternary"];
+    const colorKey = palette[i % palette.length];
+    const bodyHTML = formatChunkText(cleanText);
+
+    return `
+      <div class="mindease-chunk ${concept ? "has-concept" : ""} color-${colorKey}
+           ${chunk.isExample ? "is-example" : ""} ${chunk.hasDefinitions ? "has-defs" : ""}"
+           data-chunk-index="${i}">
+        ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${_escHtml(concept)}</div>` : ""}
+        <div class="chunk-body">${bodyHTML}</div>
+        ${summary ? `<div class="chunk-summary">${iconHTML("arrow-right")} ${_escHtml(summary)}</div>` : ""}
+      </div>
+    `;
+  }
+
+  let orderedChunks = [...chunks];
+
+  if (baselineProfile.learningApproach === "example-first") {
+    const examples = orderedChunks.filter(c => c.isExample);
+    const rest = orderedChunks.filter(c => !c.isExample);
+    orderedChunks = [...examples, ...rest];
+  } else {
+    const theory = orderedChunks.filter(c => !c.isExample);
+    const examples = orderedChunks.filter(c => c.isExample);
+    orderedChunks = [...theory, ...examples];
+  }
+
+  const totalConcepts = orderedChunks.reduce((acc, c) => acc + c.conceptTags.length, 0);
+  const summaryCount = orderedChunks.filter(c => c.summary).length;
+
+  const infoDensity = baselineProfile.infoDensity;
+  const secondLang = baselineProfile.secondLanguageLearner;
+  const readingPace = baselineProfile.readingPace;
+  const attentionSpan = baselineProfile.attentionSpan;
+
+  const overlay = document.createElement("div");
+  overlay.id = "mindease-overlay";
+  overlay.setAttribute("data-theme", _theme);
+  overlay.setAttribute("data-attention", attentionSpan);
+  overlay.setAttribute("data-pace", readingPace);
+  overlay.setAttribute("data-density", infoDensity);
+  overlay.setAttribute("data-second-lang", String(secondLang));
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-label", "MindEase study panel");
+  overlay.setAttribute("aria-hidden", "false");
+
   if (!document.getElementById("mindease-katex-css")) {
     const link = document.createElement("link");
     link.id = "mindease-katex-css";
@@ -1158,75 +1538,6 @@ function injectOverlay(chunks: ContentChunk[]): void {
     document.head.appendChild(link);
   }
 
-  const conceptChunks = chunks.filter(c => c.text.includes("[CONCEPT:"));
-  const regularChunks = chunks.filter(c => !c.text.includes("[CONCEPT:"));
-
-  const overlay = document.createElement("div");
-  overlay.id = "mindease-overlay";
-  overlay.setAttribute("data-theme", _theme);
-  overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-label", "MindEase study panel");
-  overlay.setAttribute("aria-hidden", "false");
-
-  const totalConcepts = conceptChunks.length;
-  const summaryChunks = chunks.filter(c => c.text.includes("[SUMMARY:"));
-
-  const palette = ["accent", "secondary", "tertiary", "quaternary"];
-
-  function formatChunkText(raw: string): string {
-    const lines = raw.split("\n").filter(l => l.trim());
-    const parts: string[] = [];
-    let inList = false;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (/^>\s/.test(trimmed)) {
-        if (inList) { parts.push("</ul>"); inList = false; }
-        parts.push(`<blockquote>${trimmed.replace(/^>\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</blockquote>`);
-      } else if (/^[-*]\s/.test(trimmed)) {
-        if (!inList) { parts.push("<ul>"); inList = true; }
-        parts.push(`<li>${trimmed.replace(/^[-*]\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`);
-      } else if (/^\*\*(.+?)\*\*:?\s*/.test(trimmed)) {
-        if (inList) { parts.push("</ul>"); inList = false; }
-        parts.push(`<h4 class="chunk-subtitle">${trimmed.replace(/\*\*(.+?)\*\*/g, "$1")}</h4>`);
-      } else {
-        if (inList) { parts.push("</ul>"); inList = false; }
-        const formatted = trimmed
-          .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-          .replace(/`([^`]+)`/g, "<code>$1</code>");
-        parts.push(`<p>${formatted}</p>`);
-      }
-    }
-    if (inList) parts.push("</ul>");
-    return renderLatex(parts.join("\n"));
-  }
-
-  const chunksHTML = chunks.map((chunk, i) => {
-    const hasConcept = chunk.text.includes("[CONCEPT:");
-    const conceptMatch = chunk.text.match(/\[CONCEPT:\s*([^\]]+)\]/);
-    const summaryMatch = chunk.text.match(/\[SUMMARY:\s*([^\]]+)\]/);
-    const cleanText = chunk.text
-      .replace(/\[CONCEPT:[^\]]+\]/g, "")
-      .replace(/\[SUMMARY:[^\]]+\]/g, "")
-      .replace(/\[CHUNK\s*\d*\]/gi, "")
-      .replace(/^---+$/gm, "")
-      .trim();
-    const concept = conceptMatch?.[1]?.trim() ?? "";
-    const summary = summaryMatch?.[1]?.trim() ?? "";
-
-    const colorKey = palette[i % palette.length];
-    const bodyHTML = formatChunkText(cleanText);
-
-    return `
-      <div class="mindease-chunk ${hasConcept ? "has-concept" : ""} color-${colorKey}"
-           style="animation-delay: ${i * 0.04}s">
-        ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${concept}</div>` : ""}
-        <div class="chunk-body">${bodyHTML}</div>
-        ${summary ? `<div class="chunk-summary">${iconHTML("arrow-right")} ${summary}</div>` : ""}
-      </div>
-    `;
-  }).join("");
-
-  // Inject overlay styles as a proper style element (avoids Firefox CSP block on inline <style>)
   if (!document.getElementById("mindease-overlay-styles")) {
     const styleEl = document.createElement("style");
     styleEl.id = "mindease-overlay-styles";
@@ -1242,6 +1553,7 @@ function injectOverlay(chunks: ContentChunk[]): void {
         <span class="logo-badge">ADAPTIVE</span>
       </div>
       <div id="mindease-controls">
+        <button class="mindease-ctrl-btn" id="mindease-theme-toggle" title="Toggle theme" aria-label="Toggle theme">${_theme === "light" ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>'}</button>
         <button class="mindease-ctrl-btn" id="mindease-minimize" title="Minimize" aria-label="Minimize panel">&minus;</button>
         <button class="mindease-ctrl-btn" id="mindease-close" title="Close" aria-label="Close panel">${iconHTML("x")}</button>
       </div>
@@ -1256,7 +1568,7 @@ function injectOverlay(chunks: ContentChunk[]): void {
 
     <div id="mindease-stats-bar">
       <div class="mindease-stat">
-        <span class="s-num">${chunks.length}</span>
+        <span class="s-num">${orderedChunks.length}</span>
         <span class="s-label">Chunks</span>
       </div>
       <div class="mindease-stat">
@@ -1264,7 +1576,7 @@ function injectOverlay(chunks: ContentChunk[]): void {
         <span class="s-label">Concepts</span>
       </div>
       <div class="mindease-stat">
-        <span class="s-num">${summaryChunks.length}</span>
+        <span class="s-num">${summaryCount}</span>
         <span class="s-label">Summaries</span>
       </div>
       <div class="mindease-stat">
@@ -1275,10 +1587,13 @@ function injectOverlay(chunks: ContentChunk[]): void {
 
     <div id="mindease-body">
       <div class="mindease-tab-content active" id="tab-content" role="tabpanel" aria-label="Content">
-        ${chunks.length === 0
+        ${orderedChunks.length === 0
           ? '<p style="color:var(--text-muted);text-align:center;padding:24px">No content chunks yet.</p>'
-          : chunksHTML
+          : orderedChunks.map((chunk, ci) => renderChunkHTML(chunk, ci)).join("")
         }
+        <div id="mindease-loading-marker" style="display:none;text-align:center;padding:16px;color:var(--text-muted);font-size:0.78rem">
+          ${iconHTML("loader")} Loading more content...
+        </div>
       </div>
 
       <div class="mindease-tab-content" id="tab-visuals" role="tabpanel" aria-label="Visuals" style="display:none">
@@ -1373,6 +1688,10 @@ function injectOverlay(chunks: ContentChunk[]): void {
 
     <div id="mindease-footer">
       <button class="mindease-btn mindease-btn-primary" id="mindease-end-session">End Session</button>
+      <button class="mindease-btn mindease-btn-ghost" id="mindease-popout">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        Full view
+      </button>
       <button class="mindease-btn mindease-btn-ghost" id="mindease-toggle-side">${iconHTML("arrow-left-right")} Side</button>
     </div>
   `;
@@ -1501,6 +1820,29 @@ function injectOverlay(chunks: ContentChunk[]): void {
     overlay.style.borderRight = onRight ? "none" : "1px solid var(--border)";
     overlay.style.boxShadow = onRight ? "var(--shadow)" : "var(--shadow-right)";
     saveSidebarState({ onRight });
+  });
+
+  /* ── Theme toggle in overlay ── */
+  document.getElementById("mindease-theme-toggle")?.addEventListener("click", () => {
+    const next = _theme === "light" ? "dark" : "light";
+    _theme = next;
+    applyTheme(next);
+    overlay.setAttribute("data-theme", next);
+  });
+
+  /* ── Pop out / Full view ── */
+  document.getElementById("mindease-popout")?.addEventListener("click", () => {
+    const contentEl = document.getElementById("tab-content");
+    if (!contentEl) return;
+    const w = window.open("", "_blank", "width=800,height=600,scrollbars=yes");
+    if (!w) return;
+    const themeStyle = _theme === "light"
+      ? "body{background:#fff;color:#1a2332;font-family:sans-serif;padding:24px;max-width:800px;margin:auto}"
+      : "body{background:#1a1d3a;color:#e5e0ff;font-family:sans-serif;padding:24px;max-width:800px;margin:auto}";
+    w.document.write(`<!DOCTYPE html>
+<html><head><title>MindEase - Content View</title>
+<style>${themeStyle} .mindease-chunk{margin-bottom:20px;padding:16px;border:1px solid #e2e8f0;border-radius:8px} .chunk-concept-tag{font-weight:700;color:#3b82f6;margin-bottom:6px} .chunk-body{line-height:1.7;font-size:0.95rem} .chunk-summary{font-size:0.82rem;color:#64748b;margin-top:8px;padding:8px;background:#f8fafc;border-radius:6px}</style></head><body>${contentEl.innerHTML}</body></html>`);
+    w.document.close();
   });
 
   /* ── Restore saved state ── */
@@ -1700,6 +2042,7 @@ function renderVisuals(visuals: VisualEntry[]): void {
 
 async function initYouTubeMode(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 3000));
+  if (!_extensionActive) return;
 
   const video = document.querySelector("video") as HTMLVideoElement;
   if (!video) return;
@@ -1912,17 +2255,6 @@ function stopQTablePolling(): void {
     qPanel = null;
   }
 }
-
-// Start polling when the extension becomes active
-const origOnStateChange = onExtensionStateChange;
-onExtensionStateChange = (active: boolean) => {
-  origOnStateChange(active);
-  if (active) {
-    startQTablePolling();
-  } else {
-    stopQTablePolling();
-  }
-};
 
 // If already active, start immediately
 if (_extensionActive) {

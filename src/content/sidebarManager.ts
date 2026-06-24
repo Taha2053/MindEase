@@ -77,8 +77,8 @@ export function injectReopenButton(theme: Theme): HTMLButtonElement {
     height: "48px",
     borderRadius: "50%",
     background: theme === "light"
-      ? "linear-gradient(135deg, #3b82f6, #8b5cf6)"
-      : "linear-gradient(135deg, #4EB8FF, #7B6FFF)",
+      ? "linear-gradient(135deg, #8CA9FF, #AAC4F5)"
+      : "linear-gradient(135deg, #8EA7E9, #E5E0FF)",
     border: "none",
     cursor: "pointer",
     display: "flex",
@@ -131,13 +131,13 @@ export function ensureReopenStyles(): void {
     }
     @keyframes mindease-reopen-pulse {
       0%, 100% { box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
-      50% { box-shadow: 0 4px 24px rgba(78,184,255,0.5); }
+      50% { box-shadow: 0 4px 24px rgba(142,167,233,0.5); }
     }
     #mindease-reopen-btn {
       animation: mindease-reopen-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
     #mindease-reopen-btn:focus-visible {
-      outline: 2px solid var(--border-focus, #4EB8FF);
+      outline: 2px solid var(--border-focus, #8EA7E9);
       outline-offset: 3px;
     }
     @media (prefers-reduced-motion: reduce) {

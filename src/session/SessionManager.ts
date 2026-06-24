@@ -128,7 +128,7 @@ export class SessionManager {
 
   /* ─── Tab Management ─────────────────────────────────────────────────── */
 
-  registerTab(tabId: number, url: string, sourceType: "pdf" | "video" | "website" | "lecture", title: string): void {
+  async registerTab(tabId: number, url: string, sourceType: "pdf" | "video" | "website" | "lecture", title: string): Promise<void> {
     const now = Date.now();
 
     // Create session if none exists
@@ -173,7 +173,7 @@ export class SessionManager {
     });
 
     this.onActivity();
-    this.persist();
+    await this.persist();
   }
 
   removeTab(tabId: number): void {

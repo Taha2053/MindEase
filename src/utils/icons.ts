@@ -1,39 +1,79 @@
-const EMOJI_MAP: Record<string, string> = {
-  brain: "\u{1F9E0}",
-  star: "\u2B50",
-  x: "\u2716",
-  sun: "\u2600\uFE0F",
-  moon: "\uD83C\uDF19",
-  settings: "\u2699\uFE0F",
-  "chevron-down": "\u25BC",
-  "arrow-left-right": "\u2194\uFE0F",
-  "refresh-cw": "\uD83D\uDD04",
-  "arrow-right": "\u27A1\uFE0F",
-  "check-circle": "\u2705",
-  circle: "\u2B55",
-  check: "\u2714\uFE0F",
-  "file-text": "\uD83D\uDCC4",
-  film: "\uD83C\uDFAC",
-  globe: "\uD83C\uDF10",
-  "graduation-cap": "\uD83C\uDF93",
-  "folder-open": "\uD83D\uDCC2",
-  pencil: "\u270F\uFE0F",
-  "bar-chart-3": "\uD83D\uDCCA",
-  link: "\uD83D\uDD17",
-  target: "\uD83C\uDFAF",
-  "alert-triangle": "\u26A0\uFE0F",
-  "message-circle": "\uD83D\uDCAC",
-  "message-square": "\uD83D\uDCAC",
-  image: "\uD83D\uDDBC\uFE0F",
-  timer: "\u23F1\uFE0F",
-  "book-open-text": "\uD83D\uDCD6",
-  "align-start-vertical": "\uD83D\uDCD0",
-  "file-down": "\uD83D\uCCE5",
-  "trending-up": "\uD83D\uDCC8",
-  package: "\uD83D\uDCE6",
-  lightbulb: "\uD83D\uDCA1",
+import brainData from "lucide/dist/esm/icons/brain.mjs";
+import starData from "lucide/dist/esm/icons/star.mjs";
+import xData from "lucide/dist/esm/icons/x.mjs";
+import sunData from "lucide/dist/esm/icons/sun.mjs";
+import moonData from "lucide/dist/esm/icons/moon.mjs";
+import refreshCwData from "lucide/dist/esm/icons/refresh-cw.mjs";
+import arrowRightData from "lucide/dist/esm/icons/arrow-right.mjs";
+import arrowLeftRightData from "lucide/dist/esm/icons/arrow-left-right.mjs";
+import fileTextData from "lucide/dist/esm/icons/file-text.mjs";
+import filmData from "lucide/dist/esm/icons/film.mjs";
+import globeData from "lucide/dist/esm/icons/globe.mjs";
+import graduationCapData from "lucide/dist/esm/icons/graduation-cap.mjs";
+import folderOpenData from "lucide/dist/esm/icons/folder-open.mjs";
+import linkData from "lucide/dist/esm/icons/link.mjs";
+import targetData from "lucide/dist/esm/icons/target.mjs";
+import messageCircleData from "lucide/dist/esm/icons/message-circle.mjs";
+import messageSquareData from "lucide/dist/esm/icons/message-square.mjs";
+import imageData from "lucide/dist/esm/icons/image.mjs";
+import timerData from "lucide/dist/esm/icons/timer.mjs";
+import bookOpenTextData from "lucide/dist/esm/icons/book-open-text.mjs";
+import alignStartVerticalData from "lucide/dist/esm/icons/align-start-vertical.mjs";
+import chartBarIncreasingData from "lucide/dist/esm/icons/chart-bar-increasing.mjs";
+import triangleAlertData from "lucide/dist/esm/icons/triangle-alert.mjs";
+import type { IconNode } from "lucide";
+
+const ICON_MAP: Record<string, IconNode> = {
+  brain: brainData,
+  star: starData,
+  x: xData,
+  sun: sunData,
+  moon: moonData,
+  "refresh-cw": refreshCwData,
+  "arrow-right": arrowRightData,
+  "arrow-left-right": arrowLeftRightData,
+  "file-text": fileTextData,
+  film: filmData,
+  globe: globeData,
+  "graduation-cap": graduationCapData,
+  "folder-open": folderOpenData,
+  link: linkData,
+  target: targetData,
+  "message-circle": messageCircleData,
+  "message-square": messageSquareData,
+  image: imageData,
+  timer: timerData,
+  "book-open-text": bookOpenTextData,
+  "align-start-vertical": alignStartVerticalData,
+  "bar-chart-3": chartBarIncreasingData,
+  "alert-triangle": triangleAlertData,
 };
 
+function renderSVG(elements: IconNode, size = 20, className?: string): string {
+  const attrs = [
+    `width="${size}"`,
+    `height="${size}"`,
+    `viewBox="0 0 24 24"`,
+    `fill="none"`,
+    `stroke="currentColor"`,
+    `stroke-width="2"`,
+    `stroke-linecap="round"`,
+    `stroke-linejoin="round"`,
+  ];
+  if (className) attrs.push(`class="${className}"`);
+  const inner = elements
+    .map(([tag, attrs]) => {
+      const attrStr = Object.entries(attrs)
+        .map(([k, v]) => `${k}="${v}"`)
+        .join(" ");
+      return `<${tag} ${attrStr}/>`;
+    })
+    .join("");
+  return `<svg ${attrs.join(" ")}>${inner}</svg>`;
+}
+
 export function iconHTML(name: string, _className = ""): string {
-  return EMOJI_MAP[name] ?? "";
+  const data = ICON_MAP[name];
+  if (!data) return "";
+  return renderSVG(data, 18, _className || undefined);
 }

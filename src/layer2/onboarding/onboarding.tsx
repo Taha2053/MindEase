@@ -19,8 +19,8 @@ import type {
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import {
-  initTheme, toggleTheme as themeManagerToggle,
-  getAppliedTheme, type Theme,
+  applyTheme, toggleTheme as themeManagerToggle,
+  type Theme,
 } from "@/utils/themeManager";
 import {
   BookOpenText, Brain, Check, Clock, Eye, Feather, Globe, Heart,
@@ -303,7 +303,8 @@ function App() {
   const [existingProfile, setExistingProfile] = useState<FullCognitiveProfile | null>(null);
 
   useEffect(() => {
-    initTheme().then((t) => setTheme(t));
+    applyTheme("light");
+    setTheme("light");
     const params = new URLSearchParams(window.location.search);
     const edit = params.get("edit") === "1";
     setIsEditMode(edit);

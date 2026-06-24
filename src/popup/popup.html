@@ -5,48 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MindEase</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@700&display=swap" rel="stylesheet" />
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
-      :root, [data-theme="dark"] {
-        --bg-base:        #0d1628;
-        --bg-surface:     #15203a;
-        --bg-surface-alt: #111b30;
-        --border:         #1e3150;
-        --border-hover:   #2a4a6a;
-        --border-focus:   #60b8ff;
-        --text-primary:   #eef2f8;
-        --text-dim:       #8899b4;
-        --text-muted:     #5c6f8a;
-        --accent:         #60b8ff;
-        --accent-secondary: #8b7dff;
-        --accent-gradient:  linear-gradient(135deg, #60b8ff, #8b7dff);
+      [data-theme="dark"] {
+        --bg-base:        #1A1D3A;
+        --bg-surface:     #252A55;
+        --bg-surface-alt: #20254A;
+        --border:         #7286D3;
+        --border-hover:   #8EA7E9;
+        --text-primary:   #E5E0FF;
+        --text-dim:       #B8B8E0;
+        --text-muted:     #8A8AB8;
+        --accent:         #8EA7E9;
+        --accent-gradient:  linear-gradient(135deg, #8EA7E9, #E5E0FF);
         --danger:         #f87171;
         --success:        #4ade80;
         --warning:        #facc15;
         --font-family:    'Inter', system-ui, -apple-system, sans-serif;
-        --shadow-glow:    0 8px 24px rgba(96,184,255,0.3);
+        --shadow-glow:    0 8px 32px rgba(142,167,233,0.25);
       }
 
       [data-theme="light"] {
-        --bg-base:        #f0f4f9;
-        --bg-surface:     #ffffff;
-        --bg-surface-alt: #e8edf5;
-        --border:         #c8d0dd;
-        --border-hover:   #8899b4;
-        --border-focus:   #3b82f6;
-        --text-primary:   #0f172a;
-        --text-dim:       #475569;
-        --text-muted:     #94a3b8;
-        --accent:         #3b82f6;
-        --accent-secondary: #7c3aed;
-        --accent-gradient:  linear-gradient(135deg, #3b82f6, #7c3aed);
+        --bg-base:        #FFF2C6;
+        --bg-surface:     #FFF8DE;
+        --bg-surface-alt: #FFFBE8;
+        --border:         #AAC4F5;
+        --border-hover:   #8CA9FF;
+        --text-primary:   #2D2B55;
+        --text-dim:       #6E7FA8;
+        --text-muted:     #94A8CC;
+        --accent:         #8CA9FF;
+        --accent-gradient:  linear-gradient(135deg, #8CA9FF, #AAC4F5);
         --danger:         #dc2626;
         --success:        #16a34a;
         --warning:        #ca8a04;
         --font-family:    'Inter', system-ui, -apple-system, sans-serif;
-        --shadow-glow:    0 8px 24px rgba(59,130,246,0.3);
+        --shadow-glow:    0 8px 24px rgba(140,169,255,0.20);
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -89,7 +86,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 17px;
+        color: #1A1D3A;
         flex-shrink: 0;
       }
       .header-text { flex: 1; }
@@ -104,7 +101,6 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 16px;
         cursor: pointer;
         transition: all 0.15s;
         color: var(--text-primary);
@@ -114,7 +110,6 @@
 
       .body-wrap { padding: 14px; }
 
-      /* ── Session Control Bar ── */
       .session-bar {
         display: flex;
         align-items: center;
@@ -151,22 +146,17 @@
         white-space: nowrap;
       }
       .session-btn:hover { border-color: var(--border-hover); }
-      .session-btn.start {
-        background: var(--success); color: #000; border-color: var(--success); font-weight: 600;
-      }
-      .session-btn.start:hover { opacity: 0.85; }
-      .session-btn.stop {
-        background: var(--danger); color: #fff; border-color: var(--danger); font-weight: 600;
-      }
-      .session-btn.stop:hover { opacity: 0.85; }
-      .session-btn.resume {
-        background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
-      }
+      .session-btn.start { background: #a8e6cf; color: #2d6a4f; border-color: #a8e6cf; font-weight: 600; }
+      .session-btn.start:hover { background: #95d5b2; }
+      .session-btn.stop { background: #f5b7b1; color: #943126; border-color: #f5b7b1; font-weight: 600; }
+      .session-btn.stop:hover { background: #f1948a; }
+      .session-btn.resume { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
       .session-btn.resume:hover { opacity: 0.85; }
 
       .stats-row {
         display: flex;
-        gap: 8px;
+        gap: 12px;
+        margin-top: 12px;
         margin-bottom: 14px;
       }
       .stat-card {
@@ -214,7 +204,6 @@
       .profile-item .pi-label { font-size: 0.62rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; }
       .profile-item .pi-value { font-size: 0.85rem; font-weight: 500; color: var(--accent); }
 
-      /* ── Tab List ── */
       .tab-list { display: flex; flex-direction: column; gap: 6px; }
       .tab-row {
         display: flex;
@@ -245,7 +234,6 @@
         background: transparent;
         color: var(--text-dim);
         cursor: pointer;
-        font-size: 0.65rem;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -261,8 +249,8 @@
         font-size: 0.8rem; font-weight: 500; cursor: pointer;
         transition: all 0.15s; font-family: var(--font-family);
       }
-      .btn:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
-      .btn-primary { background: var(--accent-gradient); color: #fff; font-weight: 600; }
+      .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .btn-primary { background: var(--accent-gradient); color: #1A1D3A; font-weight: 600; }
       .btn-primary:hover { opacity: 0.9; }
       .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
       .btn-ghost:hover { color: var(--text-primary); border-color: var(--border-hover); }
@@ -271,29 +259,28 @@
         display: flex; flex-direction: column; align-items: center;
         justify-content: center; min-height: 200px; padding: 48px 24px; text-align: center;
       }
-      .waiting .w-icon { font-size: 2.2rem; margin-bottom: 12px; }
+      .waiting .w-icon { margin-bottom: 12px; color: var(--accent); }
       .waiting .w-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 6px; }
       .waiting .w-sub { font-size: 0.82rem; color: var(--text-dim); line-height: 1.5; }
 
       .hr { height: 1px; background: var(--border); margin: 12px 0; }
 
-      /* ── Content Controls (compact, no overflow) ── */
       .controls-toggle {
         display: flex; align-items: center; justify-content: space-between;
         width: 100%; padding: 10px 12px;
         background: var(--bg-surface); border: 1px solid var(--border); border-radius: 10px;
         cursor: pointer; font-family: var(--font-family); font-size: 0.8rem;
-        color: var(--text-primary); transition: all 0.15s; margin-bottom: 8px;
+        color: var(--text-primary); transition: all 0.15s; margin-top: 12px; margin-bottom: 8px;
       }
       .controls-toggle:hover { border-color: var(--border-hover); }
-      .controls-toggle .ct-label { font-weight: 600; }
+      .controls-toggle .ct-label { font-weight: 600; display: flex; align-items: center; gap: 4px; }
       .controls-toggle .ct-badge {
         font-size: 0.58rem; padding: 2px 8px; border-radius: 4px;
         font-weight: 600; text-transform: uppercase;
       }
       .ct-badge-on { background: rgba(74,222,128,0.15); color: var(--success); }
       .ct-badge-off { background: rgba(100,116,139,0.15); color: var(--text-muted); }
-      .ct-arrow { color: var(--text-muted); font-size: 0.7rem; transition: transform 0.2s; }
+      .ct-arrow { color: var(--text-muted); display: flex; transition: transform 0.2s; }
       .ct-arrow.open { transform: rotate(180deg); }
 
       .controls-panel { overflow: hidden; max-height: 0; transition: max-height 0.3s ease; }
@@ -316,23 +303,48 @@
         white-space: nowrap;
       }
       .control-btn:hover { border-color: var(--border-hover); color: var(--text-primary); }
-      .control-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .control-btn.active { background: var(--accent); color: #1A1D3A; border-color: var(--accent); }
       .control-btn.active-override { background: var(--warning); color: #000; border-color: var(--warning); }
 
       .controls-footer { display: flex; gap: 6px; margin-top: 8px; }
       .controls-footer .btn { padding: 6px 10px; font-size: 0.7rem; }
+
+      .scroll-list { display: flex; flex-direction: column; gap: 6px; }
+      .item-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .item-card .ic-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+      .item-card .ic-concept { font-size: 0.78rem; font-weight: 600; color: var(--text-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .item-card .ic-body { font-size: 0.7rem; color: var(--text-dim); line-height: 1.4; }
+      .badge {
+        font-size: 0.55rem; padding: 1px 6px; border-radius: 4px;
+        font-weight: 600; text-transform: uppercase; flex-shrink: 0;
+      }
+      .badge-review { background: rgba(250,204,21,0.12); color: var(--warning); }
+      .badge-skipped { background: rgba(248,113,113,0.12); color: var(--danger); }
+      .badge-skimmed { background: rgba(100,116,139,0.12); color: var(--text-muted); }
+      .badge-rushed { background: rgba(250,204,21,0.12); color: var(--warning); }
+
+      .loading-overlay {
+        position: fixed; inset: 0; z-index: 999;
+        background: rgba(0,0,0,0.25);
+        display: flex; align-items: center; justify-content: center;
+      }
+      .loading-spinner {
+        width: 28px; height: 28px;
+        border: 3px solid var(--bg-surface);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
-    <div class="header">
-      <div class="header-logo"><i data-lucide="brain" style="width:20px;height:20px;stroke-width:2.5"></i></div>
-      <div class="header-text">
-        <div class="header-title">MindEase</div>
-        <div class="header-sub">Adaptive Learning</div>
-      </div>
-      <button class="theme-toggle-popup" id="theme-toggle" aria-label="Toggle theme"><i data-lucide="sun"></i></button>
-    </div>
-    <div class="body-wrap" id="app"></div>
-    <script type="module" src="./popup.ts"></script>
+    <div id="app"></div>
+    <script type="module" src="./popup.tsx"></script>
   </body>
 </html>
