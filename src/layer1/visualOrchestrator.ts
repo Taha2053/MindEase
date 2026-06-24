@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from "uuid";
 import browser from "webextension-polyfill";
 import type { VisualEntry, VisualsCache, TransformationParams } from "@/types";
 import { STORAGE_KEYS } from "@/types";
-import { generateNapkinVisuals, type NapkinStyle } from "./napkinClient";
+import { generateNapkinVisuals, type NapkinOptions } from "./napkinClient";
 
 /* ── Cache helpers ──────────────────────────────────────────────── */
 
@@ -49,8 +49,8 @@ export async function generateVisualsForConcepts(
   const entries: VisualEntry[] = [];
 
   // 1. Napkin diagrams for all concepts
-  const style = mapStyleToNapkin(params);
-  const napkinResults = await generateNapkinVisuals(uniqueConcepts.slice(0, 5), style);
+  const napkinOptions = mapToNapkinOptions(params);
+  const napkinResults = await generateNapkinVisuals(uniqueConcepts.slice(0, 5), napkinOptions);
 
   for (const nr of napkinResults) {
     const ext = nr.format === "png" ? "png" : "svg";
@@ -84,14 +84,29 @@ export async function generateVisualsForConcepts(
 }
 
 /**
- * Map cognitive profile to a Napkin visual style.
+ * Map cognitive profile to Napkin visual generation options.
  */
-function mapStyleToNapkin(params: TransformationParams): NapkinStyle {
-  // Formal style for higher simplification (clean, structured)
-  // Colorful for visual-heavy profiles
-  if (params.simplificationLevel >= 2) return "formal";
-  if (params.useVisualAnchors) return "colorful";
-  return "casual";
+function mapToNapkinOptions(params: TransformationParams): NapkinOptions {
+  const opts: NapkinOptions = {};
+
+  // Style: formal for high simplification, colorful for visual-heavy
+  if (params.simplificationLevel >= 2) {
+    opts.style = "formal";
+    opts.visualQuery = "flowchart";
+    opts.orientation = "horizontal";
+  } else if (params.useVisualAnchors) {
+    opts.style = "colorful";
+    opts.visualQuery = "mindmap";
+    opts.orientation = "auto";
+  } else {
+    opts.style = "casual";
+    opts.visualQuery = "timeline";
+    opts.orientation = "vertical";
+  }
+
+  opts.sortStrategy = "relevance";
+
+  return opts;
 }
 
 /**

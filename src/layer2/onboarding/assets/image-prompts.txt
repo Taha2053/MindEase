@@ -74,3 +74,10 @@ removing the double theme changing buttons in the dashboard
 changint the theme and better theming for the dashboard 
 more visuals and graphs in the dashboard. less writing . 
 removing the q table logs from the bottom right side, and the option to open it to see live changing in the rl agent and how the profile is changing actually based on that . 
+
+
+
+feature: 
+* selecting a piece of text and getting the popup over it to get the explantion (a loading thing would appear , like the vs code copilot when asked to explain error, and then the response would appear) (select a text, right click, choose the extension tab, click and things would happen)
+* getting a capture of smth and getting the explanation of it (lateer on we will use a free ocr model, just get the base ready )
+* 

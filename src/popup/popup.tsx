@@ -33,19 +33,6 @@ function fmtDuration(ms: number): string {
   return `${sec}s`;
 }
 
-function cleanNoteText(raw: string): string {
-  return raw
-    .replace(/\[CHUNK\s*\d*\]/gi, "")
-    .replace(/^---+$/gm, "")
-    .replace(/\[\/?[A-Z]+\]/g, "")
-    .replace(/\[CONCEPT:[^\]]+\]/g, "")
-    .replace(/\[SUMMARY:[^\]]+\]/g, "")
-    .replace(/\u2605\s*/g, "")
-    .replace(/&#9734;\s*/g, "")
-    .replace(/\s{3,}/g, "  ")
-    .trim();
-}
-
 const DISTRACTION_DOMAINS = [
   "facebook.com", "twitter.com", "x.com", "instagram.com",
   "tiktok.com", "reddit.com", "youtube.com", "netflix.com",
@@ -547,34 +534,7 @@ function Explanations({ explanations }: { explanations: AdaptationExplanation[] 
   );
 }
 
-/* ── Standalone Notes ── */
 
-function StandaloneNotes({ notes }: { notes: HighlightNote[] }) {
-  if (!notes.length) return null;
-  return (
-    <>
-      <div className="hr" />
-      <div className="section-title">Personal Notes</div>
-      <div className="tab-list">
-        {notes.slice(-10).reverse().map((n, i) => {
-          const cleaned = cleanNoteText(n.text);
-          const displayText = cleaned.length > 200 ? cleaned.slice(0, 200) + "…" : cleaned;
-          return (
-            <div className="item-card" key={i} style={{ borderLeft: "3px solid var(--accent)" }}>
-              <div className="ic-body" style={{ fontStyle: "italic", color: "var(--text-primary)" }}>
-                &ldquo;{displayText}&rdquo;
-              </div>
-              <div style={{ fontSize: "0.62rem", color: "var(--text-muted)", marginTop: 4, display: "flex", gap: 6 }}>
-                <span style={{ color: "var(--accent)" }}>{(n.resourceTitle || n.sourceUrl).slice(0, 30)}</span>
-                <span>{new Date(n.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
 
 /* ── App ── */
 
@@ -751,8 +711,6 @@ function App() {
         )}
 
         <Explanations explanations={explanations} />
-
-        {notes.length > 0 && <StandaloneNotes notes={notes} />}
       </div>
       {loading && <div className="loading-overlay"><div className="loading-spinner" /></div>}
     </>

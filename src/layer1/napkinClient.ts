@@ -1,23 +1,29 @@
-/* ============================================================
-   layer1/napkinClient.ts - Napkin AI Visual Generation
-   Napkin AI turns text into professional diagrams/infographics.
-   Async 3-step workflow: create → poll status → download.
-   In dev, requests go through a local proxy (napkin-proxy.mjs)
-   to avoid Napkin's server-side Origin check on moz-extension://.
-   ============================================================ */
-
-// In dev, use local proxy. For production, swap to the deployed proxy URL.
-const NAPKIN_API_BASE = import.meta.env.DEV
-  ? "http://localhost:3001"
-  : "https://api.napkin.ai/v1";
-const NAPKIN_API_KEY = import.meta.env.VITE_NAPKIN_API_KEY as string | undefined;
-
 /* ── Types ───────────────────────────────────────────────────────── */
 
 export type NapkinStyle =
   | "colorful" | "casual" | "hand-drawn" | "formal" | "monochrome";
 
 export type NapkinFormat = "svg" | "png";
+
+export type NapkinVisualQuery =
+  | "flowchart" | "mindmap" | "timeline" | "venn";
+
+export type NapkinOrientation =
+  | "auto" | "horizontal" | "vertical" | "square";
+
+export type NapkinSortStrategy =
+  | "relevance" | "random";
+
+export interface NapkinOptions {
+  style?: NapkinStyle;
+  format?: NapkinFormat;
+  visualQuery?: NapkinVisualQuery;
+  orientation?: NapkinOrientation;
+  sortStrategy?: NapkinSortStrategy;
+  styleId?: string;
+  contextBefore?: string;
+  contextAfter?: string;
+}
 
 interface NapkinCreateResponse {
   request_id: string;
@@ -44,9 +50,17 @@ export interface NapkinResult {
   fileId: string;
 }
 
+/* ── Config ─────────────────────────────────────────────────────── */
+
+const NAPKIN_API_BASE = import.meta.env.DEV
+  ? "http://localhost:3001"
+  : "https://api.napkin.ai/v1";
+
+const NAPKIN_API_KEY = import.meta.env.VITE_NAPKIN_API_KEY as string | undefined;
+
 /* ── Auth headers ───────────────────────────────────────────────── */
 
-function headers(): Record<string, string> {
+function authHeaders(): Record<string, string> {
   if (!NAPKIN_API_KEY) {
     throw new Error("[NapkinClient] VITE_NAPKIN_API_KEY is not set");
   }
@@ -61,22 +75,24 @@ function headers(): Record<string, string> {
 
 async function createVisualRequest(
   text: string,
-  style: NapkinStyle = "formal",
-  format: NapkinFormat = "svg",
-  contextBefore?: string,
-  contextAfter?: string,
+  options: NapkinOptions = {},
 ): Promise<string> {
   const body: Record<string, unknown> = {
     content: text,
-    style,
-    format,
+    style: options.style ?? "formal",
+    format: options.format ?? "svg",
   };
-  if (contextBefore) body.context_before = contextBefore;
-  if (contextAfter) body.context_after = contextAfter;
 
-  const res = await fetch(`${NAPKIN_API_BASE}/visual`, {
+  if (options.visualQuery) body.visual_query = options.visualQuery;
+  if (options.orientation) body.orientation = options.orientation;
+  if (options.sortStrategy) body.sort_strategy = options.sortStrategy;
+  if (options.styleId) body.style_id = options.styleId;
+  if (options.contextBefore) body.context_before = options.contextBefore;
+  if (options.contextAfter) body.context_after = options.contextAfter;
+
+  const res = await fetch(`${NAPKIN_API_BASE}/visual/request`, {
     method: "POST",
-    headers: headers(),
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -98,7 +114,7 @@ async function pollStatus(
 ): Promise<NapkinStatusResponse> {
   for (let i = 0; i < maxRetries; i++) {
     const res = await fetch(`${NAPKIN_API_BASE}/visual/${requestId}/status`, {
-      headers: headers(),
+      headers: authHeaders(),
     });
 
     if (!res.ok) {
@@ -127,7 +143,11 @@ async function pollStatus(
 /* ── Step 3: Download file ──────────────────────────────────────── */
 
 async function downloadFile(fileUrl: string): Promise<Blob> {
-  const res = await fetch(fileUrl);
+  const res = await fetch(fileUrl, {
+    headers: {
+      Authorization: `Bearer ${NAPKIN_API_KEY}`,
+    },
+  });
 
   if (!res.ok) {
     throw new Error(`[NapkinClient] Download failed (${res.status})`);
@@ -140,14 +160,11 @@ async function downloadFile(fileUrl: string): Promise<Blob> {
 
 export async function generateNapkinVisual(
   concept: string,
-  style: NapkinStyle = "formal",
-  format: NapkinFormat = "svg",
-  contextBefore?: string,
-  contextAfter?: string,
+  options: NapkinOptions = {},
 ): Promise<NapkinResult> {
   const text = `Explain the concept: ${concept}`;
 
-  const requestId = await createVisualRequest(text, style, format, contextBefore, contextAfter);
+  const requestId = await createVisualRequest(text, options);
   const status = await pollStatus(requestId);
 
   if (!status.generated_files?.length) {
@@ -170,10 +187,10 @@ export async function generateNapkinVisual(
 
 export async function generateNapkinVisuals(
   concepts: string[],
-  style: NapkinStyle = "formal",
+  options: NapkinOptions = {},
 ): Promise<NapkinResult[]> {
   const results = await Promise.allSettled(
-    concepts.map((concept) => generateNapkinVisual(concept, style)),
+    concepts.map((concept) => generateNapkinVisual(concept, options)),
   );
 
   const visuals: NapkinResult[] = [];
