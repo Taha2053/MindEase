@@ -1,5 +1,5 @@
 // ============================================================
-// layer3/index.ts — Layer 3 Entry Point
+// layer3/index.ts - Layer 3 Entry Point
 // Owner: Eya
 //
 // Wires together all Layer 3 modules and exposes the public API

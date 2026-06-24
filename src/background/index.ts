@@ -1,5 +1,5 @@
 /* ============================================================
-   background/index.ts — Service Worker (persistent background logic)
+   background/index.ts - Service Worker (persistent background logic)
    Manages session lifecycle and routes messages between layers.
    Integrates Layer 2 (cognitive profiling) for behavior signals,
    profile getter API, session lifecycle, and content transformation
@@ -131,13 +131,13 @@ sessionManager.onLayer2EndSession = async () => {
   return endLayer2Session();
 };
 
-// Initialize — try to restore workspace from storage
+// Initialize - try to restore workspace from storage
 sessionManager.init();
 
 /* ── Session lifecycle ───────────────────────────────────────────────────────── */
 
 browser.runtime.onInstalled.addListener((details) => {
-  console.log("[MindEase] Extension installed — background worker ready.", details.reason);
+  console.log("[MindEase] Extension installed - background worker ready.", details.reason);
 
   if (details.reason === "install") {
     browser.tabs.create({

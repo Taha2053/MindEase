@@ -8,7 +8,7 @@ import { loadOverrides, saveOverrides, clearOverrides, paramLabel, paramOptions 
 import { iconHTML } from "@/utils/icons";
 
 const app = document.getElementById("app")!;
-let _theme: Theme = "dark";
+let _theme: Theme = "light";
 
 function escapeHtml(text: string): string {
   const div = document.createElement("div");
@@ -468,7 +468,7 @@ async function init(): Promise<void> {
 
   // ── Event wiring ──
   document.getElementById("session-start-btn")?.addEventListener("click", async () => {
-    // Clear previous session's tabs — each session gets its own tabs
+    // Clear previous session's tabs - each session gets its own tabs
     await browser.storage.local.set({
       [STORAGE_KEYS.EXTENSION_ACTIVE]: true,
       [STORAGE_KEYS.WORKSPACE]: null,

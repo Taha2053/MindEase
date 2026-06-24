@@ -1,4 +1,4 @@
-/* ─── MindEase — Layer 2: RL Agent ───
+/* ─── MindEase - Layer 2: RL Agent ───
      Lightweight Q-learning agent that adapts the cognitive
      profile's transformation parameters based on behavioral signals.
      Uses real Q-table, epsilon-greedy action selection, and
@@ -78,7 +78,7 @@ export class RLAgent {
   ): Promise<{ reward: number; updatedProfile: FullCognitiveProfile; actionTaken: Action }> {
     const { rlState } = profile;
 
-    /* 1. Update rlState counters — this changes the state */
+    /* 1. Update rlState counters - this changes the state */
     switch (signal) {
       case "highlight":
         rlState.highlightRate += 1;

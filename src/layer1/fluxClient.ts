@@ -1,5 +1,5 @@
 /* ============================================================
-   layer1/fluxClient.ts — Flux Image Generation via HuggingFace
+   layer1/fluxClient.ts - Flux Image Generation via HuggingFace
    Uses @huggingface/inference to call FLUX.1-dev through fal-ai
    provider. Generates illustrative images from concept text.
    ============================================================ */
@@ -33,7 +33,7 @@ export async function generateFluxImage(
   const client = getClient();
 
   const inputs = context
-    ? `${concept} — ${context}`
+    ? `${concept} - ${context}`
     : concept;
 
   // textToImage resolves to the blob overload when called without outputType

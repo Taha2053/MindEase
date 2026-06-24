@@ -1,5 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
+import InkBackground from "./InkBackground";
 import welcomeImg from "./assets/welcome.png";
+import q1FormatImg from "./assets/q1-format.png";
+import q2ApproachImg from "./assets/q2-approach.png";
+import q3DensityImg from "./assets/q3-density.png";
+import q4FocusImg from "./assets/q4-focus.png";
+import q5ConditionImg from "./assets/q5-condition.png";
+import q6LanguageImg from "./assets/q6-language.png";
+import q7PaceImg from "./assets/q7-pace.png";
+import q8MapImg from "./assets/q8-map.png";
+import doneImg from "./assets/q9-done.png";
 import { createRoot } from "react-dom/client";
 import browser from "webextension-polyfill";
 import type {
@@ -44,9 +54,9 @@ const QUESTIONS: Question[] = [
     id: "formatPreference",
     icon: "Eye",
     title: "How do ideas click for you?",
-    subtitle: "Everyone learns differently — what feels most natural?",
+    subtitle: "Everyone learns differently - what feels most natural?",
     options: [
-      { icon: "Palette", label: "Show me — I need to see it", description: "Diagrams, images, mind maps make everything clearer.", value: "visual" },
+      { icon: "Palette", label: "Show me - I need to see it", description: "Diagrams, images, mind maps make everything clearer.", value: "visual" },
       { icon: "BookOpenText", label: "Just tell me plainly", description: "Words work fine. Good writing is all I need.", value: "text" },
     ],
   },
@@ -66,7 +76,7 @@ const QUESTIONS: Question[] = [
     title: "How deep do you like to dive?",
     subtitle: "Some want the sparknotes. Some want the full library.",
     options: [
-      { icon: "Zap", label: "Keep it sharp and quick", description: "Give me the essentials — I'll dig deeper if I need to.", value: "concise" },
+      { icon: "Zap", label: "Keep it sharp and quick", description: "Give me the essentials - I'll dig deeper if I need to.", value: "concise" },
       { icon: "Library", label: "Take me all the way down", description: "I want the full picture, nuance and all.", value: "detailed" },
     ],
   },
@@ -74,11 +84,11 @@ const QUESTIONS: Question[] = [
     id: "attentionSpan",
     icon: "Timer",
     title: "What's your focus rhythm?",
-    subtitle: "Be honest — this helps us match your natural flow.",
+    subtitle: "Be honest - this helps us match your natural flow.",
     options: [
-      { icon: "Zap", label: "Sprint — short intense bursts", description: "I do best with focused sprints under 10 min.", value: "short" },
-      { icon: "PersonStanding", label: "Jog — steady and consistent", description: "I can hold focus for 10\u201325 minutes comfortably.", value: "medium" },
-      { icon: "Heart", label: "Marathon — deep dive hours", description: "Once I'm in the zone, I can stay there a while.", value: "long" },
+      { icon: "Zap", label: "Sprint - short intense bursts", description: "I do best with focused sprints under 10 min.", value: "short" },
+      { icon: "PersonStanding", label: "Jog - steady and consistent", description: "I can hold focus for 10\u201325 minutes comfortably.", value: "medium" },
+      { icon: "Heart", label: "Marathon - deep dive hours", description: "Once I'm in the zone, I can stay there a while.", value: "long" },
       { icon: "Waves", label: "Depends on the day", description: "It really varies \u2014 let's see what works.", value: "medium", skip: true },
     ],
   },
@@ -132,6 +142,11 @@ const QUESTIONS: Question[] = [
 
 const TOTAL_STEPS = QUESTIONS.length;
 
+const QUESTION_IMAGES = [
+  q1FormatImg, q2ApproachImg, q3DensityImg, q4FocusImg,
+  q5ConditionImg, q6LanguageImg, q7PaceImg, q8MapImg,
+];
+
 /* ─── Icon map for rendering ─── */
 
 const ICON_MAP: Record<string, React.ComponentType<React.SVGProps<SVGSVGElement>>> = {
@@ -150,7 +165,7 @@ function Icon({ name, size = 24 }: { name: string; size?: number }) {
 /* ─── Feedback messages ─── */
 
 const FEEDBACK_MESSAGES: Record<string, string[]> = {
-  visual: ["Great eye!", "Visual thinker — love it!"],
+  visual: ["Great eye!", "Visual thinker - love it!"],
   text: ["Words are your superpower!", "Nice, a reader!"],
   "example-first": ["Examples make it stick!", "Perfect approach!"],
   "theory-first": ["Big-picture thinker!", "Love the curiosity!"],
@@ -164,8 +179,8 @@ const FEEDBACK_MESSAGES: Record<string, string[]> = {
   autism: ["Structure is key!", "Let's build clarity!"],
   none: ["Perfect!", "You do you!"],
   true: ["Glad we asked!", "We'll adjust for you!"],
-  false: ["Awesome!", "Native language — noted!"],
-  slow: ["Careful reader!", "No rush — comprehension first!"],
+  false: ["Awesome!", "Native language - noted!"],
+  slow: ["Careful reader!", "No rush - comprehension first!"],
   moderate: ["Comfortable pace!", "Solid!"],
   fast: ["Speed reader!", "Fast and fluid!"],
 };
@@ -283,7 +298,7 @@ function App() {
   const [step, setStep] = useState(-1); // -1 = welcome, 0..7 = questions, 8 = done
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>("light");
   const [isEditMode, setIsEditMode] = useState(false);
   const [existingProfile, setExistingProfile] = useState<FullCognitiveProfile | null>(null);
 
@@ -406,7 +421,9 @@ function App() {
   const showNav = step >= 0 && step < TOTAL_STEPS;
 
   return (
-    <div className="container" role="main">
+    <>
+      <InkBackground theme={theme} />
+      <div className="container" role="main">
       <header className="brand-header">
         <div className="brand-left">
           <div className="brand-icon"><Brain size={18} /></div>
@@ -437,11 +454,11 @@ function App() {
           {step < 0 && (
             <div className="welcome-screen screen-enter" key="welcome">
               <div className="welcome-illustration"><img src={welcomeImg} alt="MindEase illustration" /></div>
-              <div className="welcome-icon"><Brain size={38} /></div>
+              <div className="welcome-icon"><Brain size={24} /></div>
               <h1 className="welcome-title">Welcome to MindEase</h1>
               <p className="welcome-sub">
                 A few quick questions and we'll build a learning experience
-                that adapts to <em>your</em> brain. No right answers — just you.
+                that adapts to <em>your</em> brain. No right answers - just you.
               </p>
               <button className="welcome-cta" onClick={() => setStep(0)}>
                 Let's go →
@@ -454,6 +471,7 @@ function App() {
             const selectedValue = answers[q.id];
             return (
               <div className="question-screen screen-enter" key={step}>
+                <div className="question-illustration"><img src={QUESTION_IMAGES[step]} alt="" /></div>
                 <h2 className="question-title"><Icon name={q.icon} /> {q.title}</h2>
                 <p className="question-sub">{q.subtitle}</p>
                 <div className="options-grid">
@@ -495,7 +513,8 @@ function App() {
 
             return (
               <div className="done-screen screen-enter" key="done">
-                <div className="done-icon"><Brain size={34} /></div>
+                <div className="done-illustration"><img src={doneImg} alt="" /></div>
+                <div className="done-icon"><Brain size={22} /></div>
                 <h2 className="done-title">You're all set!</h2>
                 <p className="done-sub">Here's what we've put together for you.</p>
                 <div className="done-profile-summary">{summary}</div>
@@ -539,6 +558,7 @@ function App() {
         </div>
       )}
     </div>
+    </>
   );
 }
 

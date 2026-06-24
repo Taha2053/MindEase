@@ -1,5 +1,5 @@
 /* ============================================================
-   layer1/visualOrchestrator.ts — Visual Generation Orchestrator
+   layer1/visualOrchestrator.ts - Visual Generation Orchestrator
    Decides per concept: Napkin (diagram) vs Flux (illustration).
    Caches results in storage. Fires async after content transform.
    ============================================================ */

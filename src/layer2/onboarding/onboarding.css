@@ -87,6 +87,29 @@ body::before {
   z-index: 0;
 }
 
+body::after {
+  content: '';
+  position: fixed;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--bg-glow-2) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(100px);
+  animation: floatDrift 30s ease-in-out infinite;
+  top: -100px;
+  left: -100px;
+}
+
+@keyframes floatDrift {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(60vw, 20vh); }
+  40% { transform: translate(30vw, 60vh); }
+  60% { transform: translate(70vw, 40vh); }
+  80% { transform: translate(10vw, 70vh); }
+}
+
 /* ── Container ── */
 
 .container {
@@ -261,6 +284,8 @@ body::before {
 /* ── Welcome Screen ── */
 
 .welcome-screen {
+  display: flex;
+  flex-direction: column;
   text-align: center;
   justify-content: center;
   align-items: center;
@@ -268,14 +293,14 @@ body::before {
 }
 
 .welcome-icon {
-  width: 80px;
-  height: 80px;
+  width: 52px;
+  height: 52px;
   background: var(--accent-gradient);
-  border-radius: 24px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 38px;
+  font-size: 24px;
   margin-bottom: 12px;
   box-shadow: 0 8px 32px var(--accent-glow);
 }
@@ -339,6 +364,20 @@ body::before {
 
 .question-screen {
   gap: 0;
+}
+
+.question-illustration {
+  width: 100%;
+  max-width: 250px;
+  margin: 0 auto 16px;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
+}
+.question-illustration img {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 .question-emoji {
@@ -572,21 +611,37 @@ body::before {
 /* ── Done Screen ── */
 
 .done-screen {
+  display: flex;
+  flex-direction: column;
   text-align: center;
   justify-content: center;
   align-items: center;
   gap: 4px;
 }
 
+.done-illustration {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto 12px;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+}
+.done-illustration img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
 .done-icon {
-  width: 72px;
-  height: 72px;
+  width: 48px;
+  height: 48px;
   background: var(--accent-gradient);
-  border-radius: 22px;
+  border-radius: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 34px;
+  font-size: 22px;
   margin-bottom: 12px;
   box-shadow: 0 6px 24px var(--accent-glow);
 }

@@ -1,5 +1,5 @@
 /* ============================================================
-   layer1/index.ts — Real-Time Content Transformation
+   layer1/index.ts - Real-Time Content Transformation
    Owner: Rayhane
 
    Transforms raw page text into structured ContentChunk[] using

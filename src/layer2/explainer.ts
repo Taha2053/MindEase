@@ -1,10 +1,10 @@
 /* ============================================================
-   layer2/explainer.ts — Adaptation Explainability Layer
+   layer2/explainer.ts - Adaptation Explainability Layer
    Owner: Taha
 
    Generates human-readable explanations for every content
    adaptation decision made by the RL agent. No technical
-   jargon, no RL terminology — just clear user understanding.
+   jargon, no RL terminology - just clear user understanding.
    ============================================================ */
 
 import type {
@@ -20,7 +20,7 @@ import { STORAGE_KEYS } from "@/types";
 import browser from "webextension-polyfill";
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   Category mapping — each action maps to one of the 5 categories
+   Category mapping - each action maps to one of the 5 categories
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 const ACTION_CATEGORY: Record<Action, ExplanationCategory> = {
@@ -52,7 +52,7 @@ const CATEGORY_ORDER: ExplanationCategory[] = [
 ];
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   Explanation generators — one per action type
+   Explanation generators - one per action type
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 function explainChunkSize(
@@ -287,7 +287,7 @@ function explainReadingDensity(
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   Main API — generate and persist an explanation for a single adaptation
+   Main API - generate and persist an explanation for a single adaptation
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /**

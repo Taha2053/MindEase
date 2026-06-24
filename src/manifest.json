@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MindEase",
   "version": "0.1.0",
-  "description": "Learn the way your brain was meant to — AI-native adaptive learning extension",
+  "description": "Learn the way your brain was meant to - AI-native adaptive learning extension",
 
   "icons": {
     "16":  "icons/icon-16.png",

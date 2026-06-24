@@ -1,5 +1,5 @@
 // ============================================================
-// layer3/knowledgeArtifact.ts — Knowledge Artifact Assembler
+// layer3/knowledgeArtifact.ts - Knowledge Artifact Assembler
 // Owner: Eya
 //
 // Final step of the Layer 3 pipeline. Takes all processed data
@@ -204,7 +204,7 @@ export async function assembleArtifact(
   await saveArtifact(artifact);
 
   console.log(
-    `[Layer 3] Artifact assembled — ` +
+    `[Layer 3] Artifact assembled - ` +
     `${learnedCards.length} cards | ` +
     `${gaps.length} gaps | ` +
     `${connections.length} connections | ` +

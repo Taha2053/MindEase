@@ -1,5 +1,5 @@
 // ============================================================
-// layer3/layer3.test.ts — Unit tests for all Layer 3 modules
+// layer3/layer3.test.ts - Unit tests for all Layer 3 modules
 //
 // Uses Vitest with mocked browser storage so no real
 // chrome.storage.local calls are made.
@@ -24,13 +24,13 @@ import type {
 // via ./storage.  We mock that module so no real browser API is ever touched.
 //
 // webextension-polyfill is replaced at the Vite alias level during tests
-// (see vite.config.ts resolve.alias) — no additional mock needed here.
+// (see vite.config.ts resolve.alias) - no additional mock needed here.
 
 vi.mock("./storage");
 
 // ── Test fixtures ───────────────────────────────────────────────────────────────
 
-/** Minimal CognitiveProfile factory — override fields to test specific paths. */
+/** Minimal CognitiveProfile factory - override fields to test specific paths. */
 function makeProfile(overrides?: Partial<CognitiveProfile>): CognitiveProfile {
   return {
     userId:        "test-user",
@@ -67,14 +67,14 @@ describe("SessionTracker", () => {
   const profile = makeProfile();
 
   beforeEach(() => {
-    // Fresh tracker before each test — starts with a neutral engagement map
+    // Fresh tracker before each test - starts with a neutral engagement map
     tracker = new SessionTracker("user-1", profile);
   });
 
   // ── Test A ─────────────────────────────────────────────────────────────────
   // Verifies that positive events ("highlight", "pause") increase the chunk's
   // engagement score from the neutral starting point (0.5).
-  it("recordEvent — increases engagement score for 'highlight' and 'pause'", () => {
+  it("recordEvent - increases engagement score for 'highlight' and 'pause'", () => {
     tracker.recordEvent(makeEvent({ type: "highlight", contentChunkId: "chunk-a" }));
     // neutral 0.5 + highlight +0.4 → 0.9
     expect(tracker.getLog().engagementMap["chunk-a"].engagementScore).toBe(0.9);
@@ -87,7 +87,7 @@ describe("SessionTracker", () => {
   // ── Test B ─────────────────────────────────────────────────────────────────
   // Verifies that negative events ("skip", "fast-scroll") decrease the chunk's
   // engagement score below the neutral starting point.
-  it("recordEvent — decreases engagement score for 'skip' and 'fast-scroll'", () => {
+  it("recordEvent - decreases engagement score for 'skip' and 'fast-scroll'", () => {
     tracker.recordEvent(makeEvent({ type: "skip", contentChunkId: "chunk-b" }));
     // neutral 0.5 + skip -0.4 → 0.1
     expect(tracker.getLog().engagementMap["chunk-b"].engagementScore).toBeCloseTo(0.1);
@@ -100,8 +100,8 @@ describe("SessionTracker", () => {
   // ── Test C ─────────────────────────────────────────────────────────────────
   // Verifies that repeated positive events never push the score above 1.0 and
   // repeated negative events never push it below 0.0.
-  it("recordEvent — score clamped between 0.0 and 1.0", () => {
-    // Drive the score up repeatedly — must never exceed 1.0
+  it("recordEvent - score clamped between 0.0 and 1.0", () => {
+    // Drive the score up repeatedly - must never exceed 1.0
     tracker.recordEvent(makeEvent({ type: "highlight", contentChunkId: "chunk-c" }));
     tracker.recordEvent(makeEvent({ type: "highlight", contentChunkId: "chunk-c" }));
     tracker.recordEvent(makeEvent({ type: "highlight", contentChunkId: "chunk-c" }));
@@ -119,7 +119,7 @@ describe("SessionTracker", () => {
   // ── Test D ─────────────────────────────────────────────────────────────────
   // Verifies that endSession() writes a timestamp to endTime and returns the
   // completed SessionLog with all fields intact.
-  it("endSession — sets endTime and returns the completed log", () => {
+  it("endSession - sets endTime and returns the completed log", () => {
     const log = tracker.endSession();
 
     // endTime should be a non-null number (the moment the method was called)
@@ -135,19 +135,19 @@ describe("SessionTracker", () => {
   //   score >= 0.6  → "engaged"
   //   0.3 <= score < 0.6 → "skimmed"
   //   score < 0.3   → "skipped"
-  it("recordEvent — classifies score >= 0.6 as 'engaged'", () => {
+  it("recordEvent - classifies score >= 0.6 as 'engaged'", () => {
     tracker.recordEvent(makeEvent({ type: "highlight", contentChunkId: "chunk-e1" }));
     // 0.5 + 0.4 = 0.9 → engaged
     expect(tracker.getLog().engagementMap["chunk-e1"].level).toBe("engaged");
   });
 
-  it("recordEvent — classifies score 0.3–0.6 as 'skimmed'", () => {
+  it("recordEvent - classifies score 0.3–0.6 as 'skimmed'", () => {
     tracker.recordEvent(makeEvent({ type: "fast-scroll", contentChunkId: "chunk-e2" }));
     // 0.5 - 0.2 = 0.3 → skimmed
     expect(tracker.getLog().engagementMap["chunk-e2"].level).toBe("skimmed");
   });
 
-  it("recordEvent — classifies score < 0.3 as 'skipped'", () => {
+  it("recordEvent - classifies score < 0.3 as 'skipped'", () => {
     tracker.recordEvent(makeEvent({ type: "skip", contentChunkId: "chunk-e3" }));
     // 0.5 - 0.4 = 0.1 → skipped
     expect(tracker.getLog().engagementMap["chunk-e3"].level).toBe("skipped");
@@ -233,7 +233,7 @@ describe("GapAnalyzer", () => {
   });
 
   // ── Test D ─────────────────────────────────────────────────────────────────
-  // Any chunk with score >= RUSHED_THRESHOLD (0.45) is NOT a gap — it should
+  // Any chunk with score >= RUSHED_THRESHOLD (0.45) is NOT a gap - it should
   // be excluded from the gaps list entirely.
   it("excludes chunks with score >= 0.45 from the gaps list", () => {
     const log   = makeLog({ "chunk-4": 0.5 });
@@ -319,7 +319,7 @@ describe("ConnectionDetector", () => {
 
   // ── Test B ─────────────────────────────────────────────────────────────────
   // Chunks that belong to the same source should NOT produce cross-source
-  // connections — connections are *between* different sources only.
+  // connections - connections are *between* different sources only.
   it("chunks from the same source → 0 connections", () => {
     const log    = makeLog(["src-a"]);
     const chunks = [
@@ -350,7 +350,7 @@ describe("ConnectionDetector", () => {
 
   // ── Test D ─────────────────────────────────────────────────────────────────
   // With only one source in the session log, no cross-source comparison is
-  // possible — the function should short-circuit and return an empty array.
+  // possible - the function should short-circuit and return an empty array.
   it("only 1 source visited → 0 connections", () => {
     const log    = makeLog(["src-a"]);
     const chunks = [
@@ -386,7 +386,7 @@ describe("StudyCardGenerator", () => {
 
   /**
    * Build a minimal SessionLog where only the IDs listed in `engagedChunkIds`
-   * have an "engaged" level entry — other chunks won't appear in the map and
+   * have an "engaged" level entry - other chunks won't appear in the map and
    * therefore won't get a card.
    */
   function makeLog(engagedChunkIds: string[]): SessionLog {

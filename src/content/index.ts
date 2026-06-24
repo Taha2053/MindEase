@@ -1,5 +1,5 @@
 /* ============================================================
-   content/index.ts — Content Script
+   content/index.ts - Content Script
    Runs inside every webpage the student visits.
    Detects content type, tracks behavioral signals for Layer 2,
    and activates the appropriate layer.
@@ -53,12 +53,12 @@ function shouldActivate(): boolean {
   return hasArticle && hasLongText && hasHeadings && isNotApp;
 }
 
-/* ─── Keepalive ping — wake service worker before heavy messages ──────────── */
+/* ─── Keepalive ping - wake service worker before heavy messages ──────────── */
 async function wakeServiceWorker(): Promise<void> {
   try {
     await browser.runtime.sendMessage({ type: "PING" });
   } catch {
-    /* ignore — just waking the worker */
+    /* ignore - just waking the worker */
   }
 }
 
@@ -326,6 +326,7 @@ function destroyBehaviorTracking(): void {
 
 let _theme: Theme = "dark";
 let _extensionActive = false;
+let _cleanupYouTube: (() => void) | null = null;
 
 /**
  * Check if the extension is globally active (user started a session).
@@ -350,6 +351,8 @@ function onExtensionStateChange(active: boolean): void {
     if (overlay) overlay.remove();
     document.getElementById("mindease-pdf-loader")?.remove();
     removeReopenButton();
+    _cleanupYouTube?.();
+    _cleanupYouTube = null;
   } else {
     window.location.reload();
   }
@@ -526,7 +529,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   Overlay Styles — Injected CSS string with theme variables
+   Overlay Styles - Injected CSS string with theme variables
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 const OVERLAY_CSS = `
@@ -1553,11 +1556,11 @@ function injectOverlay(chunks: ContentChunk[]): void {
       const params = profile.transformationParams as Record<string, unknown> | undefined;
 
       const formatEl = document.getElementById("pc-format");
-      if (formatEl) formatEl.textContent = String(baseline?.formatPreference ?? "—");
+      if (formatEl) formatEl.textContent = String(baseline?.formatPreference ?? "-");
       const attentionEl = document.getElementById("pc-attention");
-      if (attentionEl) attentionEl.textContent = String(baseline?.attentionSpan ?? "—");
+      if (attentionEl) attentionEl.textContent = String(baseline?.attentionSpan ?? "-");
       const paceEl = document.getElementById("pc-pace");
-      if (paceEl) paceEl.textContent = String(baseline?.readingPace ?? "—");
+      if (paceEl) paceEl.textContent = String(baseline?.readingPace ?? "-");
       const sessionsEl = document.getElementById("pc-sessions");
       if (sessionsEl) sessionsEl.textContent = String(rlState?.sessionCount ?? 0);
 
@@ -1568,17 +1571,17 @@ function injectOverlay(chunks: ContentChunk[]): void {
       const chunkBarEl = document.getElementById("rl-chunk-bar");
       const chunkEl = document.getElementById("rl-chunk");
       if (chunkBarEl) chunkBarEl.style.width = `${chunkMap[String(params?.chunkSize)] ?? 50}%`;
-      if (chunkEl) chunkEl.textContent = String(params?.chunkSize ?? "—");
+      if (chunkEl) chunkEl.textContent = String(params?.chunkSize ?? "-");
 
       const simplifyBarEl = document.getElementById("rl-simplify-bar");
       const simplifyEl = document.getElementById("rl-simplify");
       if (simplifyBarEl) simplifyBarEl.style.width = `${simplifyMap[String(params?.simplificationLevel)] ?? 50}%`;
-      if (simplifyEl) simplifyEl.textContent = String(params?.simplificationLevel ?? "—");
+      if (simplifyEl) simplifyEl.textContent = String(params?.simplificationLevel ?? "-");
 
       const summaryBarEl = document.getElementById("rl-summary-bar");
       const summaryEl = document.getElementById("rl-summary");
       if (summaryBarEl) summaryBarEl.style.width = `${summaryMap[String(params?.summaryFrequency)] ?? 50}%`;
-      if (summaryEl) summaryEl.textContent = String(params?.summaryFrequency ?? "—");
+      if (summaryEl) summaryEl.textContent = String(params?.summaryFrequency ?? "-");
     }
 
     if (stats) {
@@ -1752,7 +1755,7 @@ async function initYouTubeMode(): Promise<void> {
   };
   browser.runtime.onMessage.addListener(captionMessageHandler);
 
-  video.addEventListener("timeupdate", () => {
+  const onTimeUpdate = () => {
     if (captionChunks.length === 0) return;
     const progress = video.currentTime / (video.duration || 1);
     const index = Math.floor(progress * captionChunks.length);
@@ -1761,14 +1764,21 @@ async function initYouTubeMode(): Promise<void> {
       captionOverlay.style.display = "block";
       captionOverlay.textContent = caption;
     }
-  });
+  };
+  const onPause = () => { captionOverlay.style.display = "none"; };
+  const onPlay = () => { if (captionChunks.length > 0) captionOverlay.style.display = "block"; };
 
-  video.addEventListener("pause", () => {
-    captionOverlay.style.display = "none";
-  });
-  video.addEventListener("play", () => {
-    if (captionChunks.length > 0) captionOverlay.style.display = "block";
-  });
+  video.addEventListener("timeupdate", onTimeUpdate);
+  video.addEventListener("pause", onPause);
+  video.addEventListener("play", onPlay);
+
+  _cleanupYouTube = () => {
+    browser.runtime.onMessage.removeListener(captionMessageHandler);
+    video.removeEventListener("timeupdate", onTimeUpdate);
+    video.removeEventListener("pause", onPause);
+    video.removeEventListener("play", onPlay);
+    captionOverlay.remove();
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -1817,7 +1827,7 @@ async function initPDFMode(): Promise<void> {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   Q-Table Visualizer — debug panel showing RL agent state
+   Q-Table Visualizer - debug panel showing RL agent state
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 let qPanel: HTMLDivElement | null = null;
@@ -1870,7 +1880,7 @@ function renderQTablePanel(qTable: QTable): void {
       </div>
     `).join('')}
     <div style="color:#64748b;font-size:8px;margin-top:2px;">
-      max: ${ranked[0]?.maxQ.toFixed(3) ?? "—"}
+      max: ${ranked[0]?.maxQ.toFixed(3) ?? "-"}
     </div>
   `;
 }

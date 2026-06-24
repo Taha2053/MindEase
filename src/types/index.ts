@@ -1,7 +1,7 @@
 // ============================================================
-// types/index.ts — Shared interfaces for all 3 layers
+// types/index.ts - Shared interfaces for all 3 layers
 // Every layer imports from here. If you change a type, tell
-// the team — it affects all of us.
+// the team - it affects all of us.
 // ============================================================
 
 // ── Cognitive Profile (produced by Layer 2, consumed by Layers 1 & 3) ────────
@@ -49,7 +49,7 @@ export interface ContentChunk {
   position:    number;          // order in the source (0-indexed)
 }
 
-// ── Layer 3 — Session Tracker types ──────────────────────────────────────────
+// ── Layer 3 - Session Tracker types ──────────────────────────────────────────
 
 export type EngagementLevel = "engaged" | "skimmed" | "skipped";
 
@@ -72,7 +72,7 @@ export interface SessionLog {
   endTime:       number | null;                  // null = session still active
 }
 
-// ── Layer 3 — Gap Analyzer types ─────────────────────────────────────────────
+// ── Layer 3 - Gap Analyzer types ─────────────────────────────────────────────
 
 export type GapSeverity = "skipped" | "skimmed" | "rushed";
 
@@ -84,7 +84,7 @@ export interface Gap {
   text:         string;          // excerpt of the missed content
 }
 
-// ── Layer 3 — Connection Detector types ──────────────────────────────────────
+// ── Layer 3 - Connection Detector types ──────────────────────────────────────
 
 export interface Connection {
   conceptLabel:  string;
@@ -111,7 +111,7 @@ export interface CrossSourceConnection {
   confidence:   number;           // 0.0 → 1.0
 }
 
-// ── Layer 3 — Study Card types ────────────────────────────────────────────────
+// ── Layer 3 - Study Card types ────────────────────────────────────────────────
 
 export type CardFormat = "visual" | "chunked-text" | "spaced-list" | "audio-note";
 
@@ -124,7 +124,7 @@ export interface StudyCard {
   reviewFlag:  boolean;          // true = flagged as gap → needs extra review
 }
 
-// ── Layer 3 — Knowledge Artifact (final output) ───────────────────────────────
+// ── Layer 3 - Knowledge Artifact (final output) ───────────────────────────────
 
 export interface KnowledgeArtifact {
   sessionId:   string;
@@ -136,7 +136,7 @@ export interface KnowledgeArtifact {
   generatedAt: number;
 }
 
-// ── Layer 3 — Personalized Artifact (complete 7-section study summary) ──────────
+// ── Layer 3 - Personalized Artifact (complete 7-section study summary) ──────────
 
 export interface ResourceEntry {
   url: string;
@@ -232,7 +232,7 @@ export interface ExtensionMessage {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Study Workspace — Multi-Tab Session Types
+// Study Workspace - Multi-Tab Session Types
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export type SessionState = "active" | "passive" | "suspended" | "ended";
@@ -296,7 +296,7 @@ export interface WorkspaceSession {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Layer 2 — Adaptive Cognitive Profiling — RL Agent Types
+// Layer 2 - Adaptive Cognitive Profiling - RL Agent Types
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── Transformation Parameters (consumed by Layer 1) ───────────────────────────
@@ -465,7 +465,7 @@ export function stateToKey(state: DiscreteState): string {
   return `${state.highlightLevel}-${state.pauseLevel}-${state.reReadLevel}-${state.skipLevel}`;
 }
 
-// ── Explainability Layer — Adaptation Explanations ─────────────────────────────
+// ── Explainability Layer - Adaptation Explanations ─────────────────────────────
 
 export type ExplanationCategory =
   | "chunkSize"
@@ -484,11 +484,11 @@ export interface AdaptationExplanation {
 
 export type ExplanationMap = Record<ExplanationCategory, AdaptationExplanation | null>;
 
-// ── User Controls — Manual Overrides ──────────────────────────────────────────
+// ── User Controls - Manual Overrides ──────────────────────────────────────────
 
 /**
  * User-specified overrides that take precedence over RL agent decisions.
- * Each field is optional — unset fields defer to the RL agent.
+ * Each field is optional - unset fields defer to the RL agent.
  * When `enabled` is false, all overrides are ignored.
  */
 export interface UserOverrides {

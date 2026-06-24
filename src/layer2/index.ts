@@ -1,5 +1,5 @@
 /* ============================================================
-   layer2/index.ts — Adaptive Cognitive Profiling
+   layer2/index.ts - Adaptive Cognitive Profiling
    Owner: Taha
 
    Responsibility:
@@ -233,7 +233,7 @@ export function setupLayer2Listeners(): void {
       }
 
       case "CONTROLS_CHANGED": {
-        /* User changed overrides in popup — re-apply and broadcast */
+        /* User changed overrides in popup - re-apply and broadcast */
         const profile = await getProfile();
         if (!profile) return { received: true };
         const overrides = await loadOverrides();

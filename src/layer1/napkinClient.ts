@@ -1,5 +1,5 @@
 /* ============================================================
-   layer1/napkinClient.ts — Napkin AI Visual Generation
+   layer1/napkinClient.ts - Napkin AI Visual Generation
    Napkin AI turns text into professional diagrams/infographics.
    Async 3-step workflow: create → poll status → download.
    In dev, requests go through a local proxy (napkin-proxy.mjs)

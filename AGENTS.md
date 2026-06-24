@@ -14,7 +14,7 @@ Browser extension (MV3) for neurodiverse learners. Chrome + Firefox builds.
 | `npm run test` | `vitest run` (node env) |
 | `npm run napkin-proxy` | Dev proxy on `:3001` — Napkin AI blocks `moz-extension://` origins |
 
-No lint, format, or typecheck scripts exist. `tsc --noEmit` works manually. `strict: true`. No CI workflows (no `.github/`).
+No lint, format, or typecheck scripts. `tsc --noEmit` works manually. `strict: true`. No CI (no `.github/`).
 
 ## Architecture
 
@@ -35,16 +35,17 @@ No lint, format, or typecheck scripts exist. `tsc --noEmit` works manually. `str
 - **Only L3 has tests** (`src/layer3/layer3.test.ts`, 21 tests). No tests for L1, L2, popup, dashboard, or SessionManager.
 - **Napkin proxy** needed for Firefox dev: `moz-extension://` origins are blocked. Run `npm run napkin-proxy` separately.
 - **Mistral AI** is the current L1 provider (`api.mistral.ai`). Ignore stale Gemini references in comments.
-- **Dynamic imports** in `src/background/index.ts` (`import("@/layer2")`) avoid circular deps between background ↔ L2 ↔ SessionManager.
-- **Theme CSS** (`src/styles/theme.css`) is loaded only by dashboard (`dashboard.ts`). Onboarding has its own CSS (inline theme variables in `onboarding.css`). Popup has inline CSS.
-- **Icons** are emoji-based (`src/utils/icons.ts`), not SVG. `lucide` package in deps is unused.
-- **KaTeX** loaded from CDN in content script and dashboard (not bundled).
+- **Dynamic imports** in `src/background/index.ts` — `setupLayer2Listeners` imported statically at top, but `handleBehaviorSignal` uses `import("@/layer2")` inside a callback to break circular deps between background ↔ L2 ↔ SessionManager.
+- **Theme CSS** (`src/styles/theme.css`) loaded only by dashboard (`dashboard.ts`). Onboarding has its own CSS (inline theme variables in `onboarding.css`). Popup has inline CSS.
+- **Icons** — `src/utils/icons.ts` returns emoji strings. `lucide-react` IS used in onboarding (Brain, Feather, Rainbow, etc.). `lucide` (base, non-React) is unused.
+- **KaTeX** — `katex` package bundled and used in `src/utils/latex.ts` for server-side rendering. CSS loaded from CDN in content script and dashboard.
 - **`.env` variables**: `VITE_MISTRAL_API_KEY`, `VITE_NAPKIN_API_KEY`, `VITE_HF_TOKEN`.
-- **`condition` field** (`CognitiveNeed`): onboarding collects dyslexia/ADHD/autism but `profileManager.createProfile()` only sets `"multilingual"` or `"none"` based on `secondLanguageLearner`. RL never acts on condition.
-- **`uuid` package** exists but `profileManager.ts` and `onboarding.ts` each define their own `Math.random`-based `generateUUID()`.
-- **Firefox build** switches `background.service_worker` → `background.scripts` + adds `browser_specific_settings.gecko`.
+- **`condition` field** (`CognitiveNeed`): onboarding collects dyslexia/ADHD/autism AND stores them in the profile. `profileManager.createProfile()` also passes condition through. The RL agent never acts on the condition — decisions are purely based on behavior signals via Q-learning.
+- **`uuid` package** (`v14`) is used in 6 files (background, layer1, layer3, SessionManager). But `onboarding.tsx` and `profileManager.ts` each define their own `Math.random`-based `generateUUID()`.
+- **Firefox build** switches `background.service_worker` → `background.scripts` + adds `browser_specific_settings.gecko`. Also strips `sidePanel` and `downloads` permissions.
 - **`sidePanel` permission** declared in manifest but unused in code.
 - **README TypeScript badge** says 5.4; `package.json` has `^6.0.3`.
+- **Onboarding file** (`onboarding.tsx`) is included via `additionalInputs` in vite config — it's not auto-discovered by `vite-plugin-web-extension`.
 
 ## Conventions
 

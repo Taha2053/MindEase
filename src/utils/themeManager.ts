@@ -1,5 +1,5 @@
 /* ============================================================
-   utils/themeManager.ts — Centralised theme management
+   utils/themeManager.ts - Centralised theme management
    Persists theme preference to browser.storage.local and
    syncs the `data-theme` attribute on the document root.
    Used by all UI surfaces (overlay, popup, onboarding).
@@ -34,8 +34,8 @@ export function applyTheme(theme: Theme): void {
 
 export function getAppliedTheme(): Theme {
   const attr = document.documentElement.getAttribute("data-theme");
-  if (attr === "light") return "light";
-  return "dark";
+  if (attr === "dark") return "dark";
+  return "light";
 }
 
 /* ── Persistence ── */
@@ -61,10 +61,10 @@ export async function loadTheme(): Promise<Theme> {
     if (stored === "light" || stored === "dark") return stored;
   }
   // Fall back to system preference
-  if (window.matchMedia("(prefers-color-scheme: light)").matches) {
-    return "light";
+  if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    return "dark";
   }
-  return "dark";
+  return "light";
 }
 
 /* ── Toggle ── */
@@ -77,7 +77,7 @@ export async function toggleTheme(): Promise<Theme> {
   return next;
 }
 
-/* ── One-shot init — apply persisted then listen for system changes ── */
+/* ── One-shot init - apply persisted then listen for system changes ── */
 export async function initTheme(): Promise<Theme> {
   const theme = await loadTheme();
   applyTheme(theme);

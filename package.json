@@ -1,7 +1,7 @@
 {
   "name": "mindease",
   "version": "0.1.0",
-  "description": "AI-native browser extension for neurodiverse learners — GCD4F 2026",
+  "description": "AI-native browser extension for neurodiverse learners - GCD4F 2026",
   "scripts": {
     "dev:chrome": "vite --mode chrome",
     "dev:firefox": "vite --mode firefox",
@@ -24,6 +24,7 @@
   "dependencies": {
     "@huggingface/inference": "^4.13.18",
     "katex": "^0.17.0",
+    "lottie-react": "^2.4.1",
     "lucide": "^1.17.0",
     "lucide-react": "^1.21.0",
     "react": "^19.2.7",

@@ -1,4 +1,4 @@
-MINDEASE ONBOARDING — AI IMAGE PROMPTS (CHINESE AESTHETIC)
+MINDEASE ONBOARDING - AI IMAGE PROMPTS (CHINESE AESTHETIC)
 ===========================================================
 Generate 400x400 or 200x200 PNG/WebP illustrations for the onboarding flow.
 All images share a unified Chinese/Asian aesthetic: ink wash painting influence, 
@@ -11,50 +11,50 @@ Warm #FF7B6B (coral), Background #F5F0E8 (warm rice paper).
 
 
 Filename: welcome.png
-Image 1 — Welcome Screen (400x400)
+Image 1 - Welcome Screen (400x400)
 Prompt: A friendly glowing brain character with a traditional Chinese scholar's cap, sitting cross-legged on a lotus flower. Cherry blossom petals float around it. Open scrolls with subtle ink-brush calligraphy strokes hover nearby. Background is a soft gradient from warm rice paper beige to misty indigo blue, with faint mountain silhouettes in the style of classical Chinese ink wash painting. Clean flat vector, modern meets traditional. No text. 400x400px. Colors: indigo, jade, coral accents on rice paper background.
 
 
 Filename: q1-format.png
-Image 2 — Question 1: How do ideas click for you? (200x200)
+Image 2 - Question 1: How do ideas click for you? (200x200)
 Prompt: A split Chinese scroll composition. Left side: a traditional ink brush painting a mountain landscape with vivid colors (visual learning). Right side: a stack of bamboo scrolls with neat classical Chinese characters (text learning). Gold and jade decorative borders. Flat vector style with ink wash texture feel. Background is warm rice paper. No text. 200x200px. Colors: indigo, jade, gold.
 
 
 Filename: q2-approach.png
-Image 3 — Question 2: When exploring something new (200x200)
+Image 3 - Question 2: When exploring something new (200x200)
 Prompt: Left side of a traditional Chinese garden scene shows a glowing lantern with a play-symbol carved into it, illuminating small sculptures (examples-first). Right side shows a scholar under a willow tree reading from an ancient scroll beside a meditation rock (theory-first). Ink wash style flat vector. Soft misty background. No text. 200x200px. Colors: coral, indigo, warm beige.
 
 
 Filename: q3-density.png
-Image 4 — Question 3: How deep do you like to dive? (200x200)
+Image 4 - Question 3: How deep do you like to dive? (200x200)
 Prompt: Left side: a single graceful bamboo stalk with a few clean leaves and a small concise poem slip tied to it (concise). Right side: a dense, layered traditional Chinese garden with multiple pavilions, winding paths, koi fish pond, and detailed rock formations (detailed). Ink wash flat vector. Background is misty gradient. No text. 200x200px. Colors: jade green, indigo, coral accent.
 
 
 Filename: q4-focus.png
-Image 5 — Question 4: What's your focus rhythm? (200x200)
+Image 5 - Question 4: What's your focus rhythm? (200x200)
 Prompt: Three figures in a traditional Chinese landscape, each representing a focus mode. Left: a warrior in swift motion with a dragon tail wind, moving fast (sprint, short bursts). Center: a monk walking a serene mountain path with a staff, steady pace (jog, medium). Right: a sage meditating under a gnarled pine tree on a misty cliff, completely still (marathon, long duration). Flat vector, ink wash mountains in background, cloud wisps between figures. No text. 200x200px. Colors: indigo, coral, jade, misty gray.
 
 
 Filename: q5-condition.png
-Image 6 — Question 5: Does your brain have any quirks? (200x200)
+Image 6 - Question 5: Does your brain have any quirks? (200x200)
 Prompt: A central glowing brain character with small lotus flower crown. Surrounding it in a circle are four gentle symbols: a calligraphy brush with a character that looks slightly transformed (dyslexia), a butterfly with semi-transparent wings showing a dynamic energy trail (ADHD), a rainbow infinity knot in traditional Chinese knotting style (autism), and a simple peaceful yin-yang (none of the above). Soft warm background with subtle cloud pattern. Inclusive, warm, non-clinical. No text. 200x200px. Colors: jade, coral, indigo, gold.
 
 
 Filename: q6-language.png
-Image 7 — Question 6: Learning in a non-native language? (200x200)
+Image 7 - Question 6: Learning in a non-native language? (200x200)
 Prompt: A globe with traditional East Asian compass markings, surrounded by floating speech bubbles in different scripts (Chinese characters, Latin alphabet, Arabic script, Devanagari). A small friendly character stands beside the globe holding a bridge made of linked brush strokes connecting two sides. Background is a warm gradient with subtle wave patterns (inspired by The Great Wave off Kanagawa). Flat vector, clean, welcoming. No text. 200x200px. Colors: indigo, coral, jade.
 
 
 Filename: q7-pace.png
-Image 8 — Question 7: What's your natural reading pace? (200x200)
+Image 8 - Question 7: What's your natural reading pace? (200x200)
 Prompt: Three readers in a classical Chinese library garden setting. Left: an old scholar reading slowly by candlelight with a magnifying glass, a small sleeping cat beside him (slow). Center: a student reading comfortably under a cherry blossom tree with a cup of tea, relaxed posture (moderate). Right: a young messenger swiftly scanning a scroll while running, wind blowing pages (fast). Flat vector with ink wash garden background. No text. 200x200px. Colors: indigo, coral, jade, warm brown.
 
 
 Filename: q8-map.png
-Image 9 — Question 8: Do you need the map before the journey? (200x200)
+Image 9 - Question 8: Do you need the map before the journey? (200x200)
 Prompt: A traditional Chinese handscroll landscape painting unrolling. Left side: a complete panoramic map of a mountain range with clear paths, pagodas marked, and a traveler looking at the full view before starting (big picture first). Right side: a different scene showing a person walking step by step through a bamboo forest path, discovering small details along the way (explore as you go). Flat vector with ink wash texture and cloud separators. No text. 200x200px. Colors: jade, indigo, warm beige with coral accents.
 
 
 Filename: done.png
-Image 10 — Done Screen (400x400)
+Image 10 - Done Screen (400x400)
 Prompt: A cheerful brain character wearing a traditional Chinese scholar's graduation cap with a golden tassel, sitting on a lotus flower pedestal. Confetti made of cherry blossom petals and small golden stars falling around it. Behind is a full moon with subtle cloud wisps and faint mountain silhouettes in ink wash style. A glowing jade-colored aura surrounds the brain. Celebration mood, warm and triumphant. Flat vector, modern meets classical East Asian. No text. 400x400px. Colors: indigo, jade, coral, gold, warm rice paper background.

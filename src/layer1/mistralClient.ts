@@ -1,4 +1,4 @@
-/* ─── MindEase — Layer 1: Mistral API Client ───
+/* ─── MindEase - Layer 1: Mistral API Client ───
      Direct fetch() calls to Mistral AI API.
      Uses mistral-small-latest model.
   ───────────────────────────────────────────────────────────── */

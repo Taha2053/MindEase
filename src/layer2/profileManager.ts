@@ -1,4 +1,4 @@
-/* ─── MindEase — Layer 2: Profile Manager ───
+/* ─── MindEase - Layer 2: Profile Manager ───
      CRUD operations for the cognitive profile stored
      in browser.storage.local (cross-browser via webextension-polyfill).
      Consumed by the RL agent and exposed to Layers 1 & 3.
@@ -220,6 +220,6 @@ export async function broadcastProfileUpdate(profile: FullCognitiveProfile): Pro
       payload: profile,
     });
   } catch {
-    /* no listeners — that's ok */
+    /* no listeners - that's ok */
   }
 }

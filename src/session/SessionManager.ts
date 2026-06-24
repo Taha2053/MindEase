@@ -30,7 +30,7 @@ export class SessionManager {
   private suspendTimer: ReturnType<typeof setTimeout> | null = null;
   private endTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Callbacks — set by background to wire into existing layers
+  // Callbacks - set by background to wire into existing layers
   public onLayer2Signal: ((signal: SignalType, url: string, sectionId: string) => Promise<void>) | null = null;
   public onLayer3Event: ((event: CognitiveEvent) => void) | null = null;
   public onLayer3EndSession: ((

@@ -1,10 +1,10 @@
 // ============================================================
-// layer3/studyCardGenerator.ts — Personalized Study Card Generator
+// layer3/studyCardGenerator.ts - Personalized Study Card Generator
 // Owner: Eya
 //
 // Takes engaged content chunks and formats them into study cards
 // shaped to the learner's cognitive profile. The FORMAT of the card
-// is as important as the content — ADHD ≠ dyslexia ≠ visual learner.
+// is as important as the content - ADHD ≠ dyslexia ≠ visual learner.
 // ============================================================
 
 import { v4 as uuidv4 } from "uuid";
@@ -51,7 +51,7 @@ function selectCardFormat(profile: CognitiveProfile): CardFormat {
 // Each formatter reshapes the raw chunk text to suit the card format.
 
 function formatChunkedText(chunk: ContentChunk): string {
-  // Break into short bullet points — max 15 words per bullet
+  // Break into short bullet points - max 15 words per bullet
   const sentences = chunk.text.split(/[.!?]+/).filter(s => s.trim().length > 0);
   return sentences
     .map(s => `• ${s.trim()}`)
@@ -59,7 +59,7 @@ function formatChunkedText(chunk: ContentChunk): string {
 }
 
 function formatSpacedList(chunk: ContentChunk): string {
-  // Same as chunked but with extra line breaks — easier for dyslexic readers
+  // Same as chunked but with extra line breaks - easier for dyslexic readers
   const sentences = chunk.text.split(/[.!?]+/).filter(s => s.trim().length > 0);
   return sentences
     .map(s => `• ${s.trim()}`)
@@ -74,7 +74,7 @@ function formatVisual(chunk: ContentChunk): string {
 }
 
 function formatAudioNote(chunk: ContentChunk): string {
-  // Short, conversational phrasing — suitable for TTS or voice reading
+  // Short, conversational phrasing - suitable for TTS or voice reading
   return `Remember: ${chunk.text.slice(0, 200)}`;
 }
 
@@ -96,7 +96,7 @@ function applyFormat(chunk: ContentChunk, format: CardFormat): string {
  * @param log      The completed session log
  * @param chunks   All content chunks from the session
  * @param profile  The learner's cognitive profile
- * @param gaps     The gap list — cards for gap chunks get reviewFlag = true
+ * @param gaps     The gap list - cards for gap chunks get reviewFlag = true
  * @returns        Array of study cards shaped to the cognitive profile
  */
 export function generateStudyCards(

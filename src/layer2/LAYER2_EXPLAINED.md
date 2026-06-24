@@ -1,4 +1,4 @@
-# MindEase — Layer 2: Adaptive Cognitive Profiling
+# MindEase - Layer 2: Adaptive Cognitive Profiling
 
 > **Owner:** Taha  
 > **Status:** Complete  
@@ -10,7 +10,7 @@
 
 Layer 2 (Adaptive Cognitive Profiling) is the brain of MindEase. It builds and evolves a **living model** of how the user's brain processes information. Unlike a static questionnaire, Layer 2 uses a **Q-learning reinforcement learning agent** that continuously adapts the extension's behavior based on real-time signals: which content the user highlights, where they pause to read, what they skip, and when they switch tabs.
 
-**Why it exists:** Every learner's brain is different. A dyslexic user needs smaller chunks and visual anchors. An ADHD user needs high-frequency summaries and fast caption speeds. A second-language learner needs stronger simplification. Layer 2 discovers these needs dynamically — no two profiles ever converge to the same parameters.
+**Why it exists:** Every learner's brain is different. A dyslexic user needs smaller chunks and visual anchors. An ADHD user needs high-frequency summaries and fast caption speeds. A second-language learner needs stronger simplification. Layer 2 discovers these needs dynamically - no two profiles ever converge to the same parameters.
 
 ---
 
@@ -67,52 +67,52 @@ Layer 2 (Adaptive Cognitive Profiling) is the brain of MindEase. It builds and e
 
 ## 3. File-by-File Breakdown
 
-### `src/types/index.ts` — Shared Types
+### `src/types/index.ts` - Shared Types
 Extended with all Layer 2 types: `FullCognitiveProfile`, `BaselineProfile`, `RLState`, `TransformationParams`, `QTable`, `BehaviorSignalMessage`, `SessionStats`, `SessionEndPayload`, `ACTION_COUNT`, `ACTIONS`, `DiscreteState`, `STORAGE_KEYS`. Also includes `discretizeState()` and `stateToKey()` helper functions.
 
-### `src/layer2/index.ts` — Layer 2 Entry Point
-- `setupLayer2Listeners()` — registers message handlers for `BEHAVIOR_SIGNAL`, `GET_PROFILE`, `SESSION_END`, `RESET_PROFILE`, `ONBOARDING_COMPLETE`
-- `handleBehaviorSignal()` — routes signals to RL agent and updates session stats
-- `endSession()` — computes session summary, emits `SESSION_END` to Layer 3
-- `resetEverything()` — wipes profile, Q-table, and all session data
-- `emitCognitiveEvent()` — sends individual cognitive events to Layer 3
-- `getCurrentProfile()` — returns the profile from storage
+### `src/layer2/index.ts` - Layer 2 Entry Point
+- `setupLayer2Listeners()` - registers message handlers for `BEHAVIOR_SIGNAL`, `GET_PROFILE`, `SESSION_END`, `RESET_PROFILE`, `ONBOARDING_COMPLETE`
+- `handleBehaviorSignal()` - routes signals to RL agent and updates session stats
+- `endSession()` - computes session summary, emits `SESSION_END` to Layer 3
+- `resetEverything()` - wipes profile, Q-table, and all session data
+- `emitCognitiveEvent()` - sends individual cognitive events to Layer 3
+- `getCurrentProfile()` - returns the profile from storage
 
-### `src/layer2/rlAgent.ts` — Q-Learning Agent
+### `src/layer2/rlAgent.ts` - Q-Learning Agent
 The core RL engine. See Section 4 for full deep-dive.
-- `processSignal(profile, signal)` — updates counters, computes reward, learns, selects action
-- `selectAction(rlState)` — epsilon-greedy selection
-- `applyAction(params, action)` — mutates transformation params
-- `learn(profile, reward)` — Q-table update step
-- `decayEpsilon()` — called at session end
-- `computeDominantSignal(stats)` — determines if user mostly highlighted, paused, or skipped
+- `processSignal(profile, signal)` - updates counters, computes reward, learns, selects action
+- `selectAction(rlState)` - epsilon-greedy selection
+- `applyAction(params, action)` - mutates transformation params
+- `learn(profile, reward)` - Q-table update step
+- `decayEpsilon()` - called at session end
+- `computeDominantSignal(stats)` - determines if user mostly highlighted, paused, or skipped
 
-### `src/layer2/profileManager.ts` — Profile CRUD
-- `createProfile(baseline)` — builds initial profile from onboarding answers
-- `getProfile()` — reads from storage
-- `updateProfile(profile)` — writes updated profile
-- `deleteProfile()` — wipes all stored data
-- `getQTable()` / `saveQTable()` — Q-table persistence
-- `getSessionStats()` / `saveSessionStats()` / `clearSessionStats()` — session stats
-- `isOnboardingDone()` — checks if onboarding was completed
-- `broadcastProfileUpdate()` — sends `PROFILE_UPDATED` to all listeners (Layer 1 & 3)
+### `src/layer2/profileManager.ts` - Profile CRUD
+- `createProfile(baseline)` - builds initial profile from onboarding answers
+- `getProfile()` - reads from storage
+- `updateProfile(profile)` - writes updated profile
+- `deleteProfile()` - wipes all stored data
+- `getQTable()` / `saveQTable()` - Q-table persistence
+- `getSessionStats()` / `saveSessionStats()` / `clearSessionStats()` - session stats
+- `isOnboardingDone()` - checks if onboarding was completed
+- `broadcastProfileUpdate()` - sends `PROFILE_UPDATED` to all listeners (Layer 1 & 3)
 
-### `src/layer2/onboarding/onboarding.html` — Onboarding HTML
+### `src/layer2/onboarding/onboarding.html` - Onboarding HTML
 Clean, accessible HTML structure with step indicator, question card, and navigation buttons.
 
-### `src/layer2/onboarding/onboarding.ts` — Onboarding Logic
+### `src/layer2/onboarding/onboarding.ts` - Onboarding Logic
 One-question-at-a-time flow with 5 questions. Saves baseline profile to storage, then notifies background.
 
-### `src/layer2/onboarding/onboarding.css` — Onboarding Styles
+### `src/layer2/onboarding/onboarding.css` - Onboarding Styles
 Deep navy (#0f1724) background, accent #4EB8FF, increased letter-spacing, radio buttons with circle indicators.
 
-### `src/background/index.ts` — Background Service Worker
+### `src/background/index.ts` - Background Service Worker
 - Calls `setupLayer2Listeners()` to register Layer 2 handlers
 - Opens onboarding tab on first install
 - Listens for tab close to trigger session end
 - Routes messages between layers
 
-### `src/content/index.ts` — Content Script (Behavior Tracking)
+### `src/content/index.ts` - Content Script (Behavior Tracking)
 Tracks 5 signals:
 - **highlight**: text selection via `mouseup` event
 - **pause**: scroll stops for >3 seconds (debounced)
@@ -122,10 +122,10 @@ Tracks 5 signals:
 
 Emits `BEHAVIOR_SIGNAL` messages with URL and section ID context.
 
-### `src/popup/popup.html` — Popup UI
+### `src/popup/popup.html` - Popup UI
 Shows profile summary, session stats, transformation params, and action buttons.
 
-### `src/popup/popup.ts` — Popup Logic
+### `src/popup/popup.ts` - Popup Logic
 Reads profile from storage, renders stats, binds End Session and Reset Profile buttons.
 
 ---
@@ -166,11 +166,11 @@ Each action clamps to its valid range.
 
 | Signal       | Reward | Rationale                                      |
 |--------------|--------|-------------------------------------------------|
-| `highlight`  | +1.0   | Strong engagement — user found something useful |
-| `pause`      | +0.5   | Moderate engagement — reading carefully         |
-| `reRead`     | 0.0    | Neutral — could be confusion or review          |
-| `skip`       | -1.0   | Disengagement — content wasn't right            |
-| `tabSwitch`  | -0.5   | Mild disengagement — attention break            |
+| `highlight`  | +1.0   | Strong engagement - user found something useful |
+| `pause`      | +0.5   | Moderate engagement - reading carefully         |
+| `reRead`     | 0.0    | Neutral - could be confusion or review          |
+| `skip`       | -1.0   | Disengagement - content wasn't right            |
+| `tabSwitch`  | -0.5   | Mild disengagement - attention break            |
 
 ### Q-Table Structure
 
@@ -226,7 +226,7 @@ interface FullCognitiveProfile {
   learningStyle: LearningStyle; // Inferred alias: "visual" | "text" (mirrors baseline.formatPreference)
   condition:     CognitiveNeed; // Inferred: "multilingual" if secondLanguageLearner, else "none"
   createdAt:     string;        // ISO timestamp
-  updatedAt:     number;        // Unix ms — updated on every RL action
+  updatedAt:     number;        // Unix ms - updated on every RL action
 
   baseline: {
     formatPreference:      "visual" | "text";
@@ -261,7 +261,7 @@ MindEase deliberately does not ask users to self-diagnose. The `condition` field
 inferred from behavior: if the user studies in a second language, `condition` is set
 to `"multilingual"` and simplification/chunking parameters are initialized more
 aggressively. The `"dyslexia"` and `"adhd"` values are reserved for a future version
-that may infer these from RL behavior patterns over multiple sessions — for example,
+that may infer these from RL behavior patterns over multiple sessions - for example,
 persistently high skip rates combined with short attention span could suggest ADHD-like
 engagement patterns, triggering a parameter preset without requiring a diagnosis label.
 
@@ -341,10 +341,10 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     const payload = msg.payload as SessionEndPayload;
     const { sessionStats, updatedProfile } = payload;
 
-    // sessionStats.engagedSections — sections user engaged with
-    // sessionStats.skippedSections — sections user skipped
-    // sessionStats.dominantSignal — overall engagement pattern
-    // updatedProfile — full profile at session end
+    // sessionStats.engagedSections - sections user engaged with
+    // sessionStats.skippedSections - sections user skipped
+    // sessionStats.dominantSignal - overall engagement pattern
+    // updatedProfile - full profile at session end
 
     generateArtifact(sessionStats, updatedProfile);
   }
@@ -371,12 +371,12 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   const msg = message as { type: string; payload: unknown };
   if (msg.type === "COGNITIVE_EVENT") {
     const event = msg.payload;
-    // event.type — "highlight" | "pause" | "reRead" | "skip" | "tabSwitch"
-    // event.contentChunkId — which section
-    // event.sourceId — URL
-    // event.sourceType — "pdf" | "website" | "video" | "lecture"
-    // event.timestamp — when it happened
-    // event.profile — current profile at time of event
+    // event.type - "highlight" | "pause" | "reRead" | "skip" | "tabSwitch"
+    // event.contentChunkId - which section
+    // event.sourceId - URL
+    // event.sourceType - "pdf" | "website" | "video" | "lecture"
+    // event.timestamp - when it happened
+    // event.profile - current profile at time of event
   }
 });
 ```
@@ -450,7 +450,7 @@ npx tsc --noEmit  # Type-check only
 4. **No temporal difference beyond one step**: The Q-update bootstraps from current state. A full TD(λ) or Monte Carlo approach would be more sample-efficient.
 5. **Session stats per URL only**: No cross-session long-term memory of specific content domains.
 6. **No A/B testing**: All users start with the same epsilon/learning rate. Could personalize hyperparameters based on convergence speed.
-7. **`condition` field is partially implemented**: `"dyslexia"` and `"adhd"` are valid enum values but never set — condition is currently inferred from `secondLanguageLearner` only. Future versions could infer these from long-term RL behavior patterns (e.g. persistently high skip rates + short attention span → ADHD-like preset).
+7. **`condition` field is partially implemented**: `"dyslexia"` and `"adhd"` are valid enum values but never set - condition is currently inferred from `secondLanguageLearner` only. Future versions could infer these from long-term RL behavior patterns (e.g. persistently high skip rates + short attention span → ADHD-like preset).
 
 ### Next Steps
 

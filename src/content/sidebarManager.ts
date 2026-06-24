@@ -1,5 +1,5 @@
 /* ============================================================
-   content/sidebarManager.ts — Sidebar Recovery System
+   content/sidebarManager.ts - Sidebar Recovery System
    Persists overlay state (visible, minimized, side, activeTab)
    and provides a floating reopen button with state restoration.
    ============================================================ */

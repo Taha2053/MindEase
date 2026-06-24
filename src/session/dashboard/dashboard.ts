@@ -93,7 +93,7 @@ function sourceTypeBadgeClass(type: string): string {
 
 /* ─── Theme ────────────────────────────────────────────────────────────────── */
 
-let _theme: Theme = "dark";
+let _theme: Theme = "light";
 
 async function init(): Promise<void> {
   _theme = await initTheme();

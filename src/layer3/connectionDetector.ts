@@ -1,5 +1,5 @@
 /* ============================================================
-   layer3/connectionDetector.ts — Cross-Source Learning Intelligence
+   layer3/connectionDetector.ts - Cross-Source Learning Intelligence
    Owner: Eya
 
    Detects concepts encountered across multiple learning resources:
@@ -20,7 +20,7 @@ import type {
 } from "@/types";
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   1. STOP WORDS — common English words filtered out during extraction
+   1. STOP WORDS - common English words filtered out during extraction
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 const STOP_WORDS = new Set([
@@ -72,7 +72,7 @@ function normaliseWord(word: string): string {
 /** Split text into candidate concept words/phrases */
 function tokenise(text: string): string[] {
   return text
-    .split(/[\s,;:.!?()\[\]{}"'/\\|–—−-]+/)
+    .split(/[\s,;:.!?()\[\]{}"'/\\|–-−-]+/)
     .map(w => normaliseWord(w))
     .filter(w => w.length >= 3 && !STOP_WORDS.has(w));
 }
@@ -388,7 +388,7 @@ export function detectConnections(
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   6. PUBLIC API — Cross-Source Learning Intelligence
+   6. PUBLIC API - Cross-Source Learning Intelligence
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 /**

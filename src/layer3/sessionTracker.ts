@@ -1,5 +1,5 @@
 // ============================================================
-// layer3/sessionTracker.ts — Session Tracker
+// layer3/sessionTracker.ts - Session Tracker
 // Owner: Eya
 //
 // Receives CognitiveEvents from Layer 2 and builds a real-time
@@ -22,9 +22,9 @@ import { saveActiveSession, saveSessionLog, loadActiveSession } from "./storage"
 // Scores are clamped to [0.0, 1.0].
 
 const EVENT_SCORE_DELTA: Record<CognitiveEvent["type"], number> = {
-  highlight:    +0.4,   // strong positive signal — user marked this important
+  highlight:    +0.4,   // strong positive signal - user marked this important
   pause:        +0.25,  // user stopped to think
-  "re-read":    +0.2,   // user came back — needed it again
+  "re-read":    +0.2,   // user came back - needed it again
   skip:         -0.4,   // user intentionally jumped over
   "fast-scroll": -0.2,  // user moved through without stopping
 };
@@ -76,7 +76,7 @@ export class SessionTracker {
       this.log.engagementMap[contentChunkId] = {
         chunkId:         contentChunkId,
         sourceId,
-        engagementScore: 0.5,   // start neutral — neither engaged nor skipped
+        engagementScore: 0.5,   // start neutral - neither engaged nor skipped
         level:           "skimmed",
         events:          [],
         totalTimeMs:     0,

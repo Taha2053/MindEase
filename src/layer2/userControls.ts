@@ -1,9 +1,9 @@
 /* ============================================================
-   layer2/userControls.ts — User Content Controls
+   layer2/userControls.ts - User Content Controls
    Owner: Taha
 
    Gives users manual control over content adaptation parameters.
-   Overrides take precedence over RL agent decisions — the user
+   Overrides take precedence over RL agent decisions - the user
    always has the final say.
    ============================================================ */
 
@@ -50,7 +50,7 @@ export async function saveOverrides(overrides: UserOverrides): Promise<void> {
 }
 
 /**
- * Clear all user overrides — resume full RL agent control.
+ * Clear all user overrides - resume full RL agent control.
  */
 export async function clearOverrides(): Promise<void> {
   await browser.storage.local.remove(STORAGE_KEYS.OVERRIDES);
@@ -70,7 +70,7 @@ export async function setOverride<
 }
 
 /**
- * Remove a single override — that param goes back to RL control.
+ * Remove a single override - that param goes back to RL control.
  */
 export async function clearSingleOverride(key: keyof UserOverrides): Promise<void> {
   const current = await loadOverrides();
@@ -89,7 +89,7 @@ export async function clearSingleOverride(key: keyof UserOverrides): Promise<voi
 /**
  * Merge user overrides on top of the RL agent's transformation params.
  * Called after every RL adaptation so user choices always win.
- * Returns a new params object — does not mutate the original.
+ * Returns a new params object - does not mutate the original.
  */
 export function applyOverridesToParams(
   params: FullCognitiveProfile["transformationParams"],
