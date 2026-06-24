@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import browser from "webextension-polyfill";
 import type {
   FullCognitiveProfile, SessionStats,
   ExtensionMessage, HighlightNote, AdaptationExplanation,
   UserOverrides, TransformationParams, WorkspaceSession,
+  QTable,
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import {
@@ -373,8 +374,68 @@ function ContentControls({ profile }: { profile: FullCognitiveProfile }) {
             Reset to RL Defaults
           </button>
         </div>
+        <QTablePanel />
       </div>
     </>
+  );
+}
+
+/* ── Q-Table Visualizer ── */
+
+const ACTIONS_LABELS = [
+  "chunk+", "chunk-", "simpl+", "simpl-", "pace+", "pace-", "visuals", "summ+", "summ-",
+];
+
+function QTablePanel() {
+  const [qTable, setQTable] = useState<QTable | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval>>();
+
+  useEffect(() => {
+    const poll = async () => {
+      const result = await browser.storage.local.get(STORAGE_KEYS.QTABLE);
+      setQTable((result[STORAGE_KEYS.QTABLE] as QTable) ?? null);
+    };
+    poll();
+    pollRef.current = setInterval(poll, 5000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  if (!qTable) return null;
+
+  const entries = Object.entries(qTable);
+  if (entries.length === 0) return null;
+
+  const ranked = entries
+    .map(([key, vals]) => ({ key, maxQ: Math.max(...vals), vals }))
+    .sort((a, b) => b.maxQ - a.maxQ)
+    .slice(0, 5);
+
+  return (
+    <div className="qtable-section">
+      <div className="section-title">RL Agent State ({entries.length} states)</div>
+      <div className="qtable-list">
+        {ranked.map(e => (
+          <div className="qtable-row" key={e.key}>
+            <div className="qtable-state">{e.key}</div>
+            <div className="qtable-vals">
+              {e.vals.map((v, i) => (
+                <span
+                  key={i}
+                  className="qtable-val"
+                  data-positive={v > 0}
+                  data-negative={v < 0}
+                >
+                  {ACTIONS_LABELS[i]}:{v.toFixed(2)}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="qtable-max">
+        max Q: {ranked[0]?.maxQ.toFixed(3) ?? "-"}
+      </div>
+    </div>
   );
 }
 

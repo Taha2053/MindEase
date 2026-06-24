@@ -6,11 +6,12 @@
    ============================================================ */
 
 import browser from "webextension-polyfill";
-import type { ContentChunk, VisualEntry, QTable, BaselineProfile, TransformationParams } from "@/types";
+import type { ContentChunk, VisualEntry, BaselineProfile, TransformationParams } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
 import { iconHTML } from "@/utils/icons";
 import { renderLatex } from "@/utils/latex";
+import katex from "katex";
 import {
   saveSidebarState,
   loadSidebarState,
@@ -50,6 +51,8 @@ function shouldActivate(): ActivationResult {
     "fonts.google.com", "dafont.com",
     "freepik.com", "vecteezy.com", "storyset.com",
     "duckduckgo.com",
+    // Design platforms
+    "canva.com",
   ];
   if (promptOnlyHosts.some(d => hostname.includes(d))) return { decision: false, ambiguous: false };
   // Search engine result pages (check URL path, not just hostname)
@@ -451,7 +454,6 @@ function onExtensionStateChange(active: boolean): void {
     } else {
       activateForSession(sourceType);
     }
-    startQTablePolling();
   }
 }
 
@@ -471,7 +473,6 @@ function requestLLMClassification(sourceType: string): void {
         const sourceType = detectSourceType();
         if (sourceType) {
           activateForSession(sourceType);
-          startQTablePolling();
         }
       }
     }
@@ -577,7 +578,6 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
   const sourceType = detectSourceType();
   if (!sourceType) return;
   await activateForSession(sourceType);
-  startQTablePolling();
 })();
 
 /* ─── Layer 1: Content Transformation ──────────────────────────────────────────── */
@@ -1375,17 +1375,21 @@ const OVERLAY_CSS = `
         pointer-events: none;
       }
 
-      /* ── Adaptive: Formula ── */
+      /* ── Formula block ── */
       .m-formula {
-        display: inline-block;
-        padding: 4px 8px;
-        background: var(--bg-surface-alt);
-        border: 1px solid var(--border);
+        display: block;
+        padding: 12px 16px;
+        background: #ffffff;
+        border: 1px solid #000000;
         border-radius: 6px;
         font-size: 1rem;
-        margin: 4px 0;
+        margin: 8px 0;
         overflow-x: auto;
+        color: #000000;
+        text-align: center;
       }
+      .m-formula .katex { color: #000000; }
+      .m-formula .katex-display { margin: 0; text-align: center; }
 
       /* ── Adaptive: Slow pace - larger text ── */
       #mindease-overlay[data-pace="slow"] .chunk-body {
@@ -1457,14 +1461,14 @@ function formatChunkText(raw: string): string {
   );
   const explicitFormulas = withDefs.replace(
     /\[FORMULA\]([\s\S]*?)\[\/FORMULA\]/gi,
-    (_, formula) => `<FORMULA>${renderLatex(formula.trim())}</FORMULA>`,
+    (_, formula) => `<span class="m-formula">${katex.renderToString(formula.trim(), { displayMode: true, throwOnError: false })}</span>`,
   );
   const lines = explicitFormulas.split("\n").filter(l => l.trim());
   const parts: string[] = [];
   let inList = false;
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^<\/*FORMULA>/.test(trimmed)) {
+    if (/^<\/*FORMULA>/.test(trimmed) || /^<span class="m-formula">/.test(trimmed)) {
       if (inList) { parts.push("</ul>"); inList = false; }
       parts.push(trimmed);
     } else if (/^>\s/.test(trimmed)) {
@@ -1478,7 +1482,7 @@ function formatChunkText(raw: string): string {
       parts.push(`<h4 class="chunk-subtitle">${trimmed.replace(/\*\*(.+?)\*\*/g, "$1")}</h4>`);
     } else if (autoDetectFormula(trimmed)) {
       if (inList) { parts.push("</ul>"); inList = false; }
-      parts.push(`<span class="m-formula">${renderLatex(trimmed)}</span>`);
+      parts.push(`<span class="m-formula">${katex.renderToString(trimmed, { displayMode: true, throwOnError: false })}</span>`);
     } else {
       if (inList) { parts.push("</ul>"); inList = false; }
       const formatted = trimmed
@@ -1515,6 +1519,7 @@ function stripInlineTags(text: string): string {
     .replace(/\[CHUNK\s*\d*\]/gi, "")
     .replace(/^---+$/gm, "")
     .replace(/\[\d+(?:[,\s]*\d+)*\]/g, "")
+    .replace(/\[\/?EXAMPLE(?:_END)?\]/gi, "")
     .trim();
 }
 
@@ -1685,6 +1690,7 @@ function appendToOverlay(chunks: ContentChunk[]): void {
       .replace(/\[SUMMARY:[^\]]+\]/g, "")
       .replace(/\[CHUNK\s*\d*\]/gi, "")
       .replace(/^---+$/gm, "")
+      .replace(/\[\/?EXAMPLE(?:_END)?\]/gi, "")
       .trim();
     const bodyHTML = formatChunkText(cleanText);
     const colorKey = palette[(existing + i) % palette.length];
@@ -2078,163 +2084,8 @@ function injectOverlay(
 
   /* ── Pop out / Full view ── */
   document.getElementById("mindease-popout")?.addEventListener("click", () => {
-    const contentEl = document.getElementById("tab-content");
-    const statsEl = document.getElementById("mindease-stats-bar");
-    const profileGrid = document.getElementById("mindease-profile-grid");
-    const sessionGrid = document.getElementById("tab-session");
-    if (!contentEl) return;
-    const w = window.open("", "_blank");
-    if (!w) return;
-    (window as unknown as Record<string, unknown>).___mindeaseFullView = w;
-    const themeCSS = _theme === "light" ? `
-      --bg-page: #FFF8DE;
-      --bg-card: #FFFAE8;
-      --bg-surface: #FFFBE8;
-      --border: #AAC4F5;
-      --text-primary: #2D2B55;
-      --text-dim: #6E7FA8;
-      --text-muted: #94A8CC;
-      --accent: #8CA9FF;
-      --accent-secondary: #AAC4F5;
-      --accent-gradient: linear-gradient(135deg, #8CA9FF, #AAC4F5);
-    ` : `
-      --bg-page: #1A1D3A;
-      --bg-card: #252A55;
-      --bg-surface: #20254A;
-      --border: #7286D3;
-      --text-primary: #E5E0FF;
-      --text-dim: #B8B8E0;
-      --text-muted: #8A8AB8;
-      --accent: #8EA7E9;
-      --accent-secondary: #E5E0FF;
-      --accent-gradient: linear-gradient(135deg, #8EA7E9, #E5E0FF);
-    `;
-    w.document.write(`<!DOCTYPE html>
-<html><head><title>MindEase - Full Content View</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
-<style>
-  :root { ${themeCSS} }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
-    background: var(--bg-page);
-    color: var(--text-primary);
-    line-height: 1.7;
-    font-size: 0.92rem;
-  }
-  .full-header {
-    position: sticky; top: 0; z-index: 10;
-    background: var(--bg-surface);
-    border-bottom: 1px solid var(--border);
-    padding: 16px 32px;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .full-header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.01em; }
-  .full-header .stats {
-    display: flex; gap: 16px; align-items: center;
-    font-size: 0.75rem; color: var(--text-dim);
-  }
-  .full-header .stats span { display: flex; align-items: center; gap: 4px; }
-  .full-header .stats .num { color: var(--accent); font-weight: 700; font-size: 0.85rem; }
-  .full-body { max-width: 800px; margin: 0 auto; padding: 32px 24px 64px; }
-  .mindease-chunk {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px 24px;
-    margin-bottom: 16px;
-    animation: fadeUp 0.3s ease both;
-  }
-  .mindease-chunk:hover { border-color: var(--accent); }
-  .chunk-concept-tag {
-    display: inline-flex; align-items: center; gap: 4px;
-    font-size: 0.65rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
-    margin-bottom: 10px; padding: 3px 8px; border-radius: 4px;
-    color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
-  }
-  .chunk-body h4 { font-size: 0.85rem; font-weight: 700; margin: 12px 0 6px; color: var(--accent); }
-  .chunk-body p { margin: 0 0 8px; }
-  .chunk-body ul { margin: 6px 0; padding-left: 18px; }
-  .chunk-body ul li { margin-bottom: 4px; }
-  .chunk-body blockquote {
-    margin: 8px 0; padding: 8px 12px; border-left: 3px solid var(--accent);
-    border-radius: 0 6px 6px 0; font-style: italic; font-size: 0.82rem; opacity: 0.9;
-  }
-  .chunk-body code {
-    font-family: 'JetBrains Mono', monospace; font-size: 0.78rem;
-    padding: 1px 5px; border-radius: 3px;
-    background: color-mix(in srgb, currentColor 8%, transparent);
-  }
-  .chunk-summary {
-    margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
-    font-size: 0.8rem; color: var(--text-dim); display: flex; align-items: center; gap: 6px;
-  }
-  .full-footer {
-    text-align: center; padding: 16px;
-    font-size: 0.7rem; color: var(--text-muted);
-    border-top: 1px solid var(--border);
-  }
-  ${EXPLAIN_POPUP_CSS}
-  .full-body .m-formula { display: block; text-align: center; padding: 8px; margin: 8px 0; }
-  @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  .mindease-chunk:nth-child(1) { animation-delay: 0s; }
-  .mindease-chunk:nth-child(2) { animation-delay: 0.05s; }
-  .mindease-chunk:nth-child(3) { animation-delay: 0.1s; }
-  .mindease-chunk:nth-child(4) { animation-delay: 0.15s; }
-  .mindease-chunk:nth-child(5) { animation-delay: 0.2s; }
-  .mindease-chunk:nth-child(6) { animation-delay: 0.25s; }
-  .mindease-chunk:nth-child(7) { animation-delay: 0.3s; }
-  .mindease-chunk:nth-child(8) { animation-delay: 0.35s; }
-  .mindease-chunk:nth-child(9) { animation-delay: 0.4s; }
-  .mindease-chunk:nth-child(10) { animation-delay: 0.45s; }
-</style>
-<script>
-(function(){
-var s=document.createElement('style');s.textContent=${JSON.stringify(EXPLAIN_POPUP_CSS)};document.head.appendChild(s);
-var p=document.createElement('div');p.id='mindease-explain-popup';
-p.innerHTML='<div id="mindease-explain-header"><span>Explain selection</span><button id="mindease-explain-close">&times;</button></div><div id="mindease-explain-loader" style="display:none">Getting explanation</div><div id="mindease-explain-body"></div><div id="mindease-explain-selected"></div>';
-document.body.appendChild(p);
-document.getElementById('mindease-explain-close').onclick=function(){p.style.display='none';};
-function sendExplain(t){
-if(window.opener)window.opener.postMessage({type:'EXPLAIN_SELECTION',payload:t},'*');
-}
-document.addEventListener('mouseup',function(e){
-var sel=window.getSelection();if(!sel||sel.isCollapsed||!sel.toString().trim())return;
-var t=sel.toString().trim().slice(0,300);if(t.length<3)return;
-var b=document.getElementById('mindease-explain-body'),l=document.getElementById('mindease-explain-loader'),s=document.getElementById('mindease-explain-selected');
-if(!b||!l||!s)return;b.style.display='none';l.style.display='block';
-s.textContent='"'+t.slice(0,120)+(t.length>120?'...':'')+'"';
-var r=sel.getRangeAt(0).getBoundingClientRect(),pw=360,left=r.left+r.width/2-pw/2,top=r.bottom+8;
-if(left<8)left=8;if(left+pw>window.innerWidth-8)left=window.innerWidth-pw-8;
-if(top+200>window.innerHeight)top=r.top-8-150;
-p.style.left=left+'px';p.style.top=top+'px';p.style.display='block';
-sendExplain(t);
-});
-document.addEventListener('mousedown',function(e){var t=e.target;if(t&&t.closest&&!t.closest('#mindease-explain-popup'))p.style.display='none';});
-window.addEventListener('message',function(e){
-var d=e.data;if(d&&d.type==='EXPLAIN_SELECTION_RESULT'){
-var b=document.getElementById('mindease-explain-body'),l=document.getElementById('mindease-explain-loader');
-if(b&&l){l.style.display='none';b.textContent=d.payload.explanation;b.style.display='block';}
-}
-});
-})();
-</script></head>
-<body>
-  <div class="full-header">
-    <h1>MindEase</h1>
-    <div class="stats">
-      <span>Content <span class="num">${document.querySelectorAll(".mindease-chunk").length}</span></span>
-      <span>Chunks</span>
-    </div>
-  </div>
-  <div class="full-body">${contentEl.innerHTML}</div>
-  <div class="full-footer">MindEase &mdash; Adaptive Learning Assistant</div>
-</body></html>`);
-    w.document.close();
+    const url = browser.runtime.getURL("src/session/dashboard/dashboard.html");
+    window.open(url, "_blank");
   });
 
   /* ── Restore saved state ── */
@@ -2559,96 +2410,4 @@ async function initPDFMode(): Promise<void> {
   }).catch(() => {});
 
   setTimeout(() => loader?.remove(), 30000);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════════
-   Q-Table Visualizer - debug panel showing RL agent state
-   ═══════════════════════════════════════════════════════════════════════════════ */
-
-let qPanel: HTMLDivElement | null = null;
-let qPollTimer: ReturnType<typeof setInterval> | null = null;
-
-const ACTIONS_LABELS = [
-  "chunk+", "chunk-", "simpl+", "simpl-", "pace+", "pace-", "visuals", "summ+", "summ-",
-];
-
-function renderQTablePanel(qTable: QTable): void {
-  if (!qPanel) {
-    qPanel = document.createElement("div");
-    qPanel.id = "mindease-qtable-panel";
-    qPanel.style.cssText = `
-      position: fixed; bottom: 10px; right: 10px;
-      background: #0d1829; color: #4EB8FF;
-      padding: 10px 12px; font-size: 10px; font-family: monospace;
-      z-index: 2147483646; border: 1px solid #4EB8FF;
-      max-height: 220px; overflow-y: auto; width: 260px;
-      border-radius: 8px; opacity: 0.92;
-      pointer-events: none; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-    `;
-    document.body.appendChild(qPanel);
-  }
-
-  const entries = Object.entries(qTable);
-  if (entries.length === 0) {
-    qPanel.innerHTML = `<div style="color:#888;">Q-Table: empty (no signals yet)</div>`;
-    return;
-  }
-
-  // Show top 5 states by max Q-value
-  const ranked = entries
-    .map(([key, vals]) => ({ key, maxQ: Math.max(...vals), vals }))
-    .sort((a, b) => b.maxQ - a.maxQ)
-    .slice(0, 5);
-
-  qPanel.innerHTML = `
-    <div style="font-weight:bold;margin-bottom:4px;color:#fff;font-size:11px;">
-      Q-Table (${entries.length} states)
-    </div>
-    ${ranked.map(e => `
-      <div style="margin-bottom:3px;border-bottom:1px solid rgba(78,184,255,0.15);padding-bottom:2px;">
-        <div style="color:#8899b4;font-size:8px;">${e.key}</div>
-        <div>${e.vals.map((v, i) => `
-          <span style="color:${v > 0 ? '#4ade80' : v < 0 ? '#f87171' : '#64748b'};margin-right:4px;">
-            ${ACTIONS_LABELS[i]}:${v.toFixed(2)}
-          </span>
-        `).join('')}</div>
-      </div>
-    `).join('')}
-    <div style="color:#64748b;font-size:8px;margin-top:2px;">
-      max: ${ranked[0]?.maxQ.toFixed(3) ?? "-"}
-    </div>
-  `;
-}
-
-async function pollQTable(): Promise<void> {
-  try {
-    const result = await browser.storage.local.get(STORAGE_KEYS.QTABLE);
-    const qTable = (result[STORAGE_KEYS.QTABLE] as QTable) ?? {};
-    renderQTablePanel(qTable);
-  } catch {
-    // storage not available yet
-  }
-}
-
-function startQTablePolling(): void {
-  if (qPollTimer) return;
-  // Initial render after short delay
-  setTimeout(pollQTable, 2000);
-  qPollTimer = setInterval(pollQTable, 5000);
-}
-
-function stopQTablePolling(): void {
-  if (qPollTimer) {
-    clearInterval(qPollTimer);
-    qPollTimer = null;
-  }
-  if (qPanel) {
-    qPanel.remove();
-    qPanel = null;
-  }
-}
-
-// If already active, start immediately
-if (_extensionActive) {
-  setTimeout(startQTablePolling, 3000);
 }

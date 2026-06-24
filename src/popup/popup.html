@@ -309,6 +309,23 @@
       .controls-footer { display: flex; gap: 6px; margin-top: 8px; }
       .controls-footer .btn { padding: 6px 10px; font-size: 0.7rem; }
 
+      .qtable-section { margin-top: 10px; }
+      .qtable-list { display: flex; flex-direction: column; gap: 4px; }
+      .qtable-row {
+        background: var(--bg-surface); border: 1px solid var(--border);
+        border-radius: 6px; padding: 6px 8px;
+      }
+      .qtable-state { font-size: 0.62rem; color: var(--text-dim); font-family: monospace; margin-bottom: 3px; }
+      .qtable-vals { display: flex; flex-wrap: wrap; gap: 3px; }
+      .qtable-val {
+        font-size: 0.6rem; padding: 1px 4px; border-radius: 3px;
+        background: rgba(100,116,139,0.08); color: var(--text-dim);
+        font-family: monospace; white-space: nowrap;
+      }
+      .qtable-val[data-positive=true] { color: var(--success); background: rgba(74,222,128,0.08); }
+      .qtable-val[data-negative=true] { color: var(--danger); background: rgba(248,113,113,0.08); }
+      .qtable-max { font-size: 0.6rem; color: var(--text-muted); margin-top: 4px; font-family: monospace; }
+
       .scroll-list { display: flex; flex-direction: column; gap: 6px; }
       .item-card {
         background: var(--bg-surface);

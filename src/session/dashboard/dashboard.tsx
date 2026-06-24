@@ -203,7 +203,6 @@ const NAV_ITEMS = [
   { id: "explanations", label: "Explanations", icon: MessageCircle },
   { id: "review", label: "Review", icon: RefreshCw },
   { id: "visuals", label: "Visuals", icon: Image },
-  { id: "notes", label: "Notes", icon: FileText },
   { id: "insights", label: "Insights", icon: Lightbulb },
   { id: "progress", label: "Progress", icon: ChartNoAxesColumn },
 ];
@@ -913,9 +912,6 @@ const Dashboard: FC = () => {
             </div>
           </div>
           <div className="dash-header-right">
-            <button className="header-btn" onClick={handleThemeToggle} aria-label="Toggle theme" title="Toggle theme">
-              {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
-            </button>
             <button className="header-btn" onClick={handleExport} aria-label="Export PDF" title="Export as PDF">
               <FileDown size={16} />
             </button>
