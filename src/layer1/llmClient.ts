@@ -1,9 +1,9 @@
 import type { TransformationParams, BaselineProfile } from "@/types";
 
-const NVIDIA_API_KEY = import.meta.env.VITE_NVIDIA_API_KEY as string;
+const MISTRAL_API_KEY = import.meta.env.VITE_MISTRAL_API_KEY as string;
 
-const API_BASE = "https://integrate.api.nvidia.com/v1";
-const MODEL = "deepseek-ai/deepseek-v4-pro";
+const API_BASE = "https://api.mistral.ai/v1";
+const MODEL = "mistral-small-latest";
 
 interface FullTransformParams {
   transformationParams: TransformationParams;
@@ -15,20 +15,19 @@ async function callLLM(prompt: string, maxTokens = 4096, temperature = 0.3): Pro
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${NVIDIA_API_KEY}`,
+      Authorization: `Bearer ${MISTRAL_API_KEY}`,
     },
     body: JSON.stringify({
       model: MODEL,
       messages: [{ role: "user", content: prompt }],
       max_tokens: maxTokens,
       temperature,
-      top_p: 0.95,
     }),
   });
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`NVIDIA LLM error ${response.status}: ${err}`);
+    throw new Error(`Mistral error ${response.status}: ${err}`);
   }
 
   const data = (await response.json()) as {
@@ -58,7 +57,7 @@ const ANNOTATION_RULES = `
 ABSOLUTE RULES (you MUST follow these strictly):
 1. NEVER rewrite, rephrase, reword, or summarize any original text. Preserve every sentence, word, formula, and example exactly as written.
 2. ONLY insert tags around the original text. Do not remove or change any content.
-3. If the text contains math formulas, wrap each formula in [FORMULA] tags: [FORMULA]E = mc^2[/FORMULA]
+3. CRITICAL: Identify ALL mathematical expressions and wrap EVERY ONE in [FORMULA] tags. This includes: equations (containing =), logarithms like log2(1/2), sums like ∑, functions like H(X) or I(x), formulas like E = mc^2, any expression with operators (+ - = / * ^), any expression containing symbols like π, ∑, ∫, Δ, any definition of a mathematical value. Wrap each as [FORMULA]expression[/FORMULA].
 4. If a section explains a concept via an example, wrap it in [EXAMPLE][/EXAMPLE].
 5. Identify key concepts and mark them as [CONCEPT: Concept Name] before the relevant text.
 6. For complex or technical terms that might be difficult for the student, wrap each with [DEF: term] before first occurrence.
@@ -149,7 +148,7 @@ Rules:
 Title: ${title}
 Snippet: ${snippet.slice(0, 1500)}`;
 
-  const result = await callLLM(prompt, 256, 0.1);
+  const result = await callLLM(prompt, 256);
   const clean = result.trim().toLowerCase();
   if (clean.startsWith("educational")) return "educational";
   return "entertainment";
@@ -175,4 +174,11 @@ RULES:
 Lecture text: ${text}`;
 
   return callLLM(prompt, 2048);
+}
+
+export async function explainSelection(selectedText: string): Promise<string> {
+  const prompt = `Give a concise, clear explanation of this concept or term. Use simple language. Max 3 sentences. No markdown.
+
+Text to explain: ${selectedText}`;
+  return callLLM(prompt, 512, 0.3);
 }

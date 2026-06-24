@@ -229,7 +229,9 @@ export type MessageType =
   | "SESSION_STATE_CHANGED"     // popup → all (session started/ended)
   | "EXTENSION_STATE_CHANGED"  // popup → content (extension activated/deactivated)
   | "CLASSIFY_CONTENT"         // content → background (ask LLM: educational or entertainment)
-  | "CLASSIFY_CONTENT_RESULT"; // background → content (classification result)
+  | "CLASSIFY_CONTENT_RESULT" // background → content (classification result)
+  | "EXPLAIN_SELECTION"       // content → background (ask LLM to explain selected text)
+  | "EXPLAIN_SELECTION_RESULT"; // background → content (explanation result)
 
 export interface ExtensionMessage {
   type:    MessageType;

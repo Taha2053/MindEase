@@ -38,6 +38,12 @@ function shouldActivate(): ActivationResult {
 
   // Asset & search sites — not study content, show discovery prompt instead
   const promptOnlyHosts = [
+    // AI chat platforms
+    "chatgpt.com", "chat.openai.com", "chat.deepseek.com",
+    "claude.ai", "perplexity.ai", "grok.com",
+    "gemini.google.com", "bard.google.com", "copilot.microsoft.com",
+    "chat.mistral.ai", "pi.ai",
+    // Asset sites
     "unsplash.com", "pexels.com", "pixabay.com", "gettyimages.com",
     "shutterstock.com", "istockphoto.com", "imgur.com",
     "flaticon.com", "icons8.com", "iconfinder.com", "fontawesome.com",
@@ -498,7 +504,7 @@ async function activateForSession(sourceType: string): Promise<void> {
   btn.addEventListener("click", async () => {
     removeReopenButton();
     await saveSidebarState({ visible: true });
-    const text = document.body.innerText.slice(0, 4000);
+    const text = document.body.innerText;
     if (text.trim().length >= 50) {
       browser.runtime.sendMessage({
         type: "TRANSFORM_CONTENT",
@@ -576,9 +582,14 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
 
 /* ─── Layer 1: Content Transformation ──────────────────────────────────────────── */
 
+function stripCitations(text: string): string {
+  return text.replace(/\[\d+(?:[,\s]*\d+)*\]/g, "").trim();
+}
+
 function initContentTransformation(pageType: string): void {
   try {
-    const text = document.body.innerText.slice(0, 4000);
+    const raw = document.body.innerText;
+    const text = stripCitations(raw);
     if (text.trim().length < 50) return;
     browser.runtime.sendMessage({
       type: "TRANSFORM_CONTENT",
@@ -663,6 +674,30 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   if (msg.type === "ARTIFACT_READY") {
     /* Store latest artifact for overlay to pick up */
     browser.storage.local.set({ latestArtifact: msg.payload });
+  }
+  if (msg.type === "EXPLAIN_SELECTION_RESULT") {
+    const p = msg.payload as { text: string; explanation: string };
+    const popup = document.getElementById("mindease-explain-popup");
+    const body = document.getElementById("mindease-explain-body");
+    const loader = document.getElementById("mindease-explain-loader");
+    if (popup && body && loader) {
+      loader.style.display = "none";
+      body.textContent = p.explanation;
+      body.style.display = "block";
+    }
+    // Also forward to child full-view window if exists
+    const fv = (window as unknown as Record<string, unknown>).___mindeaseFullView as Window | undefined;
+    if (fv && !fv.closed) {
+      try { fv.postMessage({ type: "EXPLAIN_SELECTION_RESULT", payload: p }, "*"); } catch {}
+    }
+  }
+});
+
+/* ── postMessage bridge for full-view window ── */
+window.addEventListener("message", (event: MessageEvent) => {
+  const data = event.data as { type?: string; payload?: unknown };
+  if (data?.type === "EXPLAIN_SELECTION" && typeof data.payload === "string") {
+    browser.runtime.sendMessage({ type: "EXPLAIN_SELECTION", payload: data.payload }).catch(() => {});
   }
 });
 
@@ -769,7 +804,7 @@ const OVERLAY_CSS = `
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 16px 20px;
+        padding: 10px 16px;
         background: var(--bg-surface);
         border-bottom: 1px solid var(--border);
         flex-shrink: 0;
@@ -777,54 +812,48 @@ const OVERLAY_CSS = `
       #mindease-logo {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
       }
       #mindease-logo .logo-icon {
-        width: 28px; height: 28px;
+        width: 24px; height: 24px;
         background: var(--accent-gradient);
-        border-radius: 8px;
+        border-radius: 6px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 14px;
+        font-size: 12px;
         flex-shrink: 0;
       }
       #mindease-logo .logo-text {
-        font-size: 0.9rem;
+        font-size: 0.82rem;
         font-weight: 600;
         color: var(--text-primary);
-        letter-spacing: 0.05em;
+        letter-spacing: 0.03em;
       }
       #mindease-logo .logo-badge {
-        font-size: 0.6rem;
-        color: var(--accent);
-        background: color-mix(in srgb, var(--accent) 12%, transparent);
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-weight: 500;
-        letter-spacing: 0.05em;
+        display: none;
       }
 
       /* ── Controls ── */
       #mindease-controls {
         display: flex;
-        gap: 8px;
+        gap: 4px;
         align-items: center;
       }
       .mindease-ctrl-btn {
         background: none;
-        border: 1px solid var(--border);
-        color: var(--text-dim);
-        width: 28px; height: 28px;
+        border: 1px solid transparent;
+        color: var(--text-muted);
+        width: 26px; height: 26px;
         border-radius: 6px;
         cursor: pointer;
-        font-size: 14px;
+        font-size: 13px;
         display: flex;
         align-items: center;
         justify-content: center;
         transition: all 0.15s;
       }
-      .mindease-ctrl-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+      .mindease-ctrl-btn:hover { color: var(--text-primary); background: var(--bg-elevated); border-color: var(--border); }
       .mindease-ctrl-btn:focus-visible {
         outline: 2px solid var(--border-focus);
         outline-offset: 2px;
@@ -834,26 +863,44 @@ const OVERLAY_CSS = `
       /* ── Tabs ── */
       #mindease-tabs {
         display: flex;
+        gap: 2px;
+        padding: 6px 10px;
         background: var(--bg-surface);
         border-bottom: 1px solid var(--border);
         flex-shrink: 0;
       }
       .mindease-tab {
         flex: 1;
-        padding: 10px 8px;
-        font-size: 0.72rem;
+        padding: 6px 4px;
+        font-size: 0.65rem;
         font-weight: 500;
-        color: var(--text-dim);
+        color: var(--text-muted);
         text-align: center;
         cursor: pointer;
-        border-bottom: 2px solid transparent;
-        transition: all 0.15s;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-        background: none;
+        border-radius: 6px;
+        transition: all 0.2s;
+        letter-spacing: 0.02em;
+        background: transparent;
+        border: none;
+        font-family: var(--font-family);
+        position: relative;
       }
-      .mindease-tab:hover { color: var(--text-primary); }
-      .mindease-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+      .mindease-tab:hover { color: var(--text-dim); background: var(--bg-elevated); }
+      .mindease-tab.active {
+        color: var(--text-primary);
+        background: var(--bg-elevated);
+        font-weight: 600;
+      }
+      .mindease-tab.active::after {
+        content: '';
+        position: absolute;
+        bottom: -6px;
+        left: 30%;
+        right: 30%;
+        height: 2px;
+        background: var(--accent);
+        border-radius: 1px;
+      }
       .mindease-tab:focus-visible {
         outline: 2px solid var(--border-focus);
         outline-offset: -2px;
@@ -862,29 +909,43 @@ const OVERLAY_CSS = `
       /* ── Stats bar ── */
       #mindease-stats-bar {
         display: flex;
-        gap: 0;
-        background: var(--bg-surface-alt);
+        gap: 6px;
+        padding: 8px 10px;
+        background: var(--bg-surface);
         border-bottom: 1px solid var(--border);
         flex-shrink: 0;
       }
       .mindease-stat {
         flex: 1;
-        padding: 8px 4px;
-        text-align: center;
-        border-right: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 8px;
+        background: color-mix(in srgb, var(--accent) 6%, var(--bg-surface-alt));
+        border: 1px solid color-mix(in srgb, var(--accent) 12%, transparent);
+        border-radius: 8px;
       }
-      .mindease-stat:last-child { border-right: none; }
+      .mindease-stat .s-icon {
+        width: 20px; height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        opacity: 0.7;
+      }
+      .mindease-stat .s-icon svg { width: 14px; height: 14px; }
       .mindease-stat .s-num {
-        font-size: 1.1rem;
-        font-weight: 600;
-        color: var(--text-primary);
-        display: block;
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: var(--accent);
+        line-height: 1;
       }
       .mindease-stat .s-label {
-        font-size: 0.58rem;
+        font-size: 0.55rem;
         color: var(--text-muted);
         text-transform: uppercase;
         letter-spacing: 0.06em;
+        line-height: 1;
       }
 
       /* ── Body ── */
@@ -1248,16 +1309,22 @@ const OVERLAY_CSS = `
       }
 
       /* ── Responsive ── */
-      @media (max-width: 480px) {
+      @media (max-width: 520px) {
         #mindease-overlay {
           width: 100vw !important;
           border-left: none !important;
           border-right: none !important;
         }
-        #mindease-header { padding: 12px 14px; }
-        #mindease-body { padding: 12px; }
+        #mindease-header { padding: 8px 10px; }
+        #mindease-body { padding: 10px; }
+        #mindease-stats-bar { gap: 4px; padding: 6px 8px; }
+        .mindease-stat { padding: 4px 6px; flex-direction: column; gap: 2px; }
+        .mindease-stat .s-icon { display: none; }
         .profile-grid { grid-template-columns: 1fr; }
-        #mindease-logo .logo-badge { display: none; }
+      }
+
+      @media (max-width: 400px) {
+        .mindease-stat .s-label { display: none; }
       }
 
       @media (min-width: 1600px) {
@@ -1388,16 +1455,19 @@ function formatChunkText(raw: string): string {
     (_, term) =>
       `<span class="m-def-term" data-def="${_escHtml(term.trim())}">${_escHtml(term.trim())}</span>`,
   );
-  const withFormulas = withDefs.replace(
+  const explicitFormulas = withDefs.replace(
     /\[FORMULA\]([\s\S]*?)\[\/FORMULA\]/gi,
-    (_, formula) => `<span class="m-formula">${renderLatex(formula.trim())}</span>`,
+    (_, formula) => `<FORMULA>${renderLatex(formula.trim())}</FORMULA>`,
   );
-  const lines = withFormulas.split("\n").filter(l => l.trim());
+  const lines = explicitFormulas.split("\n").filter(l => l.trim());
   const parts: string[] = [];
   let inList = false;
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^>\s/.test(trimmed)) {
+    if (/^<\/*FORMULA>/.test(trimmed)) {
+      if (inList) { parts.push("</ul>"); inList = false; }
+      parts.push(trimmed);
+    } else if (/^>\s/.test(trimmed)) {
       if (inList) { parts.push("</ul>"); inList = false; }
       parts.push(`<blockquote>${trimmed.replace(/^>\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</blockquote>`);
     } else if (/^[-*]\s/.test(trimmed)) {
@@ -1406,6 +1476,9 @@ function formatChunkText(raw: string): string {
     } else if (/^\*\*(.+?)\*\*:?\s*/.test(trimmed)) {
       if (inList) { parts.push("</ul>"); inList = false; }
       parts.push(`<h4 class="chunk-subtitle">${trimmed.replace(/\*\*(.+?)\*\*/g, "$1")}</h4>`);
+    } else if (autoDetectFormula(trimmed)) {
+      if (inList) { parts.push("</ul>"); inList = false; }
+      parts.push(`<span class="m-formula">${renderLatex(trimmed)}</span>`);
     } else {
       if (inList) { parts.push("</ul>"); inList = false; }
       const formatted = trimmed
@@ -1415,7 +1488,24 @@ function formatChunkText(raw: string): string {
     }
   }
   if (inList) parts.push("</ul>");
-  return renderLatex(parts.join("\n"));
+  return renderLatex(parts.join("\n")).replace(/<\/?FORMULA>/g, "");
+}
+
+function autoDetectFormula(text: string): boolean {
+  if (text.length < 3) return false;
+  const alphaChars = (text.match(/[a-zA-Z]/g) || []).length;
+  const totalChars = text.replace(/\s/g, "").length;
+  if (totalChars === 0) return false;
+  const alphaRatio = alphaChars / totalChars;
+  if (alphaRatio > 0.6) return false;
+  const mathSignals = [
+    /[∑∫πΔλ∂∇∞≜±∝∴∵∀∃∈∉⊂⊃∩∪→←↔⇒⇔¬∧∨⊕⊗‖]/,
+    /log\d*\(/,
+    /\b[HID]\s*\([^)]*\)\s*[=≤≥]/,
+    /D_\w+\s*\(/,
+    /\d\s*[=×÷^]\s*\d/,
+  ];
+  return mathSignals.some(r => r.test(text));
 }
 
 function stripInlineTags(text: string): string {
@@ -1424,7 +1514,158 @@ function stripInlineTags(text: string): string {
     .replace(/\[SUMMARY:[^\]]+\]/g, "")
     .replace(/\[CHUNK\s*\d*\]/gi, "")
     .replace(/^---+$/gm, "")
+    .replace(/\[\d+(?:[,\s]*\d+)*\]/g, "")
     .trim();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Selection-based Explanation Popup (Wikipedia-style)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+const EXPLAIN_POPUP_CSS = `
+#mindease-explain-popup {
+  position: fixed;
+  z-index: 2147483646;
+  background: var(--bg-surface, #252A55);
+  border: 1px solid var(--border, #7286D3);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  max-width: 360px;
+  min-width: 200px;
+  padding: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--text-primary, #E5E0FF);
+  display: none;
+  animation: mindease-fadeUp 0.15s ease;
+  overflow: hidden;
+}
+#mindease-explain-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--accent, #8EA7E9) 10%, transparent);
+  border-bottom: 1px solid var(--border, #7286D3);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent, #8EA7E9);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+#mindease-explain-close {
+  background: none;
+  border: none;
+  color: var(--text-muted, #8A8AB8);
+  cursor: pointer;
+  padding: 2px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+}
+#mindease-explain-close:hover { color: var(--text-primary, #E5E0FF); }
+#mindease-explain-loader {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted, #8A8AB8);
+  font-size: 0.75rem;
+}
+#mindease-explain-loader::after {
+  content: '';
+  display: inline-block;
+  width: 12px; height: 12px;
+  margin-left: 6px;
+  border: 2px solid var(--border, #7286D3);
+  border-top-color: var(--accent, #8EA7E9);
+  border-radius: 50%;
+  animation: mindease-spin 0.6s linear infinite;
+  vertical-align: middle;
+}
+#mindease-explain-body {
+  padding: 10px 12px;
+  display: none;
+  font-size: 0.8rem;
+  color: var(--text-primary, #E5E0FF);
+}
+#mindease-explain-selected {
+  padding: 6px 12px;
+  font-size: 0.72rem;
+  color: var(--text-dim, #B8B8E0);
+  font-style: italic;
+  border-top: 1px solid var(--border, #7286D3);
+  background: color-mix(in srgb, var(--bg-base, #1A1D3A) 40%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+`;
+
+function setupSelectionPopup(container: HTMLElement | Document): void {
+  if (document.getElementById("mindease-explain-styles")) return;
+  const styleEl = document.createElement("style");
+  styleEl.id = "mindease-explain-styles";
+  styleEl.textContent = EXPLAIN_POPUP_CSS;
+  document.head.appendChild(styleEl);
+
+  if (document.getElementById("mindease-explain-popup")) return;
+  const popup = document.createElement("div");
+  popup.id = "mindease-explain-popup";
+  popup.innerHTML = `
+    <div id="mindease-explain-header">
+      <span>Explain selection</span>
+      <button id="mindease-explain-close">&times;</button>
+    </div>
+    <div id="mindease-explain-loader" style="display:none">Getting explanation</div>
+    <div id="mindease-explain-body"></div>
+    <div id="mindease-explain-selected"></div>
+  `;
+  document.body.appendChild(popup);
+
+  document.getElementById("mindease-explain-close")?.addEventListener("click", () => {
+    popup.style.display = "none";
+  });
+
+  container.addEventListener("mouseup", (e: Event) => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+      return;
+    }
+    const text = sel.toString().trim().slice(0, 300);
+    if (text.length < 3) return;
+
+    const body = document.getElementById("mindease-explain-body");
+    const loader = document.getElementById("mindease-explain-loader");
+    const selected = document.getElementById("mindease-explain-selected");
+    if (!body || !loader || !selected) return;
+
+    body.style.display = "none";
+    loader.style.display = "block";
+    selected.textContent = `"${text.slice(0, 120)}${text.length > 120 ? "..." : ""}"`;
+
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    const popupW = 360;
+    let left = rect.left + rect.width / 2 - popupW / 2;
+    let top = rect.bottom + 8;
+    if (left < 8) left = 8;
+    if (left + popupW > window.innerWidth - 8) left = window.innerWidth - popupW - 8;
+    if (top + 200 > window.innerHeight) top = rect.top - 8 - 150;
+    popup.style.left = `${left}px`;
+    popup.style.top = `${top}px`;
+    popup.style.display = "block";
+
+    browser.runtime.sendMessage({
+      type: "EXPLAIN_SELECTION",
+      payload: text,
+    }).catch(() => {});
+  });
+
+  document.addEventListener("mousedown", (e: Event) => {
+    const target = e.target as HTMLElement;
+    if (target && target.closest && !target.closest("#mindease-explain-popup")) {
+      popup.style.display = "none";
+    }
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -1568,18 +1809,22 @@ function injectOverlay(
 
     <div id="mindease-stats-bar">
       <div class="mindease-stat">
+        <span class="s-icon">${iconHTML("file-text")}</span>
         <span class="s-num">${orderedChunks.length}</span>
         <span class="s-label">Chunks</span>
       </div>
       <div class="mindease-stat">
+        <span class="s-icon">${iconHTML("star")}</span>
         <span class="s-num">${totalConcepts}</span>
         <span class="s-label">Concepts</span>
       </div>
       <div class="mindease-stat">
+        <span class="s-icon">${iconHTML("align-start-vertical")}</span>
         <span class="s-num">${summaryCount}</span>
         <span class="s-label">Summaries</span>
       </div>
       <div class="mindease-stat">
+        <span class="s-icon">${iconHTML("bar-chart-3")}</span>
         <span class="s-num" id="mindease-engage-count">0</span>
         <span class="s-label">Engaged</span>
       </div>
@@ -1697,6 +1942,7 @@ function injectOverlay(
   `;
 
   document.body.appendChild(overlay);
+  setupSelectionPopup(document.getElementById("mindease-body")!);
 
 
   /* ── Focus trap ── */
@@ -1833,15 +2079,161 @@ function injectOverlay(
   /* ── Pop out / Full view ── */
   document.getElementById("mindease-popout")?.addEventListener("click", () => {
     const contentEl = document.getElementById("tab-content");
+    const statsEl = document.getElementById("mindease-stats-bar");
+    const profileGrid = document.getElementById("mindease-profile-grid");
+    const sessionGrid = document.getElementById("tab-session");
     if (!contentEl) return;
-    const w = window.open("", "_blank", "width=800,height=600,scrollbars=yes");
+    const w = window.open("", "_blank");
     if (!w) return;
-    const themeStyle = _theme === "light"
-      ? "body{background:#fff;color:#1a2332;font-family:sans-serif;padding:24px;max-width:800px;margin:auto}"
-      : "body{background:#1a1d3a;color:#e5e0ff;font-family:sans-serif;padding:24px;max-width:800px;margin:auto}";
+    (window as unknown as Record<string, unknown>).___mindeaseFullView = w;
+    const themeCSS = _theme === "light" ? `
+      --bg-page: #FFF8DE;
+      --bg-card: #FFFAE8;
+      --bg-surface: #FFFBE8;
+      --border: #AAC4F5;
+      --text-primary: #2D2B55;
+      --text-dim: #6E7FA8;
+      --text-muted: #94A8CC;
+      --accent: #8CA9FF;
+      --accent-secondary: #AAC4F5;
+      --accent-gradient: linear-gradient(135deg, #8CA9FF, #AAC4F5);
+    ` : `
+      --bg-page: #1A1D3A;
+      --bg-card: #252A55;
+      --bg-surface: #20254A;
+      --border: #7286D3;
+      --text-primary: #E5E0FF;
+      --text-dim: #B8B8E0;
+      --text-muted: #8A8AB8;
+      --accent: #8EA7E9;
+      --accent-secondary: #E5E0FF;
+      --accent-gradient: linear-gradient(135deg, #8EA7E9, #E5E0FF);
+    `;
     w.document.write(`<!DOCTYPE html>
-<html><head><title>MindEase - Content View</title>
-<style>${themeStyle} .mindease-chunk{margin-bottom:20px;padding:16px;border:1px solid #e2e8f0;border-radius:8px} .chunk-concept-tag{font-weight:700;color:#3b82f6;margin-bottom:6px} .chunk-body{line-height:1.7;font-size:0.95rem} .chunk-summary{font-size:0.82rem;color:#64748b;margin-top:8px;padding:8px;background:#f8fafc;border-radius:6px}</style></head><body>${contentEl.innerHTML}</body></html>`);
+<html><head><title>MindEase - Full Content View</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+  :root { ${themeCSS} }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    background: var(--bg-page);
+    color: var(--text-primary);
+    line-height: 1.7;
+    font-size: 0.92rem;
+  }
+  .full-header {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 32px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .full-header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.01em; }
+  .full-header .stats {
+    display: flex; gap: 16px; align-items: center;
+    font-size: 0.75rem; color: var(--text-dim);
+  }
+  .full-header .stats span { display: flex; align-items: center; gap: 4px; }
+  .full-header .stats .num { color: var(--accent); font-weight: 700; font-size: 0.85rem; }
+  .full-body { max-width: 800px; margin: 0 auto; padding: 32px 24px 64px; }
+  .mindease-chunk {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+    animation: fadeUp 0.3s ease both;
+  }
+  .mindease-chunk:hover { border-color: var(--accent); }
+  .chunk-concept-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 0.65rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    margin-bottom: 10px; padding: 3px 8px; border-radius: 4px;
+    color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .chunk-body h4 { font-size: 0.85rem; font-weight: 700; margin: 12px 0 6px; color: var(--accent); }
+  .chunk-body p { margin: 0 0 8px; }
+  .chunk-body ul { margin: 6px 0; padding-left: 18px; }
+  .chunk-body ul li { margin-bottom: 4px; }
+  .chunk-body blockquote {
+    margin: 8px 0; padding: 8px 12px; border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0; font-style: italic; font-size: 0.82rem; opacity: 0.9;
+  }
+  .chunk-body code {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.78rem;
+    padding: 1px 5px; border-radius: 3px;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+  }
+  .chunk-summary {
+    margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+    font-size: 0.8rem; color: var(--text-dim); display: flex; align-items: center; gap: 6px;
+  }
+  .full-footer {
+    text-align: center; padding: 16px;
+    font-size: 0.7rem; color: var(--text-muted);
+    border-top: 1px solid var(--border);
+  }
+  ${EXPLAIN_POPUP_CSS}
+  .full-body .m-formula { display: block; text-align: center; padding: 8px; margin: 8px 0; }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .mindease-chunk:nth-child(1) { animation-delay: 0s; }
+  .mindease-chunk:nth-child(2) { animation-delay: 0.05s; }
+  .mindease-chunk:nth-child(3) { animation-delay: 0.1s; }
+  .mindease-chunk:nth-child(4) { animation-delay: 0.15s; }
+  .mindease-chunk:nth-child(5) { animation-delay: 0.2s; }
+  .mindease-chunk:nth-child(6) { animation-delay: 0.25s; }
+  .mindease-chunk:nth-child(7) { animation-delay: 0.3s; }
+  .mindease-chunk:nth-child(8) { animation-delay: 0.35s; }
+  .mindease-chunk:nth-child(9) { animation-delay: 0.4s; }
+  .mindease-chunk:nth-child(10) { animation-delay: 0.45s; }
+</style>
+<script>
+(function(){
+var s=document.createElement('style');s.textContent=${JSON.stringify(EXPLAIN_POPUP_CSS)};document.head.appendChild(s);
+var p=document.createElement('div');p.id='mindease-explain-popup';
+p.innerHTML='<div id="mindease-explain-header"><span>Explain selection</span><button id="mindease-explain-close">&times;</button></div><div id="mindease-explain-loader" style="display:none">Getting explanation</div><div id="mindease-explain-body"></div><div id="mindease-explain-selected"></div>';
+document.body.appendChild(p);
+document.getElementById('mindease-explain-close').onclick=function(){p.style.display='none';};
+function sendExplain(t){
+if(window.opener)window.opener.postMessage({type:'EXPLAIN_SELECTION',payload:t},'*');
+}
+document.addEventListener('mouseup',function(e){
+var sel=window.getSelection();if(!sel||sel.isCollapsed||!sel.toString().trim())return;
+var t=sel.toString().trim().slice(0,300);if(t.length<3)return;
+var b=document.getElementById('mindease-explain-body'),l=document.getElementById('mindease-explain-loader'),s=document.getElementById('mindease-explain-selected');
+if(!b||!l||!s)return;b.style.display='none';l.style.display='block';
+s.textContent='"'+t.slice(0,120)+(t.length>120?'...':'')+'"';
+var r=sel.getRangeAt(0).getBoundingClientRect(),pw=360,left=r.left+r.width/2-pw/2,top=r.bottom+8;
+if(left<8)left=8;if(left+pw>window.innerWidth-8)left=window.innerWidth-pw-8;
+if(top+200>window.innerHeight)top=r.top-8-150;
+p.style.left=left+'px';p.style.top=top+'px';p.style.display='block';
+sendExplain(t);
+});
+document.addEventListener('mousedown',function(e){var t=e.target;if(t&&t.closest&&!t.closest('#mindease-explain-popup'))p.style.display='none';});
+window.addEventListener('message',function(e){
+var d=e.data;if(d&&d.type==='EXPLAIN_SELECTION_RESULT'){
+var b=document.getElementById('mindease-explain-body'),l=document.getElementById('mindease-explain-loader');
+if(b&&l){l.style.display='none';b.textContent=d.payload.explanation;b.style.display='block';}
+}
+});
+})();
+</script></head>
+<body>
+  <div class="full-header">
+    <h1>MindEase</h1>
+    <div class="stats">
+      <span>Content <span class="num">${document.querySelectorAll(".mindease-chunk").length}</span></span>
+      <span>Chunks</span>
+    </div>
+  </div>
+  <div class="full-body">${contentEl.innerHTML}</div>
+  <div class="full-footer">MindEase &mdash; Adaptive Learning Assistant</div>
+</body></html>`);
     w.document.close();
   });
 

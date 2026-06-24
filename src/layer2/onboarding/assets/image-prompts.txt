@@ -58,3 +58,19 @@ Prompt: A traditional Chinese handscroll landscape painting unrolling. Left side
 Filename: done.png
 Image 10 - Done Screen (400x400)
 Prompt: A cheerful brain character wearing a traditional Chinese scholar's graduation cap with a golden tassel, sitting on a lotus flower pedestal. Confetti made of cherry blossom petals and small golden stars falling around it. Behind is a full moon with subtle cloud wisps and faint mountain silhouettes in ink wash style. A glowing jade-colored aura surrounds the brain. Celebration mood, warm and triumphant. Flat vector, modern meets classical East Asian. No text. 400x400px. Colors: indigo, jade, coral, gold, warm rice paper background.
+
+
+
+
+Notes : 
+the selection 
+the latex in a dedicated part 
+the code in a dedicated part
+a better model 
+the full view page 
+the light mode in the sidebar by deafult
+removing the notes from the sidebar of the dashboard
+removing the double theme changing buttons in the dashboard 
+changint the theme and better theming for the dashboard 
+more visuals and graphs in the dashboard. less writing . 
+removing the q table logs from the bottom right side, and the option to open it to see live changing in the rl agent and how the profile is changing actually based on that . 

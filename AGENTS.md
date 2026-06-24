@@ -18,9 +18,9 @@ No lint, format, or typecheck scripts. `tsc --noEmit` works manually. `strict: t
 
 ## Content Adaptation Architecture
 
-L1 uses an **annotation-only** approach: Mistral never rewrites the original text. It inserts structural tags (`[CHUNK]`, `[CONCEPT:]`, `[DEF:]`, `[EXAMPLE]`/`[EXAMPLE_END]`, `[FORMULA]`/`[/FORMULA]`, `[SUMMARY:]`) around existing content. The parser `parseAnnotatedContent()` strips code fences and extracts metadata into `ContentChunk` objects (fields: `conceptTags`, `summary`, `isExample`, `hasDefinitions`). All adaptation happens at the rendering layer in the content script.
+L1 uses an **annotation-only** approach: the LLM never rewrites the original text. It inserts structural tags (`[CHUNK]`, `[CONCEPT:]`, `[DEF:]`, `[EXAMPLE]`/`[EXAMPLE_END]`, `[FORMULA]`/`[/FORMULA]`, `[SUMMARY:]`) around existing content. The parser `parseAnnotatedContent()` strips code fences and extracts metadata into `ContentChunk` objects (fields: `conceptTags`, `summary`, `isExample`, `hasDefinitions`). All adaptation happens at the rendering layer in the content script.
 
-**Progressive loading**: Background sends Mistral results in batches of 3 chunks with a 150ms inter-batch delay. First batch uses `append: false` → `injectOverlay()`, subsequent batches use `append: true` → `appendToOverlay()`. Final batch sets `done: true` to hide the loading marker.
+**Progressive loading**: Background sends LLM results in batches of 3 chunks with a 150ms inter-batch delay. First batch uses `append: false` → `injectOverlay()`, subsequent batches use `append: true` → `appendToOverlay()`. Final batch sets `done: true` to hide the loading marker.
 
 **Adaptive rendering** in `injectOverlay()`:
 - `learningApproach=example-first` reorders chunks: examples before theory
@@ -67,3 +67,40 @@ L1 uses an **annotation-only** approach: Mistral never rewrites the original tex
 - Async/await for storage and API calls
 - `.catch(() => {})` for fire-and-forget message sends
 - Arrow functions, `PascalCase` types/classes, `camelCase` everything else
+
+## Anchored Summary
+
+### Goal
+Overhaul the extension's visual identity to match the onboarding/popup purple theme across all surfaces, and deliver a premium editorial-style dashboard redesign.
+
+### Done
+- `src/utils/icons.ts`: replaced emoji map with individual lucide ESM imports; `iconHTML()` returns 18px inline SVG strings.
+- `src/styles/theme.css`: all dark/light color variables replaced with onboarding purple palette.
+- `src/content/index.ts` `OVERLAY_CSS`: theme variables updated to onboarding palette; added `--success`/`--warning` vars.
+- `src/content/sidebarManager.ts`: reopen button gradient and pulse animation colour updated to purple palette.
+- `src/session/dashboard/dashboard.ts` (vanilla TS) → `dashboard.tsx` (React TSX with lucide-react). All sections are React components; canvas focus timeline preserved via refs.
+- `src/session/dashboard/dashboard.html`: slimmed to `<div id="root">` mounting the React tree.
+- `src/content/discoveryPrompt.ts`: new module — floating card "Want MindEase for this page?" with Enable / Not now buttons. Auto-dismisses after 10s, stores dismissed domains in storage.
+- `src/content/index.ts` IIFE: when `shouldActivate()` returns false, calls `showDiscoveryPrompt()`. On Enable: sets `_extensionActive = true` and sends `SESSION_START` + `triggerContentTransformation("website")`.
+- `src/content/index.ts` `shouldActivate()`: added `promptOnlyHosts` list (asset CDNs, search engines) that return false so the discovery prompt appears instead of auto-activation.
+- Overlay footer: added "Full view" button that opens `dashboard.html` in a new tab.
+- `src/lucide-icons.d.ts`: wildcard declaration for `lucide/dist/esm/icons/*.mjs` imports.
+- **Dashboard redesign**: `dashboard.css` + `dashboard.tsx` fully rewritten — fixed left sidebar (200px, brand + nav items + footer actions), sticky top header, responsive multi-column card grid with 18px border-radius. All sections use theme variables. IntersectionObserver sidebar active-state tracking. Staggered fade-in animation on cards. Build and tests pass.
+
+### Key Decisions
+- `iconHTML()` kept as drop-in for non-React surfaces (content script); React surfaces import lucide-react directly.
+- Discovery prompt uses inline `STYLES` string to keep CSS small and avoid host page interference.
+- `promptOnly` checked by hostname for CDNs and by URL regex for search engines.
+- "Full view" button uses `window.open` rather than background message.
+- Dashboard sidebar nav uses `IntersectionObserver` for active state tracking (no hash routing needed).
+
+### Relevant Files
+- `src/styles/theme.css`: shared design tokens — onboarding purple palette.
+- `src/content/index.ts`: content script — OVERLAY_CSS, shouldActivate, IIFE, overlay footer.
+- `src/content/discoveryPrompt.ts`: discovery prompt module — UI, dismiss storage.
+- `src/content/sidebarManager.ts`: reopen button styles — purple gradient/pulse.
+- `src/utils/icons.ts`: lucide SVG helper for non-React code.
+- `src/session/dashboard/dashboard.tsx`: React dashboard — all 10 sections.
+- `src/session/dashboard/dashboard.css`: editorial layout with sidebar, card grid, animations.
+- `src/session/dashboard/dashboard.html`: entry point — mounts React root.
+- `src/lucide-icons.d.ts`: type declaration for lucide ESM icon imports.

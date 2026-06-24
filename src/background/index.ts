@@ -17,7 +17,7 @@ import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session, getCurrentProfile } from "@/layer2";
 import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
 import { transformContent } from "@/layer1/index";
-import { classifyContent } from "@/layer1/mistralClient";
+import { classifyContent, explainSelection } from "@/layer1/llmClient";
 import { generateVisualsForConcepts } from "@/layer1/visualOrchestrator";
 import { SessionManager } from "@/session/SessionManager";
 
@@ -357,6 +357,28 @@ browser.runtime.onMessage.addListener(
             await browser.tabs.sendMessage(tabId, {
               type: "CLASSIFY_CONTENT_RESULT",
               payload: { classification: "educational" },
+            }).catch(() => {});
+          }
+        })();
+        break;
+      }
+
+      case "EXPLAIN_SELECTION": {
+        const text = msg.payload as string;
+        const tabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
+        if (!tabId) break;
+        (async () => {
+          try {
+            const explanation = await explainSelection(text);
+            await browser.tabs.sendMessage(tabId, {
+              type: "EXPLAIN_SELECTION_RESULT",
+              payload: { text, explanation },
+            }).catch(() => {});
+          } catch (err) {
+            console.warn("[Background] Explain error:", err);
+            await browser.tabs.sendMessage(tabId, {
+              type: "EXPLAIN_SELECTION_RESULT",
+              payload: { text, explanation: "Could not generate explanation." },
             }).catch(() => {});
           }
         })();

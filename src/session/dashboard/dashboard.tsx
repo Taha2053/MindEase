@@ -7,11 +7,10 @@ import {
   applyTheme, toggleTheme as themeManagerToggle,
   getAppliedTheme, type Theme,
 } from "@/utils/themeManager";
-import { renderLatex } from "@/utils/latex";
 import { STORAGE_KEYS } from "@/types";
 import type {
   WorkspaceSession, FullCognitiveProfile, PersonalizedArtifact,
-  ResourceEntry, KeyConceptEntry, StudyCard, Gap, HighlightNote,
+  ResourceEntry, KeyConceptEntry, StudyCard, Gap,
   Connection, TabResource, FocusSummary, StateTransition,
   SessionState, AdaptationExplanation,
   CrossSourceConnection, VisualEntry,
@@ -46,19 +45,6 @@ function fmtDurationShort(ms: number): string {
   if (hr > 0) return `${hr}h ${min % 60}m`;
   if (min > 0) return `${min}m`;
   return `${sec}s`;
-}
-
-function cleanNote(raw: string): string {
-  return raw
-    .replace(/\[CHUNK\s*\d*\]/gi, "")
-    .replace(/^---+$/gm, "")
-    .replace(/\[\/?[A-Z]+\]/g, "")
-    .replace(/\[CONCEPT:[^\]]+\]/g, "")
-    .replace(/\[SUMMARY:[^\]]+\]/g, "")
-    .replace(/\u2605\s*/g, "")
-    .replace(/&#9734;\s*/g, "")
-    .replace(/\s{3,}/g, "  ")
-    .trim();
 }
 
 function relativeTime(ts: number): string {
@@ -105,7 +91,6 @@ interface DashboardData {
   session: WorkspaceSession | null;
   artifact: PersonalizedArtifact | null;
   profile: FullCognitiveProfile | null;
-  notes: HighlightNote[];
   visuals: VisualEntry[];
 }
 
@@ -114,21 +99,18 @@ async function loadData(): Promise<DashboardData> {
     STORAGE_KEYS.WORKSPACE,
     "latestArtifact",
     STORAGE_KEYS.PROFILE,
-    STORAGE_KEYS.NOTES,
     STORAGE_KEYS.VISUALS_CACHE,
   ]);
 
   const session = result[STORAGE_KEYS.WORKSPACE] as WorkspaceSession | null;
   const artifact = result["latestArtifact"] as PersonalizedArtifact | null;
   const profile = result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | null;
-  const notesCol = result[STORAGE_KEYS.NOTES] as { notes: HighlightNote[] } | null;
   const visualsCache = result[STORAGE_KEYS.VISUALS_CACHE] as { entries: VisualEntry[]; updatedAt: number } | null;
 
   return {
     session,
     artifact,
     profile,
-    notes: notesCol?.notes ?? [],
     visuals: visualsCache?.entries ?? [],
   };
 }
@@ -624,40 +606,6 @@ const SectionVisuals: FC<{ visuals: VisualEntry[] }> = ({ visuals }) => (
   </section>
 );
 
-const SectionNotes: FC<{ artifact: PersonalizedArtifact | null; notes: HighlightNote[] }> = ({ artifact, notes }) => {
-  const userNotes = artifact?.userNotes ?? notes;
-  const recent = [...userNotes].reverse().slice(0, 20);
-  const maxLen = 200;
-
-  return (
-    <section className="section-card" id="section-notes" data-section="notes">
-      <div className="section-card-header">
-        <FileText size={16} />
-        <h2>Your Notes</h2>
-      </div>
-      {userNotes.length === 0 ? (
-        <div className="note-empty">No notes captured. Highlight text while studying to save notes.</div>
-      ) : (
-        <div className="notes-list">
-          {recent.map((n, i) => {
-            const cleaned = cleanNote(n.text);
-            const displayText = cleaned.length > maxLen ? cleaned.slice(0, maxLen) + "\u2026" : cleaned;
-            return (
-              <div className="note-item" key={i}>
-                <div className="note-text">&ldquo;{renderLatex(displayText)}&rdquo;</div>
-                <div className="note-meta">
-                  <span className="note-source">{trunc(n.resourceTitle || n.sourceUrl, 35)}</span>
-                  <span>{new Date(n.timestamp).toLocaleString()}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-};
-
 const SectionInsights: FC<{ artifact: PersonalizedArtifact | null }> = ({ artifact }) => {
   const concepts = artifact?.keyConcepts ?? [];
   const connections = artifact?.connections ?? [];
@@ -985,7 +933,6 @@ const Dashboard: FC = () => {
           <SectionExplanations />
           <SectionReview artifact={data.artifact} />
           <SectionVisuals visuals={data.visuals} />
-          <SectionNotes artifact={data.artifact} notes={data.notes} />
           <SectionInsights artifact={data.artifact} />
           <SectionProgress artifact={data.artifact} session={data.session} profile={data.profile} />
         </main>
