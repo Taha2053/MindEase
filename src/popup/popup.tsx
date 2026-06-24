@@ -374,68 +374,141 @@ function ContentControls({ profile }: { profile: FullCognitiveProfile }) {
             Reset to RL Defaults
           </button>
         </div>
-        <QTablePanel />
       </div>
     </>
   );
 }
 
-/* ── Q-Table Visualizer ── */
+/* ── RL Agent Panel (live) ── */
 
 const ACTIONS_LABELS = [
   "chunk+", "chunk-", "simpl+", "simpl-", "pace+", "pace-", "visuals", "summ+", "summ-",
 ];
 
-function QTablePanel() {
+function RLAgentPanel({ profile }: { profile: FullCognitiveProfile }) {
+  const [open, setOpen] = useState(false);
   const [qTable, setQTable] = useState<QTable | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
 
   useEffect(() => {
+    if (!open) return;
     const poll = async () => {
       const result = await browser.storage.local.get(STORAGE_KEYS.QTABLE);
       setQTable((result[STORAGE_KEYS.QTABLE] as QTable) ?? null);
     };
     poll();
-    pollRef.current = setInterval(poll, 5000);
+    pollRef.current = setInterval(poll, 2000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, []);
+  }, [open]);
 
-  if (!qTable) return null;
+  const rl = profile.rlState;
+  const p = profile.transformationParams;
 
-  const entries = Object.entries(qTable);
-  if (entries.length === 0) return null;
-
-  const ranked = entries
-    .map(([key, vals]) => ({ key, maxQ: Math.max(...vals), vals }))
-    .sort((a, b) => b.maxQ - a.maxQ)
-    .slice(0, 5);
+  const rateBars: { label: string; value: number }[] = [
+    { label: "Highlight", value: rl.highlightRate },
+    { label: "Pause",     value: rl.pauseRate },
+    { label: "Re-read",   value: rl.reReadRate },
+    { label: "Skip",      value: rl.skipRate },
+  ];
 
   return (
-    <div className="qtable-section">
-      <div className="section-title">RL Agent State ({entries.length} states)</div>
-      <div className="qtable-list">
-        {ranked.map(e => (
-          <div className="qtable-row" key={e.key}>
-            <div className="qtable-state">{e.key}</div>
-            <div className="qtable-vals">
-              {e.vals.map((v, i) => (
-                <span
-                  key={i}
-                  className="qtable-val"
-                  data-positive={v > 0}
-                  data-negative={v < 0}
-                >
-                  {ACTIONS_LABELS[i]}:{v.toFixed(2)}
-                </span>
-              ))}
+    <>
+      <button className="rl-toggle" onClick={() => setOpen(o => !o)}>
+        <span className="rl-toggle-label">
+          <span className="rl-toggle-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </span>
+          RL Agent
+        </span>
+        <span className={`rl-arrow ${open ? "open" : ""}`}>
+          <ChevronDown size={14} />
+        </span>
+      </button>
+      <div className={`rl-panel ${open ? "open" : ""}`}>
+        {/* RL State rates */}
+        <div className="rl-section-label">Behavior Signals</div>
+        <div className="rl-rates">
+          {rateBars.map(r => (
+            <div className="rl-rate-row" key={r.label}>
+              <span className="rl-rate-label">{r.label}</span>
+              <div className="rl-rate-bar-track">
+                <div
+                  className="rl-rate-bar-fill"
+                  style={{ width: `${Math.min(r.value * 100, 100)}%` }}
+                />
+              </div>
+              <span className="rl-rate-num">{(r.value * 100).toFixed(0)}%</span>
             </div>
+          ))}
+        </div>
+
+        <div className="rl-section-label">Current Params (RL-learned)</div>
+        <div className="rl-params">
+          <div className="rl-param">
+            <span className="rl-param-key">Chunk</span>
+            <span className="rl-param-val">{p.chunkSize}</span>
           </div>
-        ))}
+          <div className="rl-param">
+            <span className="rl-param-key">Simplify</span>
+            <span className="rl-param-val">{p.simplificationLevel}</span>
+          </div>
+          <div className="rl-param">
+            <span className="rl-param-key">Pace</span>
+            <span className="rl-param-val">{p.captionSpeed}</span>
+          </div>
+          <div className="rl-param">
+            <span className="rl-param-key">Visuals</span>
+            <span className="rl-param-val">{p.useVisualAnchors ? "on" : "off"}</span>
+          </div>
+          <div className="rl-param">
+            <span className="rl-param-key">Summaries</span>
+            <span className="rl-param-val">{p.summaryFrequency}</span>
+          </div>
+          <div className="rl-param">
+            <span className="rl-param-key">Sessions</span>
+            <span className="rl-param-val">{rl.sessionCount}</span>
+          </div>
+        </div>
+
+        {/* Q-Table */}
+        {qTable && Object.keys(qTable).length > 0 && (
+          <>
+            <div className="rl-section-label">
+              Q-Table ({Object.keys(qTable).length} states)
+            </div>
+            <div className="qtable-list">
+              {Object.entries(qTable)
+                .map(([key, vals]) => ({ key, maxQ: Math.max(...vals), vals }))
+                .sort((a, b) => b.maxQ - a.maxQ)
+                .slice(0, 5)
+                .map(e => (
+                  <div className="qtable-row" key={e.key}>
+                    <div className="qtable-state">{e.key}</div>
+                    <div className="qtable-vals">
+                      {e.vals.map((v, i) => (
+                        <span
+                          key={i}
+                          className="qtable-val"
+                          data-positive={v > 0}
+                          data-negative={v < 0}
+                        >
+                          {ACTIONS_LABELS[i]}:{v.toFixed(2)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+            </div>
+            <div className="qtable-max">
+              max Q: {Object.entries(qTable)
+                .map(([, vals]) => Math.max(...vals))
+                .reduce((a, b) => Math.max(a, b), -Infinity)
+                .toFixed(3)}
+            </div>
+          </>
+        )}
       </div>
-      <div className="qtable-max">
-        max Q: {ranked[0]?.maxQ.toFixed(3) ?? "-"}
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -671,6 +744,7 @@ function App() {
               onDashboard={handleDashboard}
             />
             <ContentControls profile={profile} />
+            <RLAgentPanel profile={profile} />
           </>
         ) : (
           <NoProfile onStart={handleStartOnboarding} />
