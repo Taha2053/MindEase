@@ -22,7 +22,7 @@ import {
   Image, Lightbulb, FileDown, Sun, Moon, X,
   AlertTriangle, Link, AlignStartVertical, BookOpenText,
   MessageSquare, Film, Globe, GraduationCap,
-  LayoutDashboard, Eye, ChartNoAxesColumn,
+  LayoutDashboard, Eye, ChartNoAxesColumn, Sparkles,
 } from "lucide-react";
 
 /* ─── Helpers ──────────────────────────────────────────────────────────────── */
@@ -195,17 +195,27 @@ function drawFocusTimeline(
 
 /* ─── Sidebar ──────────────────────────────────────────────────────────────── */
 
-const NAV_ITEMS = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "focus", label: "Focus", icon: Eye },
-  { id: "resources", label: "Resources", icon: FolderOpen },
-  { id: "learned", label: "Learned", icon: BookOpen },
-  { id: "explanations", label: "Explanations", icon: MessageCircle },
-  { id: "review", label: "Review", icon: RefreshCw },
-  { id: "visuals", label: "Visuals", icon: Image },
-  { id: "insights", label: "Insights", icon: Lightbulb },
-  { id: "progress", label: "Progress", icon: ChartNoAxesColumn },
-];
+function getNavItems(visualFirst: boolean): { id: string; label: string; icon: FC<{ size?: number }> }[] {
+  const items = [
+    { id: "overview", label: "Overview", icon: LayoutDashboard },
+    { id: "focus", label: "Focus", icon: Eye },
+    { id: "resources", label: "Resources", icon: FolderOpen },
+    { id: "learned", label: "Learned", icon: BookOpen },
+    { id: "explanations", label: "Explanations", icon: MessageCircle },
+    { id: "review", label: "Review", icon: RefreshCw },
+    { id: "visuals", label: "Visuals", icon: Image },
+    { id: "insights", label: "Insights", icon: Lightbulb },
+    { id: "progress", label: "Progress", icon: ChartNoAxesColumn },
+  ];
+  if (visualFirst) {
+    const visIdx = items.findIndex(i => i.id === "visuals");
+    if (visIdx > 0) {
+      const [vis] = items.splice(visIdx, 1);
+      items.splice(1, 0, vis);
+    }
+  }
+  return items;
+}
 
 interface SidebarProps {
   activeSection: string;
@@ -214,9 +224,10 @@ interface SidebarProps {
   onThemeToggle: () => void;
   onExport: () => void;
   onClose: () => void;
+  navItems: { id: string; label: string; icon: FC<{ size?: number }> }[];
 }
 
-const Sidebar: FC<SidebarProps> = ({ activeSection, onNavigate, theme, onThemeToggle, onExport, onClose }) => (
+const Sidebar: FC<SidebarProps> = ({ activeSection, onNavigate, theme, onThemeToggle, onExport, onClose, navItems }) => (
   <aside className="dash-sidebar">
     <div className="sidebar-brand">
       <div className="sidebar-brand-icon">
@@ -229,7 +240,7 @@ const Sidebar: FC<SidebarProps> = ({ activeSection, onNavigate, theme, onThemeTo
     </div>
 
     <nav className="sidebar-nav">
-      {NAV_ITEMS.map(item => (
+      {navItems.map(item => (
         <button
           key={item.id}
           className={`sidebar-nav-item${activeSection === item.id ? " active" : ""}`}
@@ -576,34 +587,137 @@ const SectionReview: FC<{ artifact: PersonalizedArtifact | null }> = ({ artifact
   );
 };
 
-const SectionVisuals: FC<{ visuals: VisualEntry[] }> = ({ visuals }) => (
-  <section className="section-card" id="section-visuals" data-section="visuals">
-    <div className="section-card-header">
-      <Image size={16} />
-      <h2>Generated Visuals</h2>
-    </div>
-    {visuals.length === 0 ? (
-      <div className="visuals-placeholder">No visuals were generated during this session.</div>
-    ) : (
-      <div className="visuals-grid">
-        {visuals.map((v, i) => (
-          <div className="visual-card" key={i}>
-            <img
-              src={v.dataUrl}
-              alt={v.concept}
-              loading="lazy"
-              style={{ aspectRatio: `${v.width ?? 800}/${v.height ?? 600}` }}
-            />
-            <div className="visual-card-footer">
-              <span>{v.concept}</span>
-              <span className="visual-card-source">Napkin</span>
-            </div>
-          </div>
-        ))}
+const SectionVisuals: FC<{
+  visuals: VisualEntry[];
+  formatPreference: "visual" | "text";
+  concepts: string[];
+  onGenerateVisuals: () => void;
+  generating: boolean;
+}> = ({ visuals, formatPreference, concepts, onGenerateVisuals, generating }) => {
+  const [zoomed, setZoomed] = useState<VisualEntry | null>(null);
+
+  useEffect(() => {
+    if (!zoomed) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setZoomed(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [zoomed]);
+
+  return (
+    <section className="section-card" id="section-visuals" data-section="visuals">
+      <div className="section-card-header">
+        <Image size={16} />
+        <h2>Generated Visuals</h2>
       </div>
-    )}
-  </section>
-);
+      {visuals.length > 0 ? (
+        <div className="visuals-grid">
+          {visuals.map((v, i) => (
+            <div className="visual-card" key={i} style={{ cursor: "pointer" }} onClick={() => setZoomed(v)}>
+              <img
+                src={v.dataUrl}
+                alt={v.concept}
+                loading="lazy"
+                style={{ aspectRatio: `${v.width ?? 800}/${v.height ?? 600}` }}
+              />
+              <div className="visual-card-footer">
+                <span>{v.concept}</span>
+                <span className="visual-card-source">Napkin</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : formatPreference === "text" ? (
+        <div className="visuals-placeholder" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, padding: "40px 20px" }}>
+          <Image size={32} style={{ opacity: 0.3 }} />
+          <p style={{ color: "var(--text-dim)", fontSize: "0.82rem", maxWidth: 320, textAlign: "center" }}>
+            Visuals were not auto-generated for your text-oriented profile. Generate diagrams and infographics for the concepts you studied on demand.
+          </p>
+          <button
+            onClick={onGenerateVisuals}
+            disabled={generating || concepts.length === 0}
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "10px 24px",
+              background: generating ? "var(--border)" : "var(--accent)",
+              color: "#1A1D3A",
+              border: "none", borderRadius: 10,
+              cursor: generating || concepts.length === 0 ? "not-allowed" : "pointer",
+              fontFamily: "inherit", fontWeight: 600, fontSize: "0.82rem",
+              transition: "background 0.15s",
+            }}
+          >
+            {generating ? (
+              <><div className="loading-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Generating...</>
+            ) : (
+              <><Sparkles size={16} /> Generate Visuals for {concepts.length} Concept{concepts.length !== 1 ? "s" : ""}</>
+            )}
+          </button>
+          {concepts.length === 0 && (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>
+              No concepts were captured in this session. Study some content first.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="visuals-placeholder">No visuals were generated during this session.</div>
+      )}
+
+      {zoomed && (
+        <div
+          onClick={() => setZoomed(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            background: "rgba(0,0,0,0.75)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 40, cursor: "zoom-out",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              maxWidth: "90vw", maxHeight: "90vh",
+              background: "var(--bg-surface)",
+              borderRadius: 18, overflow: "hidden",
+              display: "flex", flexDirection: "column",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+              cursor: "default",
+            }}
+          >
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "14px 20px", borderBottom: "1px solid var(--border)",
+              fontSize: "0.85rem", fontWeight: 600,
+            }}>
+              <span>{zoomed.concept}</span>
+              <button
+                onClick={() => setZoomed(null)}
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: "var(--text-dim)", padding: 4,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <img
+              src={zoomed.dataUrl}
+              alt={zoomed.concept}
+              style={{
+                display: "block",
+                maxWidth: "100%", maxHeight: "calc(90vh - 60px)",
+                objectFit: "contain", background: "var(--bg-base)",
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+};
 
 const SectionInsights: FC<{ artifact: PersonalizedArtifact | null }> = ({ artifact }) => {
   const concepts = artifact?.keyConcepts ?? [];
@@ -799,6 +913,8 @@ const Dashboard: FC = () => {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState(false);
   const [activeSection, setActiveSection] = useState("overview");
+  const [generating, setGenerating] = useState(false);
+  const [visuals, setVisuals] = useState<VisualEntry[]>([]);
   const sectionRefs = useRef<Map<string, IntersectionObserverEntry>>(new Map());
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -806,6 +922,7 @@ const Dashboard: FC = () => {
     applyTheme("light");
     loadData().then(d => {
       setData(d);
+      setVisuals(d.visuals);
       setLoading(false);
     }).catch(() => {
       setError(true);
@@ -873,6 +990,23 @@ const Dashboard: FC = () => {
     window.close();
   };
 
+  const handleGenerateVisuals = useCallback(async () => {
+    if (!data?.artifact?.keyConcepts?.length) return;
+    setGenerating(true);
+    const concepts = data.artifact.keyConcepts.map(c => c.label);
+    try {
+      const response = await browser.runtime.sendMessage({
+        type: "GENERATE_VISUALS",
+        payload: { concepts },
+      }) as { type: string; visuals: VisualEntry[] };
+      setVisuals(response.visuals ?? []);
+    } catch (err) {
+      console.warn("[Dashboard] Generate visuals error:", err);
+    } finally {
+      setGenerating(false);
+    }
+  }, [data]);
+
   if (loading) {
     return (
       <div className="loading-screen">
@@ -892,6 +1026,10 @@ const Dashboard: FC = () => {
     );
   }
 
+  const visualFirst = data.profile?.baseline?.formatPreference === "visual";
+  const navItems = getNavItems(visualFirst);
+  const conceptLabels = data.artifact?.keyConcepts?.map(c => c.label) ?? [];
+
   return (
     <div className="dash-layout">
       <Sidebar
@@ -901,6 +1039,7 @@ const Dashboard: FC = () => {
         onThemeToggle={handleThemeToggle}
         onExport={handleExport}
         onClose={handleClose}
+        navItems={navItems}
       />
 
       <div className="dash-main">
@@ -923,12 +1062,29 @@ const Dashboard: FC = () => {
 
         <main className="dash-content" ref={contentRef}>
           <SectionOverview artifact={data.artifact} session={data.session} />
+          {visualFirst && (
+            <SectionVisuals
+              visuals={visuals}
+              formatPreference="visual"
+              concepts={conceptLabels}
+              onGenerateVisuals={handleGenerateVisuals}
+              generating={generating}
+            />
+          )}
           <SectionFocus session={data.session} artifact={data.artifact} />
           <SectionResources artifact={data.artifact} session={data.session} />
           <SectionLearned artifact={data.artifact} />
           <SectionExplanations />
           <SectionReview artifact={data.artifact} />
-          <SectionVisuals visuals={data.visuals} />
+          {!visualFirst && (
+            <SectionVisuals
+              visuals={visuals}
+              formatPreference="text"
+              concepts={conceptLabels}
+              onGenerateVisuals={handleGenerateVisuals}
+              generating={generating}
+            />
+          )}
           <SectionInsights artifact={data.artifact} />
           <SectionProgress artifact={data.artifact} session={data.session} profile={data.profile} />
         </main>

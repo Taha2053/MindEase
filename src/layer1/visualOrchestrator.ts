@@ -6,9 +6,9 @@
 
 import { v4 as uuidv4 } from "uuid";
 import browser from "webextension-polyfill";
-import type { VisualEntry, VisualsCache, TransformationParams } from "@/types";
+import type { VisualEntry, VisualsCache, TransformationParams, ContentChunk } from "@/types";
 import { STORAGE_KEYS } from "@/types";
-import { generateNapkinVisuals, type NapkinOptions } from "./napkinClient";
+import { generateNapkinVisuals, generateNapkinVisualFromContent, type NapkinOptions } from "./napkinClient";
 
 /* ── Cache helpers ──────────────────────────────────────────────── */
 
@@ -37,9 +37,10 @@ async function saveVisualsCache(cache: VisualsCache): Promise<void> {
 export async function generateVisualsForConcepts(
   concepts: string[],
   params: TransformationParams,
+  force = false,
 ): Promise<VisualEntry[]> {
   if (concepts.length === 0) return [];
-  if (!params.useVisualAnchors) return [];
+  if (!params.useVisualAnchors && !force) return [];
 
   // Deduplicate and trim
   const uniqueConcepts = [...new Set(concepts.map((c) => c.trim()).filter(Boolean))];
@@ -75,6 +76,58 @@ export async function generateVisualsForConcepts(
   }
 
   // Cache results
+  const cache = await loadVisualsCache();
+  cache.entries.push(...entries);
+  cache.updatedAt = now;
+  await saveVisualsCache(cache);
+
+  return entries;
+}
+
+/**
+ * Generate one visual per content chunk using the chunk's actual text.
+ * Falls back to concept name if chunk text is empty.
+ */
+export async function generateVisualsFromChunks(
+  chunks: ContentChunk[],
+  params: TransformationParams,
+  force = false,
+): Promise<VisualEntry[]> {
+  if (chunks.length === 0) return [];
+  if (!params.useVisualAnchors && !force) return [];
+
+  const now = Date.now();
+  const entries: VisualEntry[] = [];
+  const napkinOptions = mapToNapkinOptions(params);
+
+  const results = await Promise.allSettled(
+    chunks.slice(0, 5).map(async (chunk) => {
+      const label = chunk.summary
+        ? chunk.summary.slice(0, 60)
+        : chunk.conceptTags[0] ?? `Section ${chunk.position + 1}`;
+      const content = chunk.text.slice(0, 2000);
+      return generateNapkinVisualFromContent(content, label, napkinOptions);
+    }),
+  );
+
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      entries.push({
+        id: uuidv4(),
+        concept: r.value.concept,
+        source: "napkin",
+        format: r.value.format,
+        dataUrl: r.value.dataUrl,
+        width: r.value.width,
+        height: r.value.height,
+        generatedAt: now,
+        expiresAt: now + 25 * 60 * 1000,
+      });
+    } else {
+      console.warn("[VisualOrchestrator] Skipped chunk visual:", r.reason?.message || r.reason);
+    }
+  }
+
   const cache = await loadVisualsCache();
   cache.entries.push(...entries);
   cache.updatedAt = now;

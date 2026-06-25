@@ -11,15 +11,17 @@ import { v4 as uuidv4 } from "uuid";
 import type {
   CognitiveEvent, CognitiveProfile, FullCognitiveProfile,
   ExtensionMessage, ContentChunk, SignalType, HighlightNote, NotesCollection,
-  TabResource, FocusSummary,
+  TabResource, FocusSummary, VisualEntry,
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session, getCurrentProfile } from "@/layer2";
 import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
 import { transformContent } from "@/layer1/index";
 import { classifyContent, explainSelection } from "@/layer1/llmClient";
-import { generateVisualsForConcepts } from "@/layer1/visualOrchestrator";
+import { generateVisualsForConcepts, generateVisualsFromChunks } from "@/layer1/visualOrchestrator";
+import { ocrImageUrl, ocrImageBase64 } from "@/layer1/ocrClient";
 import { SessionManager } from "@/session/SessionManager";
+import { generateSpeech } from "@/layer1/murfClient";
 
 /* ── Aggregated notes helpers ────────────────────────────────────────────────── */
 
@@ -135,10 +137,102 @@ sessionManager.onLayer2EndSession = async () => {
 // Initialize - try to restore workspace from storage
 sessionManager.init();
 
+/* ── TTS ─────────────────────────────────────────────────────────────────── */
+
+let _ttsAudio: HTMLAudioElement | null = null;
+
+/* ── Context Menus ─────────────────────────────────────────────────────────── */
+
+function setupContextMenus(): void {
+  browser.contextMenus.removeAll();
+  browser.contextMenus.create({
+    id: "mindease-explain",
+    title: "Explain with MindEase",
+    contexts: ["selection"],
+  });
+  browser.contextMenus.create({
+    id: "mindease-capture",
+    title: "Capture & Explain with MindEase",
+    contexts: ["page", "image", "video"],
+  });
+  browser.contextMenus.create({
+    id: "mindease-ocr",
+    title: "Extract text with MindEase",
+    contexts: ["image"],
+  });
+}
+
+browser.contextMenus.onClicked.addListener((info, tab) => {
+  const tabId = tab?.id;
+  if (!tabId) return;
+
+  if (info.menuItemId === "mindease-explain") {
+    const text = info.selectionText?.trim();
+    if (!text || text.length < 3) return;
+
+    // Tell content script to show loading near selection
+    browser.tabs.sendMessage(tabId, {
+      type: "CONTEXT_EXPLAIN",
+      payload: { text },
+    }).catch(() => {});
+
+    // Fetch explanation asynchronously
+    (async () => {
+      try {
+        const explanation = await explainSelection(text);
+        await browser.tabs.sendMessage(tabId, {
+          type: "CONTEXT_EXPLAIN_RESULT",
+          payload: { text, explanation },
+        }).catch(() => {});
+      } catch (err) {
+        await browser.tabs.sendMessage(tabId, {
+          type: "CONTEXT_EXPLAIN_RESULT",
+          payload: { text, explanation: "Could not generate explanation." },
+        }).catch(() => {});
+      }
+    })();
+  }
+
+  if (info.menuItemId === "mindease-capture") {
+    const windowId = tab?.windowId;
+    (async () => {
+      try {
+        const dataUrl = await browser.tabs.captureVisibleTab(windowId, { format: "png" });
+        await browser.tabs.sendMessage(tabId, {
+          type: "CONTEXT_CAPTURE_RESULT",
+          payload: { dataUrl },
+        }).catch(() => {});
+      } catch (err) {
+        console.warn("[Background] Capture error:", err);
+      }
+    })();
+  }
+
+  if (info.menuItemId === "mindease-ocr") {
+    const imageUrl = info.srcUrl;
+    if (!imageUrl) return;
+    (async () => {
+      try {
+        const text = await ocrImageUrl(imageUrl);
+        await browser.tabs.sendMessage(tabId, {
+          type: "OCR_RESULT",
+          payload: { imageUrl, text },
+        }).catch(() => {});
+      } catch (err) {
+        await browser.tabs.sendMessage(tabId, {
+          type: "OCR_RESULT",
+          payload: { imageUrl, error: String(err) },
+        }).catch(() => {});
+      }
+    })();
+  }
+});
+
 /* ── Session lifecycle ───────────────────────────────────────────────────────── */
 
 browser.runtime.onInstalled.addListener((details) => {
   console.log("[MindEase] Extension installed - background worker ready.", details.reason);
+  setupContextMenus();
 
   if (details.reason === "install") {
     browser.tabs.create({
@@ -217,24 +311,21 @@ browser.runtime.onMessage.addListener(
             }
           }
 
-          // Fire visual generation asynchronously (don't block transform response)
-          if (fullProfile.transformationParams.useVisualAnchors) {
-            const concepts = extractConceptsFromChunks(chunks);
-            generateVisualsForConcepts(concepts, fullProfile.transformationParams)
-              .then((visuals) => {
-                return browser.tabs.sendMessage(tabId, {
-                  type: "VISUALS_READY",
-                  visuals: visuals ?? [],
-                }).catch(() => {});
-              })
-              .catch((err) => {
-                console.warn("[Background] Visual generation error:", err);
-                browser.tabs.sendMessage(tabId, {
-                  type: "VISUALS_READY",
-                  visuals: [],
-                }).catch(() => {});
-              });
-          }
+          // Auto-generate visuals from chunk content in the background
+          generateVisualsFromChunks(chunks, fullProfile.transformationParams, true)
+            .then((visuals) => {
+              return browser.tabs.sendMessage(tabId, {
+                type: "VISUALS_READY",
+                visuals: visuals ?? [],
+              }).catch(() => {});
+            })
+            .catch((err) => {
+              console.warn("[Background] Visual generation error:", err);
+              browser.tabs.sendMessage(tabId, {
+                type: "VISUALS_READY",
+                visuals: [],
+              }).catch(() => {});
+            });
         } catch (err) {
           console.warn("[Background] Transform error:", err);
           browser.tabs.sendMessage(tabId, { type: "TRANSFORM_ERROR", error: String(err) }).catch(() => {});
@@ -363,6 +454,50 @@ browser.runtime.onMessage.addListener(
         break;
       }
 
+      case "GENERATE_VISUALS": {
+        const payload = msg.payload as { concepts?: string[]; chunks?: ContentChunk[] };
+        return (async () => {
+          try {
+            const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
+            const stored = result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined;
+            const params = stored?.transformationParams ?? DEFAULT_FULL_PROFILE.transformationParams;
+            let visuals: VisualEntry[] | undefined;
+            if (payload.chunks?.length) {
+              visuals = await generateVisualsFromChunks(payload.chunks, params, true);
+            } else if (payload.concepts?.length) {
+              visuals = await generateVisualsForConcepts(payload.concepts, params, true);
+            }
+            return { type: "VISUALS_READY", visuals: visuals ?? [] };
+          } catch (err) {
+            console.warn("[Background] GENERATE_VISUALS error:", err);
+            return { type: "VISUALS_READY", visuals: [] };
+          }
+        })();
+      }
+
+      case "OCR_IMAGE": {
+        const payload = msg.payload as { imageUrl?: string; base64Image?: string };
+        const srcTabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
+        if (!srcTabId || (!payload.imageUrl && !payload.base64Image)) break;
+        (async () => {
+          try {
+            const text = payload.base64Image
+              ? await ocrImageBase64(payload.base64Image)
+              : await ocrImageUrl(payload.imageUrl!);
+            await browser.tabs.sendMessage(srcTabId, {
+              type: "OCR_RESULT",
+              payload: { imageUrl: payload.imageUrl ?? "", text },
+            }).catch(() => {});
+          } catch (err) {
+            await browser.tabs.sendMessage(srcTabId, {
+              type: "OCR_RESULT",
+              payload: { imageUrl: payload.imageUrl ?? "", error: String(err) },
+            }).catch(() => {});
+          }
+        })();
+        break;
+      }
+
       case "EXPLAIN_SELECTION": {
         const text = msg.payload as string;
         const tabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
@@ -382,6 +517,36 @@ browser.runtime.onMessage.addListener(
             }).catch(() => {});
           }
         })();
+        break;
+      }
+
+      case "TTS_SPEAK": {
+        const { text } = msg.payload as { text: string };
+        const tabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
+        (async () => {
+          try {
+            if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
+            const audioUrl = await generateSpeech(text, "Natalie");
+            const audio = new Audio(audioUrl);
+            _ttsAudio = audio;
+            await audio.play();
+            await new Promise<void>((resolve) => {
+              audio.addEventListener("ended", () => { _ttsAudio = null; resolve(); });
+              audio.addEventListener("error", () => { _ttsAudio = null; resolve(); });
+            });
+            if (tabId) browser.tabs.sendMessage(tabId, { type: "TTS_DONE", payload: {} }).catch(() => {});
+          } catch (err) {
+            console.warn("[TTS] Error:", err);
+            if (tabId) browser.tabs.sendMessage(tabId, { type: "TTS_DONE", payload: { error: String(err) } }).catch(() => {});
+          }
+        })();
+        break;
+      }
+
+      case "TTS_STOP": {
+        const stopTabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
+        if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
+        if (stopTabId) browser.tabs.sendMessage(stopTabId, { type: "TTS_DONE", payload: {} }).catch(() => {});
         break;
       }
 

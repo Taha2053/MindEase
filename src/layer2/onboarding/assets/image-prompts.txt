@@ -81,3 +81,17 @@ feature:
 * selecting a piece of text and getting the popup over it to get the explantion (a loading thing would appear , like the vs code copilot when asked to explain error, and then the response would appear) (select a text, right click, choose the extension tab, click and things would happen)
 * getting a capture of smth and getting the explanation of it (lateer on we will use a free ocr model, just get the base ready )
 * 
+
+
+trying napking - working or not 
+connecting the ocr model 
+
+the youtube thing 
+
+text to audio and audio to text for ez interaction for audio learners - with ways to go back, skip part, repeat it each time and so on .
+
+the rl agent working => explanable stats
+
+
+automatically exclude the social media platforms from tracking . consider opening them as a pause or break if too long.
+for video streaming platforms , as youtube, 1st check the title, if it's educational related, keep it, if not exclude it.

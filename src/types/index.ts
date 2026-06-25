@@ -231,7 +231,15 @@ export type MessageType =
   | "CLASSIFY_CONTENT"         // content → background (ask LLM: educational or entertainment)
   | "CLASSIFY_CONTENT_RESULT" // background → content (classification result)
   | "EXPLAIN_SELECTION"       // content → background (ask LLM to explain selected text)
-  | "EXPLAIN_SELECTION_RESULT"; // background → content (explanation result)
+  | "EXPLAIN_SELECTION_RESULT" // background → content (explanation result)
+  | "CONTEXT_EXPLAIN"         // background → content (context menu explain, payload: {text})
+  | "CONTEXT_EXPLAIN_RESULT"  // background → content (explain result, payload: {text, explanation})
+  | "CONTEXT_CAPTURE_RESULT" // background → content (screenshot dataUrl, payload: {dataUrl})
+  | "OCR_IMAGE"              // content → background or context menu → background (request OCR for image URL)
+  | "OCR_RESULT"             // background → content (OCR result, payload: {imageUrl, text} or {imageUrl, error})
+  | "TTS_SPEAK"              // content → background (speak text, payload: {text, options?})
+  | "TTS_STOP"               // content → background (stop speaking)
+  | "TTS_DONE";              // background → content (speaking finished, payload: {error?})
 
 export interface ExtensionMessage {
   type:    MessageType;
