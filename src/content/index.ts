@@ -7,6 +7,7 @@
 
 import browser from "webextension-polyfill";
 import type { ContentChunk, VisualEntry, BaselineProfile, TransformationParams } from "@/types";
+import { speak as puterSpeak, stopPuterTts } from "@/content/puterTts";
 import { STORAGE_KEYS } from "@/types";
 import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
 import { iconHTML } from "@/utils/icons";
@@ -677,18 +678,61 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   }
   if (msg.type === "EXPLAIN_SELECTION_RESULT") {
     const p = msg.payload as { text: string; explanation: string };
-    const popup = document.getElementById("mindease-explain-popup");
-    const body = document.getElementById("mindease-explain-body");
-    const loader = document.getElementById("mindease-explain-loader");
-    if (popup && body && loader) {
-      loader.style.display = "none";
-      body.textContent = p.explanation;
-      body.style.display = "block";
+    const capturePopup = document.getElementById("mindease-capture-result");
+    const capPlaceholder = capturePopup?.querySelector(".cap-ocr-text");
+    if (capPlaceholder) {
+      capPlaceholder.innerHTML = `<strong>Explanation:</strong><div style="margin:6px 0 0;line-height:1.6">${renderLatex(_escHtml(p.explanation))}</div>`;
+    } else {
+      const popup = document.getElementById("mindease-explain-popup");
+      const body = document.getElementById("mindease-explain-body");
+      const loader = document.getElementById("mindease-explain-loader");
+      if (popup && body && loader) {
+        loader.style.display = "none";
+        body.textContent = p.explanation;
+        body.style.display = "block";
+      }
     }
     // Also forward to child full-view window if exists
     const fv = (window as unknown as Record<string, unknown>).___mindeaseFullView as Window | undefined;
     if (fv && !fv.closed) {
       try { fv.postMessage({ type: "EXPLAIN_SELECTION_RESULT", payload: p }, "*"); } catch {}
+    }
+  }
+
+  if (msg.type === "CONTEXT_EXPLAIN") {
+    const p = msg.payload as { text: string };
+    showContextExplainLoading(p.text);
+  }
+
+  if (msg.type === "CONTEXT_EXPLAIN_RESULT") {
+    const p = msg.payload as { text: string; explanation: string };
+    showContextExplainResult(p.text, p.explanation);
+  }
+
+  if (msg.type === "CONTEXT_CAPTURE_RESULT") {
+    const p = msg.payload as { dataUrl: string };
+    showCaptureCropTool(p.dataUrl);
+  }
+
+  if (msg.type === "OCR_RESULT") {
+    const p = msg.payload as { imageUrl: string; text?: string; error?: string };
+    const capturePopup = document.getElementById("mindease-capture-result");
+    if (capturePopup) {
+      const placeholder = capturePopup.querySelector(".cap-ocr-placeholder");
+      if (placeholder) {
+        if (p.error) {
+          placeholder.textContent = `OCR failed: ${p.error}`;
+        } else {
+          placeholder.className = "cap-ocr-text";
+          placeholder.innerHTML = "<em>Explaining&hellip;</em>";
+          browser.runtime.sendMessage({
+            type: "EXPLAIN_SELECTION",
+            payload: p.text,
+          }).catch(() => {});
+        }
+      }
+    } else {
+      showOcrResult(p.text, p.error);
     }
   }
 });
@@ -1122,20 +1166,33 @@ const OVERLAY_CSS = `
         transition: border-color 0.2s;
       }
       .visual-card:hover { border-color: var(--accent); }
+      .visual-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        background: color-mix(in srgb, var(--accent) 8%, transparent);
+        border-bottom: 1px solid var(--border);
+      }
+      .visual-card-concept {
+        font-size: 0.78rem;
+        font-weight: 600;
+        color: var(--accent);
+      }
       .visual-card-img {
         width: 100%;
         display: block;
         background: var(--bg-base);
         object-fit: contain;
+        padding: 8px;
       }
-      .visual-card-footer {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
+      .visual-card-desc {
         padding: 8px 12px;
         font-size: 0.72rem;
         color: var(--text-dim);
+        line-height: 1.55;
         border-top: 1px solid var(--border);
+        background: var(--bg-surface-alt);
       }
       .visual-card-source {
         display: inline-flex;
@@ -1674,6 +1731,540 @@ function setupSelectionPopup(container: HTMLElement | Document): void {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
+   Context Menu: Explain Selection (Copilot-style thinking + popup)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+const CTX_EXPLAIN_CSS = `
+#mindease-ctx-loading {
+  position: fixed;
+  z-index: 2147483646;
+  background: color-mix(in srgb, var(--accent, #8EA7E9) 12%, var(--bg-surface, #252A55));
+  border: 1px solid var(--border, #7286D3);
+  border-radius: 8px;
+  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 0.75rem;
+  color: var(--accent, #8EA7E9);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  animation: mindease-fadeUp 0.12s ease;
+  pointer-events: none;
+}
+#mindease-ctx-loading .ctx-loader-icon {
+  display: inline-flex;
+  animation: mindease-spin 0.8s linear infinite;
+}
+#mindease-ctx-loading .ctx-loader-dots::after {
+  content: '';
+  animation: mindease-dots 1.4s steps(4, end) infinite;
+}
+@keyframes mindease-dots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+@keyframes mindease-fadeUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes mindease-spin {
+  to { transform: rotate(360deg); }
+}
+#mindease-ctx-popup {
+  position: fixed;
+  z-index: 2147483646;
+  background: var(--bg-surface, #252A55);
+  border: 1px solid var(--border, #7286D3);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  max-width: 360px;
+  min-width: 200px;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  color: var(--text-primary, #E5E0FF);
+  display: none;
+  animation: mindease-fadeUp 0.15s ease;
+  overflow: hidden;
+}
+#mindease-ctx-popup .ctx-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--accent, #8EA7E9) 10%, transparent);
+  border-bottom: 1px solid var(--border, #7286D3);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent, #8EA7E9);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+#mindease-ctx-popup .ctx-popup-close {
+  background: none;
+  border: none;
+  color: var(--text-muted, #8A8AB8);
+  cursor: pointer;
+  padding: 2px;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+}
+#mindease-ctx-popup .ctx-popup-close:hover { color: var(--text-primary, #E5E0FF); }
+#mindease-ctx-popup .ctx-popup-body {
+  padding: 12px 14px;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--text-primary, #E5E0FF);
+  word-wrap: break-word;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+`;
+
+function injectCtxStyles(): void {
+  if (document.getElementById("mindease-ctx-styles")) return;
+  const el = document.createElement("style");
+  el.id = "mindease-ctx-styles";
+  el.textContent = CTX_EXPLAIN_CSS;
+  document.head.appendChild(el);
+}
+
+function getSelectionRect(): DOMRect | null {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  return sel.getRangeAt(0).getBoundingClientRect();
+}
+
+function showContextExplainLoading(text: string): void {
+  injectCtxStyles();
+  let loader = document.getElementById("mindease-ctx-loading");
+  if (!loader) {
+    loader = document.createElement("div");
+    loader.id = "mindease-ctx-loading";
+    loader.innerHTML = `<span class="ctx-loader-icon">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    </span><span class="ctx-loader-text">Thinking</span><span class="ctx-loader-dots"></span>`;
+    document.body.appendChild(loader);
+  }
+  loader.style.display = "flex";
+
+  // Position near selection
+  const rect = getSelectionRect();
+  if (rect) {
+    let left = rect.right + 12;
+    let top = rect.top;
+    if (left + 180 > window.innerWidth) left = rect.left - 180;
+    if (left < 8) left = 8;
+    if (top + 40 > window.innerHeight) top = rect.top - 40;
+    if (top < 8) top = 8;
+    loader.style.left = `${left}px`;
+    loader.style.top = `${top}px`;
+  } else {
+    loader.style.left = "50%";
+    loader.style.top = "50%";
+  }
+}
+
+function showContextExplainResult(_text: string, explanation: string): void {
+  const loader = document.getElementById("mindease-ctx-loading");
+  if (loader) loader.remove();
+
+  injectCtxStyles();
+  let popup = document.getElementById("mindease-ctx-popup");
+  if (!popup) {
+    popup = document.createElement("div");
+    popup.id = "mindease-ctx-popup";
+    popup.style.cssText = `
+      position:fixed;z-index:2147483646;
+      max-width:min(420px,calc(100vw - 32px));
+      max-height:calc(100vh - 32px);
+      display:flex;flex-direction:column;
+      left:50%;top:50%;transform:translate(-50%,-50%);
+    `;
+    popup.innerHTML = `
+      <div class="ctx-popup-header">
+        <span>MindEase</span>
+        <button class="ctx-popup-close">&times;</button>
+      </div>
+      <div class="ctx-popup-body"></div>
+    `;
+    const bodyEl = popup.querySelector(".ctx-popup-body");
+    if (bodyEl) bodyEl.innerHTML = renderLatex(_escHtml(explanation));
+    document.body.appendChild(popup);
+
+    popup.querySelector(".ctx-popup-close")?.addEventListener("click", () => popup!.remove());
+
+    // Dismiss on outside click
+    document.addEventListener("mousedown", function dismiss(e) {
+      const t = e.target as HTMLElement;
+      if (!t.closest("#mindease-ctx-popup")) {
+        popup!.remove();
+        document.removeEventListener("mousedown", dismiss);
+      }
+    });
+  } else {
+    const body = popup.querySelector(".ctx-popup-body");
+    if (body) body.innerHTML = renderLatex(_escHtml(explanation));
+  }
+  popup.style.display = "flex";
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   OCR Result Popup
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+let _ocrPopup: HTMLElement | null = null;
+
+function showOcrResult(text?: string, error?: string): void {
+  _ocrPopup?.remove();
+
+  const popup = document.createElement("div");
+  _ocrPopup = popup;
+  popup.id = "mindease-ocr-popup";
+
+  const headerText = error ? "OCR Failed" : "Extracted Text";
+  const bodyContent = error
+    ? `<p style="color:var(--danger);margin:0">${_escHtml(error)}</p>`
+    : `<div style="white-space:pre-wrap;font-size:0.82rem;line-height:1.6;max-height:300px;overflow-y:auto">${_escHtml(text ?? "")}</div>`;
+
+  popup.innerHTML = `
+    <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);width:400px;max-width:90vw;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)">
+        <span style="font-weight:600;font-size:0.82rem">${headerText}</span>
+        <button id="mindease-ocr-close" style="background:none;border:none;cursor:pointer;color:var(--text-dim);padding:4px;font-size:18px;line-height:1">&times;</button>
+      </div>
+      <div style="padding:14px 16px">${bodyContent}</div>
+    </div>`;
+
+  popup.style.cssText = `
+    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;
+    font-family:system-ui,-apple-system,sans-serif;
+  `;
+
+  document.body.appendChild(popup);
+
+  popup.querySelector("#mindease-ocr-close")?.addEventListener("click", () => {
+    popup.remove();
+    _ocrPopup = null;
+  });
+
+  // Close on outside click
+  popup.addEventListener("mousedown", (e) => {
+    if (e.target === popup) {
+      popup.remove();
+      _ocrPopup = null;
+    }
+  });
+
+  // Close on Escape
+  const keyHandler = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      popup.remove();
+      _ocrPopup = null;
+      window.removeEventListener("keydown", keyHandler);
+    }
+  };
+  window.addEventListener("keydown", keyHandler);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Context Menu: Capture & Explain (crop tool + placeholder)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+const CAPTURE_CSS = `
+#mindease-capture-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+#mindease-capture-overlay .cap-image-wrap {
+  position: relative;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow: hidden;
+  border-radius: 8px;
+  box-shadow: 0 8px 48px rgba(0,0,0,0.5);
+  cursor: crosshair;
+}
+#mindease-capture-overlay .cap-image-wrap img {
+  display: block;
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+}
+#mindease-capture-overlay .cap-selection {
+  position: absolute;
+  border: 2px dashed #fff;
+  background: rgba(142,167,233,0.08);
+  pointer-events: none;
+  display: none;
+}
+#mindease-capture-overlay .cap-toolbar {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 10;
+}
+#mindease-capture-overlay .cap-toolbar button {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  transition: opacity 0.12s;
+}
+#mindease-capture-overlay .cap-toolbar button:hover { opacity: 0.85; }
+#mindease-capture-overlay .cap-toolbar .cap-confirm {
+  background: var(--accent, #8EA7E9);
+  color: #1A1D3A;
+}
+#mindease-capture-overlay .cap-toolbar .cap-cancel {
+  background: var(--bg-surface, #252A55);
+  color: var(--text-dim, #B8B8E0);
+  border: 1px solid var(--border, #7286D3);
+}
+
+#mindease-capture-result {
+  position: fixed;
+  z-index: 2147483647;
+  background: var(--bg-surface, #252A55);
+  border: 1px solid var(--border, #7286D3);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  max-width: 480px;
+  min-width: 280px;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 0.8rem;
+  color: var(--text-primary, #E5E0FF);
+  animation: mindease-fadeUp 0.15s ease;
+}
+#mindease-capture-result .cap-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--accent, #8EA7E9) 10%, transparent);
+  border-bottom: 1px solid var(--border, #7286D3);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--accent, #8EA7E9);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+#mindease-capture-result .cap-result-close {
+  background: none;
+  border: none;
+  color: var(--text-muted, #8A8AB8);
+  cursor: pointer;
+  padding: 2px;
+  font-size: 14px;
+  line-height: 1;
+}
+#mindease-capture-result .cap-result-close:hover { color: var(--text-primary, #E5E0FF); }
+#mindease-capture-result .cap-result-body {
+  padding: 12px;
+}
+#mindease-capture-result .cap-result-body img {
+  display: block;
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border, #7286D3);
+  margin-bottom: 10px;
+}
+#mindease-capture-result .cap-result-body .cap-ocr-placeholder {
+  text-align: center;
+  color: var(--text-dim, #B8B8E0);
+  font-size: 0.75rem;
+  padding: 8px;
+  background: color-mix(in srgb, var(--accent, #8EA7E9) 8%, transparent);
+  border-radius: 6px;
+  border: 1px dashed var(--border, #7286D3);
+}
+`;
+
+function injectCaptureStyles(): void {
+  if (document.getElementById("mindease-cap-styles")) return;
+  const el = document.createElement("style");
+  el.id = "mindease-cap-styles";
+  el.textContent = CAPTURE_CSS;
+  document.head.appendChild(el);
+}
+
+function showCaptureCropTool(dataUrl: string): void {
+  injectCaptureStyles();
+
+  // Remove previous overlay if any
+  document.getElementById("mindease-capture-overlay")?.remove();
+  document.getElementById("mindease-capture-result")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "mindease-capture-overlay";
+  overlay.innerHTML = `
+    <div class="cap-image-wrap">
+      <img src="${dataUrl}" alt="Screenshot" />
+      <div class="cap-selection" id="cap-selection"></div>
+      <div class="cap-toolbar">
+        <button class="cap-confirm" id="cap-confirm">Explain region</button>
+        <button class="cap-cancel" id="cap-cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const wrap = overlay.querySelector(".cap-image-wrap") as HTMLElement;
+  const selEl = document.getElementById("cap-selection") as HTMLElement;
+  // Capture result will be created on confirm
+
+  let dragging = false;
+  let startX = 0, startY = 0;
+  const sel: { x: number; y: number; w: number; h: number } = { x: 0, y: 0, w: 0, h: 0 };
+
+  const onMouseDown = (e: MouseEvent) => {
+    const rect = wrap.getBoundingClientRect();
+    startX = e.clientX - rect.left;
+    startY = e.clientY - rect.top;
+    dragging = true;
+    selEl.style.display = "block";
+    selEl.style.left = `${startX}px`;
+    selEl.style.top = `${startY}px`;
+    selEl.style.width = "0px";
+    selEl.style.height = "0px";
+  };
+
+  const onMouseMove = (e: MouseEvent) => {
+    if (!dragging) return;
+    const rect = wrap.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    sel.x = Math.min(startX, cx);
+    sel.y = Math.min(startY, cy);
+    sel.w = Math.abs(cx - startX);
+    sel.h = Math.abs(cy - startY);
+    selEl.style.left = `${sel.x}px`;
+    selEl.style.top = `${sel.y}px`;
+    selEl.style.width = `${sel.w}px`;
+    selEl.style.height = `${sel.h}px`;
+  };
+
+  const onMouseUp = () => {
+    dragging = false;
+  };
+
+  wrap.addEventListener("mousedown", onMouseDown);
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", onMouseUp);
+
+  document.getElementById("cap-cancel")?.addEventListener("click", () => {
+    overlay.remove();
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+  });
+
+  document.getElementById("cap-confirm")?.addEventListener("click", () => {
+    if (sel.w < 10 || sel.h < 10) return;
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+
+    // Crop the screenshot to the selection using canvas
+    const img = new Image();
+    img.onload = () => {
+      const imgRect = wrap.querySelector("img")!.getBoundingClientRect();
+      const scaleX = img.naturalWidth / imgRect.width;
+      const scaleY = img.naturalHeight / imgRect.height;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = sel.w * scaleX;
+      canvas.height = sel.h * scaleY;
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(
+        img,
+        sel.x * scaleX, sel.y * scaleY, sel.w * scaleX, sel.h * scaleY,
+        0, 0, canvas.width, canvas.height,
+      );
+
+      const croppedDataUrl = canvas.toDataURL("image/png");
+      overlay.remove();
+      showCaptureResult(croppedDataUrl);
+    };
+    img.src = dataUrl;
+  });
+}
+
+function showCaptureResult(croppedDataUrl: string): void {
+  // Ensure KaTeX CSS is loaded for formula rendering
+  if (!document.getElementById("mindease-katex-css")) {
+    const link = document.createElement("link");
+    link.id = "mindease-katex-css";
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    document.head.appendChild(link);
+  }
+
+  const popup = document.createElement("div");
+  popup.id = "mindease-capture-result";
+
+  popup.style.cssText = `
+    position:fixed;z-index:2147483646;
+    max-width:min(500px,calc(100vw - 32px));
+    max-height:calc(100vh - 32px);
+    display:flex;flex-direction:column;
+    background:var(--bg-surface,#252A55);
+    border:1px solid var(--border,#7286D3);
+    border-radius:14px;
+    box-shadow:0 8px 32px rgba(0,0,0,0.35);
+    overflow:hidden;
+  `;
+  // Center in viewport
+  popup.style.left = "50%";
+  popup.style.top = "50%";
+  popup.style.transform = "translate(-50%,-50%)";
+
+  popup.innerHTML = `
+    <div class="cap-result-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border,#7286D3);font-size:0.82rem;font-weight:600;color:var(--accent,#8EA7E9)">
+      <span>Captured region</span>
+      <button class="cap-result-close" style="background:none;border:none;cursor:pointer;padding:2px 8px;font-size:16px;color:var(--text-muted,#8A8AB8)">&times;</button>
+    </div>
+    <div class="cap-result-body" style="padding:12px 14px;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:10px">
+      <img src="${croppedDataUrl}" alt="Captured region" style="max-width:100%;height:auto;border-radius:8px" />
+      <div class="cap-ocr-placeholder" style="font-size:0.82rem;color:var(--text-dim,#8A8AB8)">
+        OCR in progress...
+      </div>
+    </div>
+  `;
+  document.body.appendChild(popup);
+
+  popup.querySelector(".cap-result-close")?.addEventListener("click", () => popup.remove());
+  document.addEventListener("mousedown", function dismiss(e) {
+    if (!(e.target as HTMLElement).closest("#mindease-capture-result")) {
+      popup.remove();
+      document.removeEventListener("mousedown", dismiss);
+    }
+  });
+
+  browser.runtime.sendMessage({
+    type: "OCR_IMAGE",
+    payload: { base64Image: croppedDataUrl },
+  }).catch(() => {});
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
    Floating Overlay Panel
    ═══════════════════════════════════════════════════════════════════════════════ */
 
@@ -1720,6 +2311,7 @@ function injectOverlay(
   baseline?: BaselineProfile,
   transformationParams?: TransformationParams,
 ): void {
+  stopTTS();
   document.getElementById("mindease-overlay")?.remove();
   document.getElementById("mindease-pdf-loader")?.remove();
   removeReopenButton();
@@ -1758,8 +2350,17 @@ function injectOverlay(
     orderedChunks = [...theory, ...examples];
   }
 
+  _formatPreference = baselineProfile.formatPreference;
+  _conceptsFromChunks = [...new Set(orderedChunks.flatMap(c => c.conceptTags).filter(Boolean))];
+  _ttsTexts = orderedChunks
+    .map(c => stripInlineTags(c.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  _contentChunks = orderedChunks;
+  console.log(`[Content] Extracted ${_conceptsFromChunks.length} concepts, ${_contentChunks.length} chunks`);
   const totalConcepts = orderedChunks.reduce((acc, c) => acc + c.conceptTags.length, 0);
   const summaryCount = orderedChunks.filter(c => c.summary).length;
+
+  const defaultTab = baselineProfile.formatPreference === "visual" ? "visuals" : "content";
 
   const infoDensity = baselineProfile.infoDensity;
   const secondLang = baselineProfile.secondLanguageLearner;
@@ -1800,6 +2401,7 @@ function injectOverlay(
         <span class="logo-badge">ADAPTIVE</span>
       </div>
       <div id="mindease-controls">
+        <button class="mindease-ctrl-btn" id="mindease-tts-btn" title="Read content aloud" aria-label="Read content aloud">${iconHTML("volume-2")}</button>
         <button class="mindease-ctrl-btn" id="mindease-theme-toggle" title="Toggle theme" aria-label="Toggle theme">${_theme === "light" ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>'}</button>
         <button class="mindease-ctrl-btn" id="mindease-minimize" title="Minimize" aria-label="Minimize panel">&minus;</button>
         <button class="mindease-ctrl-btn" id="mindease-close" title="Close" aria-label="Close panel">${iconHTML("x")}</button>
@@ -1807,8 +2409,8 @@ function injectOverlay(
     </div>
 
     <div id="mindease-tabs" role="tablist" aria-label="Panel sections">
-      <button class="mindease-tab active" data-tab="content" role="tab" aria-selected="true" aria-controls="tab-content">Content</button>
-      <button class="mindease-tab" data-tab="visuals" role="tab" aria-selected="false" aria-controls="tab-visuals">Visuals <span class="visuals-badge" id="visuals-badge" style="display:none">0</span></button>
+      <button class="mindease-tab${defaultTab === 'content' ? ' active' : ''}" data-tab="content" role="tab" aria-selected="${defaultTab === 'content'}" aria-controls="tab-content">Content</button>
+      <button class="mindease-tab${defaultTab === 'visuals' ? ' active' : ''}" data-tab="visuals" role="tab" aria-selected="${defaultTab === 'visuals'}" aria-controls="tab-visuals">Visuals <span class="visuals-badge" id="visuals-badge" style="display:none">0</span></button>
       <button class="mindease-tab" data-tab="profile" role="tab" aria-selected="false" aria-controls="tab-profile">Profile</button>
       <button class="mindease-tab" data-tab="session" role="tab" aria-selected="false" aria-controls="tab-session">Session</button>
     </div>
@@ -1836,8 +2438,13 @@ function injectOverlay(
       </div>
     </div>
 
+    <div id="mindease-tts-bar" style="display:none;align-items:center;gap:10px;padding:6px 16px;background:color-mix(in srgb,var(--accent) 10%,var(--bg-surface));border-bottom:1px solid var(--border);font-size:0.72rem;color:var(--accent)">
+      <span class="tts-label" style="flex:1">Speaking&hellip;</span>
+      <button class="mindease-ctrl-btn" id="mindease-tts-stop" title="Stop" aria-label="Stop reading" style="width:22px;height:22px;font-size:10px">&times;</button>
+    </div>
+
     <div id="mindease-body">
-      <div class="mindease-tab-content active" id="tab-content" role="tabpanel" aria-label="Content">
+      <div class="mindease-tab-content${defaultTab === 'content' ? ' active' : ''}" id="tab-content" role="tabpanel" aria-label="Content">
         ${orderedChunks.length === 0
           ? '<p style="color:var(--text-muted);text-align:center;padding:24px">No content chunks yet.</p>'
           : orderedChunks.map((chunk, ci) => renderChunkHTML(chunk, ci)).join("")
@@ -1847,10 +2454,18 @@ function injectOverlay(
         </div>
       </div>
 
-      <div class="mindease-tab-content" id="tab-visuals" role="tabpanel" aria-label="Visuals" style="display:none">
+      <div class="mindease-tab-content${defaultTab === 'visuals' ? ' active' : ''}" id="tab-visuals" role="tabpanel" aria-label="Visuals"${defaultTab === 'visuals' ? '' : ' style="display:none"'}>
         <div class="mindease-section-title">Generated Visuals</div>
         <div id="mindease-visuals-grid" class="visuals-grid">
-          <p class="visuals-placeholder">Visuals will appear here when generated.</p>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:40px 20px;text-align:center">
+            ${iconHTML("image")}
+            <p style="color:var(--text-muted);font-size:0.78rem;max-width:280px">
+              No visuals generated yet. Generate diagrams and infographics for the concepts you are studying.
+            </p>
+            <button id="mindease-gen-visuals-btn-init" class="mindease-btn mindease-btn-primary" style="display:inline-flex;align-items:center;gap:6px">
+              ${iconHTML("sparkles")} Generate Visuals${_contentChunks.length > 0 ? ` (${_contentChunks.length} chunks)` : ""}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2006,6 +2621,7 @@ function injectOverlay(
 
   /* ── Close handler ── */
   async function handleClose(): Promise<void> {
+    stopTTS();
     overlay.removeAttribute("role");
     overlay.setAttribute("aria-hidden", "true");
     overlay.style.display = "none";
@@ -2062,6 +2678,47 @@ function injectOverlay(
     browser.runtime.sendMessage({ type: "SESSION_END" }).catch(() => {});
   });
 
+  /* ── Generate Visuals (via background to bypass host CSP) ── */
+  overlay.addEventListener("click", async (e: MouseEvent) => {
+    const btn = (e.target as HTMLElement).closest("button");
+    if (!btn || !btn.id.startsWith("mindease-gen-visuals-btn")) return;
+    if (_contentChunks.length === 0) {
+      console.warn("[Content] No chunks available for visual generation");
+      btn.textContent = "No content available";
+      setTimeout(() => { btn.textContent = "Generate Visuals"; (btn as HTMLButtonElement).disabled = false; }, 2000);
+      return;
+    }
+    btn.textContent = "Generating...";
+    (btn as HTMLButtonElement).disabled = true;
+    try {
+      const response = await browser.runtime.sendMessage({
+        type: "GENERATE_VISUALS",
+        payload: { chunks: _contentChunks.slice(0, 5) },
+      });
+      const entries: VisualEntry[] = (response?.visuals ?? []).map((r: { fileId: string; concept: string; source: string; format: string; dataUrl: string; width: number; height: number; generatedAt: number; expiresAt: number }) => ({
+        id: r.fileId,
+        concept: r.concept,
+        source: "napkin",
+        format: r.format,
+        dataUrl: r.dataUrl,
+        width: r.width,
+        height: r.height,
+        generatedAt: Date.now(),
+        expiresAt: Date.now() + 25 * 60 * 1000,
+      }));
+      if (entries.length > 0) {
+        renderVisuals(entries);
+      } else {
+        btn.textContent = "No visuals generated — try again";
+        (btn as HTMLButtonElement).disabled = false;
+      }
+    } catch (err) {
+      console.warn("[Content] Visual generation error:", err);
+      btn.textContent = "Failed — try again";
+      (btn as HTMLButtonElement).disabled = false;
+    }
+  });
+
   /* ── Side toggle ── */
   let onRight = true;
   document.getElementById("mindease-toggle-side")?.addEventListener("click", () => {
@@ -2073,6 +2730,16 @@ function injectOverlay(
     overlay.style.boxShadow = onRight ? "var(--shadow)" : "var(--shadow-right)";
     saveSidebarState({ onRight });
   });
+
+  /* ── TTS: Read aloud / Stop ── */
+  document.getElementById("mindease-tts-btn")?.addEventListener("click", () => {
+    if (_ttsSpeaking) {
+      stopTTS();
+    } else if (_ttsTexts.length > 0) {
+      speakTexts(_ttsTexts);
+    }
+  });
+  document.getElementById("mindease-tts-stop")?.addEventListener("click", stopTTS);
 
   /* ── Theme toggle in overlay ── */
   document.getElementById("mindease-theme-toggle")?.addEventListener("click", () => {
@@ -2235,6 +2902,58 @@ function injectOverlay(
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 let _visualEntries: VisualEntry[] = [];
+let _formatPreference: "visual" | "text" = "text";
+let _conceptsFromChunks: string[] = [];
+
+/* ── TTS State ──────────────────────────────────────────────────── */
+let _ttsSpeaking = false;
+let _ttsTexts: string[] = [];
+
+function stopTTS(): void {
+  stopPuterTts();
+  _ttsSpeaking = false;
+  const bar = document.getElementById("mindease-tts-bar");
+  const btn = document.getElementById("mindease-tts-btn");
+  if (bar) bar.style.display = "none";
+  if (btn) btn.innerHTML = iconHTML("volume-2");
+}
+
+function speakTexts(texts: string[]): void {
+  if (texts.length === 0) return;
+  stopTTS();
+  _ttsTexts = texts;
+  _ttsSpeaking = true;
+  const btn = document.getElementById("mindease-tts-btn");
+  if (btn) btn.innerHTML = iconHTML("x") + " Stop";
+
+  const bar = document.getElementById("mindease-tts-bar");
+  if (bar) {
+    bar.style.display = "flex";
+    const label = bar.querySelector(".tts-label");
+    if (label) label.textContent = "Speaking\u2026";
+  }
+
+  let i = 0;
+  function speakNext(): void {
+    if (!_ttsSpeaking || i >= texts.length) {
+      stopTTS();
+      return;
+    }
+    const bar = document.getElementById("mindease-tts-bar");
+    const label = bar?.querySelector(".tts-label");
+    if (label) label.textContent = `Speaking ${i + 1} of ${texts.length}\u2026`;
+
+    puterSpeak(texts[i]).then(() => {
+      i++;
+      speakNext();
+    }).catch(() => {
+      i++;
+      speakNext();
+    });
+  }
+  speakNext();
+}
+let _contentChunks: ContentChunk[] = [];
 
 function renderVisuals(visuals: VisualEntry[]): void {
   _visualEntries = visuals;
@@ -2249,12 +2968,16 @@ function renderVisuals(visuals: VisualEntry[]): void {
   }
 
   if (visuals.length === 0) {
-    grid.innerHTML = `<p class="visuals-placeholder">
-      ${iconHTML("image")} Generating visuals...<br>
-      <span style="font-size:0.7rem;color:var(--text-muted);display:block;margin-top:6px">
-        Make sure the local proxy is running: <code>npm run napkin-proxy</code>
-      </span>
-    </p>`;
+    grid.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:40px 20px;text-align:center">
+        ${iconHTML("image")}
+        <p style="color:var(--text-muted);font-size:0.78rem;max-width:280px">
+          No visuals generated yet. Generate diagrams and infographics for the concepts you are studying.
+        </p>
+        <button id="mindease-gen-visuals-btn" class="mindease-btn mindease-btn-primary" style="display:inline-flex;align-items:center;gap:6px">
+          ${iconHTML("sparkles")} Generate Visuals${_contentChunks.length > 0 ? ` (${_contentChunks.length} chunks)` : ""}
+        </button>
+      </div>`;
     return;
   }
 
@@ -2262,15 +2985,18 @@ function renderVisuals(visuals: VisualEntry[]): void {
     const sourceLabel = "Napkin";
     return `
       <div class="visual-card">
+        <div class="visual-card-header">
+          <span class="visual-card-concept">${_escHtml(v.concept)}</span>
+          <span class="visual-card-source ${v.source}">${sourceLabel}</span>
+        </div>
         <img class="visual-card-img"
              src="${v.dataUrl}"
              alt="${_escHtml(v.concept)}"
              loading="lazy"
              style="aspect-ratio:${v.width}/${v.height}"
         />
-        <div class="visual-card-footer">
-          <span>${_escHtml(v.concept)}</span>
-          <span class="visual-card-source ${v.source}">${sourceLabel}</span>
+        <div class="visual-card-desc">
+          ${_escHtml(v.concept)} — visual diagram showing the key relationships and structure of this concept as generated by Napkin AI.
         </div>
       </div>
     `;

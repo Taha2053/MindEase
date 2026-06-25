@@ -26,19 +26,26 @@ export interface NapkinOptions {
 }
 
 interface NapkinCreateResponse {
-  request_id: string;
+  id: string;
+  status: string;
 }
 
 interface NapkinFileInfo {
-  file_id: string;
   url: string;
-  format: NapkinFormat;
+  visual_id: string;
+  visual_query: string;
+  style_id: string;
+  width: number;
+  height: number;
+  color_mode: string;
 }
 
 interface NapkinStatusResponse {
   status: "pending" | "processing" | "completed" | "failed";
-  generated_files: NapkinFileInfo[];
+  request?: Record<string, unknown>;
+  generated_files?: NapkinFileInfo[];
   error?: { message: string; code: string };
+  credits?: { consumed: number };
 }
 
 export interface NapkinResult {
@@ -52,9 +59,7 @@ export interface NapkinResult {
 
 /* ── Config ─────────────────────────────────────────────────────── */
 
-const NAPKIN_API_BASE = import.meta.env.DEV
-  ? "http://localhost:3001"
-  : "https://api.napkin.ai/v1";
+const NAPKIN_API_BASE = "http://localhost:3001";
 
 const NAPKIN_API_KEY = import.meta.env.VITE_NAPKIN_API_KEY as string | undefined;
 
@@ -90,7 +95,7 @@ async function createVisualRequest(
   if (options.contextBefore) body.context_before = options.contextBefore;
   if (options.contextAfter) body.context_after = options.contextAfter;
 
-  const res = await fetch(`${NAPKIN_API_BASE}/visual/request`, {
+  const res = await fetch(`${NAPKIN_API_BASE}/visual`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify(body),
@@ -102,7 +107,7 @@ async function createVisualRequest(
   }
 
   const data = (await res.json()) as NapkinCreateResponse;
-  return data.request_id;
+  return data.id;
 }
 
 /* ── Step 2: Poll status ────────────────────────────────────────── */
@@ -143,7 +148,11 @@ async function pollStatus(
 /* ── Step 3: Download file ──────────────────────────────────────── */
 
 async function downloadFile(fileUrl: string): Promise<Blob> {
-  const res = await fetch(fileUrl, {
+  // Proxy the download URL through localhost:3001 to avoid CORS issues
+  const u = new URL(fileUrl);
+  const path = u.pathname.replace(/^\/v1/, "");
+  const proxyUrl = `http://localhost:3001${path}${u.search}`;
+  const res = await fetch(proxyUrl, {
     headers: {
       Authorization: `Bearer ${NAPKIN_API_KEY}`,
     },
@@ -157,6 +166,36 @@ async function downloadFile(fileUrl: string): Promise<Blob> {
 }
 
 /* ── Public API ─────────────────────────────────────────────────── */
+
+/**
+ * Generate a Napkin visual from arbitrary text content (not just a concept name).
+ * Labels the visual with the provided label for display.
+ */
+export async function generateNapkinVisualFromContent(
+  content: string,
+  label: string,
+  options: NapkinOptions = {},
+): Promise<NapkinResult> {
+  const requestId = await createVisualRequest(content, options);
+  const status = await pollStatus(requestId);
+
+  if (!status.generated_files?.length) {
+    throw new Error(`[NapkinClient] No files generated for: ${label}`);
+  }
+
+  const file = status.generated_files[0];
+  const blob = await downloadFile(file.url);
+  const dataUrl = await blobToDataURL(blob);
+
+  return {
+    concept: label,
+    format: options.format ?? "svg",
+    dataUrl,
+    width: file.width,
+    height: file.height,
+    fileId: file.visual_id,
+  };
+}
 
 export async function generateNapkinVisual(
   concept: string,
@@ -177,11 +216,11 @@ export async function generateNapkinVisual(
 
   return {
     concept,
-    format: file.format,
+    format: options.format ?? "svg",
     dataUrl,
-    width: 800,
-    height: 600,
-    fileId: file.file_id,
+    width: file.width,
+    height: file.height,
+    fileId: file.visual_id,
   };
 }
 

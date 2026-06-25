@@ -10,7 +10,7 @@ html {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   background: var(--bg-base);
   color: var(--text-primary);
-  font-size: 0.925rem;
+  font-size: 1.3rem;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   scroll-behavior: smooth;
@@ -239,8 +239,7 @@ body {
 /* ── Content ── */
 .dash-content {
   flex: 1;
-  padding: 28px 32px 40px;
-  max-width: 1280px;
+  padding: 28px 40px 40px;
   width: 100%;
 }
 
@@ -277,7 +276,7 @@ body {
 /* ── Stats Row ── */
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 14px;
 }
 .stat-card {
@@ -489,7 +488,7 @@ body {
 /* ── Learned Cards ── */
 .learned-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 14px;
 }
 .learned-item {
@@ -648,7 +647,7 @@ body {
 /* ── Visuals Grid ── */
 .visuals-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 14px;
 }
 .visual-card {
@@ -724,7 +723,7 @@ body {
 /* ── Insights ── */
 .insight-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 14px;
 }
 .insight-card {
@@ -772,7 +771,7 @@ body {
 /* ── Progress ── */
 .progress-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 14px;
   margin-bottom: 20px;
 }

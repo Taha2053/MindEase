@@ -71,21 +71,22 @@ L1 uses an **annotation-only** approach: the LLM never rewrites the original tex
 ## Anchored Summary
 
 ### Goal
-Overhaul the extension's visual identity to match the onboarding/popup purple theme across all surfaces, and deliver a premium editorial-style dashboard redesign.
+Extend the session experience (side panel + dashboard) with profile-driven personalization, OCR, and Puter.js TTS (free, no API keys).
 
 ### Done
-- `src/utils/icons.ts`: replaced emoji map with individual lucide ESM imports; `iconHTML()` returns 18px inline SVG strings.
-- `src/styles/theme.css`: all dark/light color variables replaced with onboarding purple palette.
-- `src/content/index.ts` `OVERLAY_CSS`: theme variables updated to onboarding palette; added `--success`/`--warning` vars.
-- `src/content/sidebarManager.ts`: reopen button gradient and pulse animation colour updated to purple palette.
-- `src/session/dashboard/dashboard.ts` (vanilla TS) → `dashboard.tsx` (React TSX with lucide-react). All sections are React components; canvas focus timeline preserved via refs.
-- `src/session/dashboard/dashboard.html`: slimmed to `<div id="root">` mounting the React tree.
-- `src/content/discoveryPrompt.ts`: new module — floating card "Want MindEase for this page?" with Enable / Not now buttons. Auto-dismisses after 10s, stores dismissed domains in storage.
-- `src/content/index.ts` IIFE: when `shouldActivate()` returns false, calls `showDiscoveryPrompt()`. On Enable: sets `_extensionActive = true` and sends `SESSION_START` + `triggerContentTransformation("website")`.
-- `src/content/index.ts` `shouldActivate()`: added `promptOnlyHosts` list (asset CDNs, search engines) that return false so the discovery prompt appears instead of auto-activation.
-- Overlay footer: added "Full view" button that opens `dashboard.html` in a new tab.
-- `src/lucide-icons.d.ts`: wildcard declaration for `lucide/dist/esm/icons/*.mjs` imports.
-- **Dashboard redesign**: `dashboard.css` + `dashboard.tsx` fully rewritten — fixed left sidebar (200px, brand + nav items + footer actions), sticky top header, responsive multi-column card grid with 18px border-radius. All sections use theme variables. IntersectionObserver sidebar active-state tracking. Staggered fade-in animation on cards. Build and tests pass.
+- `src/content/puterTts.ts`: new module — injects Puter.js via `<script>` tag + main-world bridge. Replaces `window.speechSynthesis` with `puter.ai.txt2speech()`. Sequential chunk reading preserved. Stop via `audio.pause()`. No API keys or CSP changes.
+- `src/layer1/ocrClient.ts`: OCR.space API client — `ocrImageUrl()` and `ocrImageBase64()` functions.
+- `src/background/index.ts`: `GENERATE_VISUALS` message handler (on-demand visual generation for text users). `OCR_IMAGE` message handler + context menu item "Extract text with MindEase" for images. OCR result sent to content script via `OCR_RESULT`.
+- `src/content/index.ts`: side panel adapts to `formatPreference` (visual users → Visuals tab default, text users → Content tab + Generate button). TTS uses Puter.js overlay popup. `showOcrResult()` floating popup handler.
+- `src/session/dashboard/dashboard.css`: editorial redesign — gradient accent lines, background texture, sidebar nav markers, full-width layout (`1.3rem` base font, no `max-width`), responsive card grid with `18px` border-radius.
+- `src/session/dashboard/dashboard.tsx`: profile-driven section ordering, visual lightbox (click to zoom), Generate Visuals button for text users.
+- `src/layer1/napkinClient.ts`: aligned with official Napkin API schema (`/visual` endpoint, `visual_id`, Bearer download auth).
+- `src/layer1/visualOrchestrator.ts`: `force` param for on-demand visual generation bypassing `useVisualAnchors` guard.
+- `tools/napkin-test.mjs`: end-to-end Napkin API verification script.
+- `src/types/index.ts`: `OCR_IMAGE`, `OCR_RESULT` message types added.
+- `src/vite-env.d.ts`: `VITE_OCR_SPACE_API_KEY` added.
+- `src/styles/theme.css`: shared purple palette design tokens.
+- `src/utils/icons.ts`: `sparkles`, `volume-2` lucide icons added.
 
 ### Key Decisions
 - `iconHTML()` kept as drop-in for non-React surfaces (content script); React surfaces import lucide-react directly.
@@ -93,14 +94,23 @@ Overhaul the extension's visual identity to match the onboarding/popup purple th
 - `promptOnly` checked by hostname for CDNs and by URL regex for search engines.
 - "Full view" button uses `window.open` rather than background message.
 - Dashboard sidebar nav uses `IntersectionObserver` for active state tracking (no hash routing needed).
+- Puter.js TTS replaces Web Speech API — no API keys, free, multi-provider. Injected via `<script>` tag in page main world; content ↔ main world communication via `postMessage`.
+- OCR powered by OCR.space — right-click context menu on images, result shown in floating popup.
 
 ### Relevant Files
 - `src/styles/theme.css`: shared design tokens — onboarding purple palette.
-- `src/content/index.ts`: content script — OVERLAY_CSS, shouldActivate, IIFE, overlay footer.
+- `src/content/index.ts`: content script — OVERLAY_CSS, shouldActivate, IIFE, overlay footer, TTS, OCR result popup, formatPreference tabs.
+- `src/content/puterTts.ts`: Puter.js TTS module — script injection, main-world bridge, speak/stop.
 - `src/content/discoveryPrompt.ts`: discovery prompt module — UI, dismiss storage.
 - `src/content/sidebarManager.ts`: reopen button styles — purple gradient/pulse.
 - `src/utils/icons.ts`: lucide SVG helper for non-React code.
-- `src/session/dashboard/dashboard.tsx`: React dashboard — all 10 sections.
+- `src/utils/latex.ts`: KaTeX rendering utility.
+- `src/session/dashboard/dashboard.tsx`: React dashboard — all 10 sections, visual lightbox, profile-driven ordering.
 - `src/session/dashboard/dashboard.css`: editorial layout with sidebar, card grid, animations.
 - `src/session/dashboard/dashboard.html`: entry point — mounts React root.
 - `src/lucide-icons.d.ts`: type declaration for lucide ESM icon imports.
+- `src/layer1/ocrClient.ts`: OCR.space client.
+- `src/layer1/napkinClient.ts`: Napkin AI visual generation client.
+- `src/layer1/visualOrchestrator.ts`: Napkin/Flux visual orchestration.
+- `src/types/index.ts`: extension message type definitions.
+- `.env`: API keys — Napkin, OCR.space, Mistral, HuggingFace.

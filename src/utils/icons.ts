@@ -21,6 +21,8 @@ import bookOpenTextData from "lucide/dist/esm/icons/book-open-text.mjs";
 import alignStartVerticalData from "lucide/dist/esm/icons/align-start-vertical.mjs";
 import chartBarIncreasingData from "lucide/dist/esm/icons/chart-bar-increasing.mjs";
 import triangleAlertData from "lucide/dist/esm/icons/triangle-alert.mjs";
+import sparklesData from "lucide/dist/esm/icons/sparkles.mjs";
+import volume2Data from "lucide/dist/esm/icons/volume-2.mjs";
 import type { IconNode } from "lucide";
 
 const ICON_MAP: Record<string, IconNode> = {
@@ -47,6 +49,8 @@ const ICON_MAP: Record<string, IconNode> = {
   "align-start-vertical": alignStartVerticalData,
   "bar-chart-3": chartBarIncreasingData,
   "alert-triangle": triangleAlertData,
+  sparkles: sparklesData,
+  "volume-2": volume2Data,
 };
 
 function renderSVG(elements: IconNode, size = 20, className?: string): string {
