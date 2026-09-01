@@ -22,11 +22,16 @@ let tracker: SessionTracker | null = null;
 
 /**
  * Start a new tracking session.
- * Called by the background worker when a SESSION_START message arrives.
+ * Called by the background worker when a SESSION_START message arrives or tab opens.
  */
-export function startSession(userId: string, profile: CognitiveProfile): void {
-  tracker = new SessionTracker(userId, profile);
+export function startSession(userId: string, profile: CognitiveProfile, sessionId?: string): void {
+  tracker = new SessionTracker(userId, profile, sessionId);
   console.log("[Layer 3] Session started:", tracker.getLog().sessionId);
+}
+
+/** Check if Layer 3 currently has an active tracker */
+export function hasActiveSession(): boolean {
+  return tracker !== null;
 }
 
 /**
@@ -81,8 +86,8 @@ export async function endSession(
  */
 export function recordEvent(event: CognitiveEvent): void {
   if (!tracker) {
-    console.warn("[Layer 3] Event received but no active session. Dropping event.");
-    return;
+    console.log("[Layer 3] Auto-initializing tracker for incoming event.");
+    tracker = new SessionTracker(event.profile.userId, event.profile);
   }
   tracker.recordEvent(event);
 }

@@ -4,6 +4,7 @@
      Consumed by the RL agent and exposed to Layers 1 & 3.
   ───────────────────────────────────────────────────────────── */
 
+import { v4 as uuidv4 } from "uuid";
 import browser from "webextension-polyfill";
 import type {
   FullCognitiveProfile,
@@ -12,20 +13,12 @@ import type {
   TransformationParams,
   SessionStats,
   QTable,
+  CognitiveNeed,
 } from "@/types";
 import {
   STORAGE_KEYS,
-  ACTION_COUNT,
-} from "@/types";
 
-/* ─── UUID Generator ─── */
-function generateUUID(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
+} from "@/types";
 
 /* ─── Default RL State ─── */
 function defaultRLState(): RLState {
@@ -115,7 +108,7 @@ export async function createProfile(
         : "none";
 
   const profile: FullCognitiveProfile = {
-    userId: generateUUID(),
+    userId: uuidv4(),
     learningStyle: baseline.formatPreference === "visual" ? "visual" : "text",
     attentionSpan: baseline.attentionSpan,
     anchorNeed: baseline.needsConceptAnchor,

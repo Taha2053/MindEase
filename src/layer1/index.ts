@@ -9,12 +9,12 @@ export interface TransformInput {
 
 export async function transformContent(
   pageText: string,
-  pageType: "website" | "pdf" | "lecture",
+  pageType: "website" | "pdf" | "video" | "lecture",
   params: TransformInput,
   sourceUrl?: string,
 ): Promise<ContentChunk[]> {
   const sourceId = sourceUrl ?? "unknown";
-  const sourceType = pageType === "lecture" ? "lecture" : pageType === "pdf" ? "pdf" : "website";
+  const sourceType = pageType;
 
   let transformed: string;
 
@@ -24,6 +24,9 @@ export async function transformContent(
       break;
     case "lecture":
       transformed = await transformLecture(pageText, params);
+      break;
+    case "video":
+      transformed = await transformVideoTranscript(pageText, params);
       break;
     case "website":
     default:
@@ -44,7 +47,7 @@ export async function transformVideoContent(
   return parseAnnotatedContent(transformed, sourceId, "video");
 }
 
-function parseAnnotatedContent(
+export function parseAnnotatedContent(
   raw: string,
   sourceId: string,
   sourceType: "pdf" | "website" | "video" | "lecture",
@@ -60,7 +63,8 @@ function parseAnnotatedContent(
   let currentText = "";
   let currentConcepts: string[] = [];
   let currentSummary = "";
-  let currentIsExample = false;
+  let insideExample = false;
+  let chunkContainsExample = false;
   let chunkIndex = 0;
 
   function flushChunk() {
@@ -75,13 +79,14 @@ function parseAnnotatedContent(
       conceptTags: [...new Set(currentConcepts)],
       position: chunkIndex++,
       summary: currentSummary || undefined,
-      isExample: currentIsExample || undefined,
+      isExample: chunkContainsExample || undefined,
       hasDefinitions: hasDefs || undefined,
     });
     currentText = "";
     currentConcepts = [];
     currentSummary = "";
-    currentIsExample = false;
+    insideExample = false;
+    chunkContainsExample = false;
   }
 
   for (const line of lines) {
@@ -89,14 +94,23 @@ function parseAnnotatedContent(
 
     if (/^\[CHUNK/i.test(trimmed)) {
       flushChunk();
+      const rest = trimmed.replace(/^\[CHUNK[^\]]*\]\s*/i, "").trim();
+      if (!rest) continue;
+      // Process rest of the line
+      for (const m of rest.matchAll(/\[CONCEPT:\s*([^\]]+)\]/gi)) {
+        if (m[1]?.trim()) currentConcepts.push(m[1].trim());
+      }
+      if (/\[EXAMPLE\]/i.test(rest)) {
+        insideExample = true;
+        chunkContainsExample = true;
+      }
+      if (/\[\/EXAMPLE\]|\[EXAMPLE_END\]/i.test(rest)) insideExample = false;
+      currentText += rest + "\n";
       continue;
     }
 
-    if (/^\[CONCEPT:\s*([^\]]+)\]/i.test(trimmed)) {
-      const match = trimmed.match(/\[CONCEPT:\s*([^\]]+)\]/i);
-      if (match) currentConcepts.push(match[1].trim());
-      currentText += line + "\n";
-      continue;
+    for (const m of trimmed.matchAll(/\[CONCEPT:\s*([^\]]+)\]/gi)) {
+      if (m[1]?.trim()) currentConcepts.push(m[1].trim());
     }
 
     if (/^\[SUMMARY:/i.test(trimmed)) {
@@ -105,11 +119,12 @@ function parseAnnotatedContent(
       continue;
     }
 
-    if (/^\[EXAMPLE\]|^\[EXAMPLE_END\]|^\[\/EXAMPLE\]/i.test(trimmed)) {
-      if (/^\[EXAMPLE\]/i.test(trimmed)) currentIsExample = true;
-      if (/^\[\/EXAMPLE\]|^\[EXAMPLE_END\]/i.test(trimmed)) currentIsExample = false;
-      currentText += line + "\n";
-      continue;
+    if (/\[EXAMPLE\]/i.test(trimmed)) {
+      insideExample = true;
+      chunkContainsExample = true;
+    }
+    if (/\[\/EXAMPLE\]|\[EXAMPLE_END\]/i.test(trimmed)) {
+      insideExample = false;
     }
 
     currentText += line + "\n";

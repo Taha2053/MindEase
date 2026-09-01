@@ -16,13 +16,15 @@ import type {
   CrossSourceConnection, VisualEntry,
 } from "@/types";
 import { loadExplanations } from "@/layer2/explainer";
+import { loadSessionHistory, updateSessionName, deleteSessionEntry } from "@/session/sessionHistory";
+import type { SessionHistoryEntry } from "@/types";
 import {
   Brain, BarChart3, Timer, FolderOpen, FileText, Target,
   TrendingUp, Package, BookOpen, MessageCircle, RefreshCw,
   Image, Lightbulb, FileDown, Sun, Moon, X,
   AlertTriangle, Link, AlignStartVertical, BookOpenText,
   MessageSquare, Film, Globe, GraduationCap,
-  LayoutDashboard, Eye, ChartNoAxesColumn, Sparkles,
+  LayoutDashboard, Eye, ChartNoAxesColumn, Sparkles, Clock,
 } from "lucide-react";
 
 /* ─── Helpers ──────────────────────────────────────────────────────────────── */
@@ -201,6 +203,7 @@ function getNavItems(visualFirst: boolean): { id: string; label: string; icon: F
     { id: "focus", label: "Focus", icon: Eye },
     { id: "resources", label: "Resources", icon: FolderOpen },
     { id: "learned", label: "Learned", icon: BookOpen },
+    { id: "history", label: "History", icon: Clock },
     { id: "explanations", label: "Explanations", icon: MessageCircle },
     { id: "review", label: "Review", icon: RefreshCw },
     { id: "visuals", label: "Visuals", icon: Image },
@@ -719,6 +722,119 @@ const SectionVisuals: FC<{
   );
 };
 
+const SectionHistory: FC = () => {
+  const [history, setHistory] = useState<SessionHistoryEntry[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  useEffect(() => {
+    loadSessionHistory().then(setHistory).catch(() => {});
+  }, []);
+
+  const handleRename = async (sessionId: string) => {
+    const trimmed = editValue.trim();
+    if (trimmed) {
+      await updateSessionName(sessionId, trimmed);
+      setHistory(prev => prev.map(e =>
+        e.sessionId === sessionId ? { ...e, customName: trimmed } : e,
+      ));
+    }
+    setEditingId(null);
+    setEditValue("");
+  };
+
+  const handleDelete = async (sessionId: string) => {
+    await deleteSessionEntry(sessionId);
+    setHistory(prev => prev.filter(e => e.sessionId !== sessionId));
+  };
+
+  const displayName = (entry: SessionHistoryEntry): string => {
+    return entry.customName ?? entry.name;
+  };
+
+  if (history.length === 0) {
+    return (
+      <section className="section-card" id="section-history" data-section="history">
+        <div className="section-card-header">
+          <Clock size={16} />
+          <h2>Session History</h2>
+        </div>
+        <div className="empty-state">No past sessions yet. Complete a study session to build your history.</div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="section-card" id="section-history" data-section="history">
+      <div className="section-card-header">
+        <Clock size={16} />
+        <h2>Session History</h2>
+      </div>
+      <div className="history-list">
+        {history.map(entry => (
+          <div className="history-item" key={entry.sessionId}>
+            <div className="history-item-top">
+              {editingId === entry.sessionId ? (
+                <input
+                  className="history-name-input"
+                  value={editValue}
+                  onChange={e => setEditValue(e.target.value)}
+                  onBlur={() => handleRename(entry.sessionId)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") handleRename(entry.sessionId);
+                    if (e.key === "Escape") setEditingId(null);
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <span
+                  className="history-name"
+                  onClick={() => {
+                    setEditingId(entry.sessionId);
+                    setEditValue(displayName(entry));
+                  }}
+                  title="Click to rename"
+                >
+                  {displayName(entry)}
+                </span>
+              )}
+              <span className="history-date">{new Date(entry.endTime).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</span>
+            </div>
+            <div className="history-metrics">
+              <span className="history-metric">
+                <Timer size={12} />
+                {fmtDurationShort(entry.durationMs)}
+              </span>
+              <span className="history-metric">
+                <Brain size={12} />
+                {entry.conceptCount} concept{entry.conceptCount !== 1 ? "s" : ""}
+              </span>
+              <span className="history-metric">
+                <FolderOpen size={12} />
+                {entry.resourceCount} resource{entry.resourceCount !== 1 ? "s" : ""}
+              </span>
+              <span className="history-metric">
+                <BarChart3 size={12} />
+                Focus: {Math.round(entry.focusScore * 100)}%
+              </span>
+            </div>
+            <div className="history-actions">
+              <button
+                className="history-action-btn"
+                onClick={() => handleDelete(entry.sessionId)}
+                aria-label="Delete session"
+                title="Delete session"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+};
+
 const SectionInsights: FC<{ artifact: PersonalizedArtifact | null }> = ({ artifact }) => {
   const concepts = artifact?.keyConcepts ?? [];
   const connections = artifact?.connections ?? [];
@@ -994,10 +1110,11 @@ const Dashboard: FC = () => {
     if (!data?.artifact?.keyConcepts?.length) return;
     setGenerating(true);
     const concepts = data.artifact.keyConcepts.map(c => c.label);
+    const useFlux = data.profile?.baseline?.formatPreference === "visual";
     try {
       const response = await browser.runtime.sendMessage({
         type: "GENERATE_VISUALS",
-        payload: { concepts },
+        payload: { concepts, useFlux },
       }) as { type: string; visuals: VisualEntry[] };
       setVisuals(response.visuals ?? []);
     } catch (err) {
@@ -1074,6 +1191,7 @@ const Dashboard: FC = () => {
           <SectionFocus session={data.session} artifact={data.artifact} />
           <SectionResources artifact={data.artifact} session={data.session} />
           <SectionLearned artifact={data.artifact} />
+          <SectionHistory />
           <SectionExplanations />
           <SectionReview artifact={data.artifact} />
           {!visualFirst && (

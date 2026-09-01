@@ -59,7 +59,7 @@ export interface NapkinResult {
 
 /* ── Config ─────────────────────────────────────────────────────── */
 
-const NAPKIN_API_BASE = "http://localhost:3001";
+const NAPKIN_API_BASE = import.meta.env.VITE_NAPKIN_API_BASE ?? "https://api.napkin.ai";
 
 const NAPKIN_API_KEY = import.meta.env.VITE_NAPKIN_API_KEY as string | undefined;
 
@@ -148,14 +148,17 @@ async function pollStatus(
 /* ── Step 3: Download file ──────────────────────────────────────── */
 
 async function downloadFile(fileUrl: string): Promise<Blob> {
-  // Proxy the download URL through localhost:3001 to avoid CORS issues
-  const u = new URL(fileUrl);
-  const path = u.pathname.replace(/^\/v1/, "");
-  const proxyUrl = `http://localhost:3001${path}${u.search}`;
-  const res = await fetch(proxyUrl, {
-    headers: {
-      Authorization: `Bearer ${NAPKIN_API_KEY}`,
-    },
+  const isDev = import.meta.env.DEV && import.meta.env.VITE_NAPKIN_PROXY === "true";
+  let fetchUrl = fileUrl;
+
+  if (isDev) {
+    const u = new URL(fileUrl);
+    const path = u.pathname.replace(/^\/v1/, "");
+    fetchUrl = `http://localhost:3001${path}${u.search}`;
+  }
+
+  const res = await fetch(fetchUrl, {
+    headers: isDev ? { Authorization: `Bearer ${NAPKIN_API_KEY}` } : {},
   });
 
   if (!res.ok) {

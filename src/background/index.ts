@@ -12,6 +12,7 @@ import type {
   CognitiveEvent, CognitiveProfile, FullCognitiveProfile,
   ExtensionMessage, ContentChunk, SignalType, HighlightNote, NotesCollection,
   TabResource, FocusSummary, VisualEntry,
+  KeyConceptEntry, ResourceEntry,
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session, getCurrentProfile } from "@/layer2";
@@ -21,7 +22,7 @@ import { classifyContent, explainSelection } from "@/layer1/llmClient";
 import { generateVisualsForConcepts, generateVisualsFromChunks } from "@/layer1/visualOrchestrator";
 import { ocrImageUrl, ocrImageBase64 } from "@/layer1/ocrClient";
 import { SessionManager } from "@/session/SessionManager";
-import { generateSpeech } from "@/layer1/murfClient";
+import { saveSessionHistory } from "@/session/sessionHistory";
 
 /* ── Aggregated notes helpers ────────────────────────────────────────────────── */
 
@@ -124,6 +125,29 @@ sessionManager.onLayer3EndSession = async (
   focus?: FocusSummary | null,
 ) => {
   await endLayer3Session(chunks, highlights, tabs, focus);
+
+  // Save session history entry for the dashboard
+  try {
+    const result = await browser.storage.local.get("latestArtifact");
+    const artifact = result.latestArtifact as Record<string, unknown> | undefined;
+    if (artifact?.sessionId) {
+      const sessionId = artifact.sessionId as string;
+      const endTime = (artifact.generatedAt as number) ?? Date.now();
+      const durationMs = ((artifact.focusSummary as Record<string, unknown>)?.totalDurationMs as number) ?? 0;
+      const concepts = (artifact.keyConcepts as KeyConceptEntry[]) ?? [];
+      const focusScore = ((artifact.focusSummary as Record<string, unknown>)?.focusScore as number) ?? 0;
+      const resources = (artifact.resourcesUsed as ResourceEntry[]) ?? [];
+      const wsResult = await browser.storage.local.get(STORAGE_KEYS.WORKSPACE);
+      const ws = wsResult[STORAGE_KEYS.WORKSPACE] as Record<string, unknown> | undefined;
+      const actualDuration = ws?.endTime && ws?.startTime
+        ? (ws.endTime as number) - (ws.startTime as number)
+        : durationMs;
+      await saveSessionHistory(sessionId, endTime, actualDuration, concepts, focusScore, resources);
+    }
+  } catch (err) {
+    console.warn("[Background] Failed to save session history:", err);
+  }
+
   // Auto-open dashboard after session ends
   browser.tabs.create({
     url: browser.runtime.getURL("src/session/dashboard/dashboard.html"),
@@ -136,10 +160,6 @@ sessionManager.onLayer2EndSession = async () => {
 
 // Initialize - try to restore workspace from storage
 sessionManager.init();
-
-/* ── TTS ─────────────────────────────────────────────────────────────────── */
-
-let _ttsAudio: HTMLAudioElement | null = null;
 
 /* ── Context Menus ─────────────────────────────────────────────────────────── */
 
@@ -282,6 +302,17 @@ browser.runtime.onMessage.addListener(
           ? stored
           : DEFAULT_FULL_PROFILE) as FullCognitiveProfile;
 
+        const userId = fullProfile.userId || "guest";
+        const cognitiveProfile: CognitiveProfile = {
+          userId,
+          learningStyle: fullProfile.learningStyle,
+          attentionSpan: fullProfile.attentionSpan,
+          anchorNeed: fullProfile.anchorNeed,
+          condition: fullProfile.condition,
+          updatedAt: fullProfile.updatedAt,
+        };
+        startSession(userId, cognitiveProfile, sessionManager.getSessionId() ?? undefined);
+
         try {
           console.log("[Background] Starting transform for:", pageType);
           const chunks = await transformContent(
@@ -294,6 +325,14 @@ browser.runtime.onMessage.addListener(
           );
           console.log("[Background] Transform complete, chunks:", chunks.length);
 
+          // Persist chunks for Layer 3 session assembly
+          const chunkRes = await browser.storage.local.get(STORAGE_KEYS.SESSION_CHUNKS);
+          const existingChunks = (chunkRes[STORAGE_KEYS.SESSION_CHUNKS] as ContentChunk[]) ?? [];
+          const existingIds = new Set(existingChunks.map((c) => c.id));
+          const uniqueNew = chunks.filter((c) => !existingIds.has(c.id));
+          await browser.storage.local.set({
+            [STORAGE_KEYS.SESSION_CHUNKS]: [...existingChunks, ...uniqueNew],
+          });
           // Send chunks in progressive batches: first batch immediately, then append
           const batchSize = 3;
           for (let i = 0; i < chunks.length; i += batchSize) {
@@ -312,7 +351,7 @@ browser.runtime.onMessage.addListener(
           }
 
           // Auto-generate visuals from chunk content in the background
-          generateVisualsFromChunks(chunks, fullProfile.transformationParams, true)
+          generateVisualsFromChunks(chunks, fullProfile.transformationParams, true, fullProfile.baseline?.formatPreference === "visual")
             .then((visuals) => {
               return browser.tabs.sendMessage(tabId, {
                 type: "VISUALS_READY",
@@ -347,20 +386,17 @@ browser.runtime.onMessage.addListener(
         const url = (sender as { tab?: { url?: string } } | undefined)?.tab?.url ?? String(payload?.url ?? "");
         const sourceType = (payload?.sourceType ?? "website") as "pdf" | "video" | "website" | "lecture";
         const title = String(payload?.title ?? (sender as { tab?: { title?: string } } | undefined)?.tab?.title ?? "");
+        const userId = String(payload?.userId ?? "guest");
 
-        // Start Layer 3 session if not already started (check BEFORE registerTab)
-        if (!sessionManager.getSessionId()) {
-          const userId = String(payload?.userId ?? "guest");
-          browser.storage.local.get(STORAGE_KEYS.PROFILE).then((res) => {
-            const stored = res[STORAGE_KEYS.PROFILE] as Record<string, unknown> | undefined;
-            const profile: CognitiveProfile = (stored?.transformationParams
-              ? stored
-              : DEFAULT_FULL_PROFILE) as unknown as CognitiveProfile;
-            startSession(userId, profile);
-          }).catch(() => {
-            startSession(userId, DEFAULT_FULL_PROFILE as unknown as CognitiveProfile);
-          });
-        }
+        browser.storage.local.get(STORAGE_KEYS.PROFILE).then((res) => {
+          const stored = res[STORAGE_KEYS.PROFILE] as Record<string, unknown> | undefined;
+          const profile: CognitiveProfile = (stored?.transformationParams
+            ? stored
+            : DEFAULT_FULL_PROFILE) as unknown as CognitiveProfile;
+          startSession(userId, profile, sessionManager.getSessionId() ?? undefined);
+        }).catch(() => {
+          startSession(userId, DEFAULT_FULL_PROFILE as unknown as CognitiveProfile, sessionManager.getSessionId() ?? undefined);
+        });
 
         // Register tab in workspace (creates workspace session if none exists)
         if (tabId) {
@@ -455,24 +491,26 @@ browser.runtime.onMessage.addListener(
       }
 
       case "GENERATE_VISUALS": {
-        const payload = msg.payload as { concepts?: string[]; chunks?: ContentChunk[] };
-        return (async () => {
+        const payload = msg.payload as { concepts?: string[]; chunks?: ContentChunk[]; useFlux?: boolean };
+        (async () => {
           try {
             const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
             const stored = result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined;
             const params = stored?.transformationParams ?? DEFAULT_FULL_PROFILE.transformationParams;
+            const useFlux = payload.useFlux ?? (stored?.baseline?.formatPreference === "visual");
             let visuals: VisualEntry[] | undefined;
             if (payload.chunks?.length) {
-              visuals = await generateVisualsFromChunks(payload.chunks, params, true);
+              visuals = await generateVisualsFromChunks(payload.chunks, params, true, useFlux);
             } else if (payload.concepts?.length) {
-              visuals = await generateVisualsForConcepts(payload.concepts, params, true);
+              visuals = await generateVisualsForConcepts(payload.concepts, params, true, useFlux);
             }
-            return { type: "VISUALS_READY", visuals: visuals ?? [] };
+            sendResponse({ type: "VISUALS_READY", visuals: visuals ?? [] });
           } catch (err) {
             console.warn("[Background] GENERATE_VISUALS error:", err);
-            return { type: "VISUALS_READY", visuals: [] };
+            sendResponse({ type: "VISUALS_READY", visuals: [] });
           }
         })();
+        return true;
       }
 
       case "OCR_IMAGE": {
@@ -523,30 +561,17 @@ browser.runtime.onMessage.addListener(
       case "TTS_SPEAK": {
         const { text } = msg.payload as { text: string };
         const tabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
-        (async () => {
-          try {
-            if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
-            const audioUrl = await generateSpeech(text, "Natalie");
-            const audio = new Audio(audioUrl);
-            _ttsAudio = audio;
-            await audio.play();
-            await new Promise<void>((resolve) => {
-              audio.addEventListener("ended", () => { _ttsAudio = null; resolve(); });
-              audio.addEventListener("error", () => { _ttsAudio = null; resolve(); });
-            });
-            if (tabId) browser.tabs.sendMessage(tabId, { type: "TTS_DONE", payload: {} }).catch(() => {});
-          } catch (err) {
-            console.warn("[TTS] Error:", err);
-            if (tabId) browser.tabs.sendMessage(tabId, { type: "TTS_DONE", payload: { error: String(err) } }).catch(() => {});
-          }
-        })();
+        if (tabId) {
+          browser.tabs.sendMessage(tabId, { type: "TTS_SPEAK", payload: { text } }).catch(() => {});
+        }
         break;
       }
 
       case "TTS_STOP": {
         const stopTabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
-        if (_ttsAudio) { _ttsAudio.pause(); _ttsAudio = null; }
-        if (stopTabId) browser.tabs.sendMessage(stopTabId, { type: "TTS_DONE", payload: {} }).catch(() => {});
+        if (stopTabId) {
+          browser.tabs.sendMessage(stopTabId, { type: "TTS_STOP", payload: {} }).catch(() => {});
+        }
         break;
       }
 
