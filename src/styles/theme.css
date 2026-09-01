@@ -17,7 +17,10 @@
   --accent:           #8EA7E9;
   --accent-secondary: #E5E0FF;
   --accent-gradient:  linear-gradient(135deg, #8EA7E9, #E5E0FF);
-  --accent-glow:      rgba(142, 167, 233, 0.25);
+  --accent-glow:      rgba(142, 167, 233, 0.28);
+  --accent-glow-subtle: rgba(142, 167, 233, 0.12);
+  --glass-bg:         rgba(37, 42, 85, 0.75);
+  --glass-border:     rgba(142, 167, 233, 0.35);
 
   --success: #4ade80;
   --warning: #facc15;
@@ -34,11 +37,12 @@
   --dot-done: rgba(142, 167, 233, 0.4);
 
   --shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg:  0 8px 32px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 8px 24px var(--accent-glow);
+  --shadow-md:  0 4px 16px rgba(0, 0, 0, 0.35);
+  --shadow-lg:  0 12px 36px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 8px 30px var(--accent-glow);
 
-  --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+  --font-reading: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
   --font-size-xs:   0.75rem;
   --font-size-sm:   0.85rem;
   --font-size-base: 0.95rem;
@@ -94,7 +98,10 @@
   --accent:           #8CA9FF;
   --accent-secondary: #AAC4F5;
   --accent-gradient:  linear-gradient(135deg, #8CA9FF, #AAC4F5);
-  --accent-glow:      rgba(140, 169, 255, 0.20);
+  --accent-glow:      rgba(140, 169, 255, 0.25);
+  --accent-glow-subtle: rgba(140, 169, 255, 0.12);
+  --glass-bg:         rgba(255, 248, 222, 0.85);
+  --glass-border:     rgba(140, 169, 255, 0.4);
 
   --success: #16a34a;
   --warning: #ca8a04;

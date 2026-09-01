@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { v4 as uuidv4 } from "uuid";
 import InkBackground from "./InkBackground";
 import welcomeImg from "./assets/welcome.png";
 import q1FormatImg from "./assets/q1-format.png";
@@ -149,7 +150,7 @@ const QUESTION_IMAGES = [
 
 /* ─── Icon map for rendering ─── */
 
-const ICON_MAP: Record<string, React.ComponentType<React.SVGProps<SVGSVGElement>>> = {
+const ICON_MAP: Record<string, React.ComponentType<React.SVGProps<SVGSVGElement> & { size?: number | string }>> = {
   BookOpenText, Brain, Check, Clock, Eye, Feather, Globe, Heart,
   HelpCircle, Home, Landmark, Library, Lightbulb, Map, Palette,
   PersonStanding, Play, Rainbow, RefreshCw, Rocket, Ruler, Search,
@@ -186,14 +187,6 @@ const FEEDBACK_MESSAGES: Record<string, string[]> = {
 };
 
 /* ─── Helpers ─── */
-
-function generateUUID(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
 
 function previewLabel(value: string): string {
   const map: Record<string, string> = {
@@ -399,7 +392,7 @@ function App() {
     }
 
     const profile = {
-      userId: generateUUID(),
+      userId: uuidv4(),
       learningStyle: baseline.formatPreference === "visual" ? "visual" : "text",
       attentionSpan: baseline.attentionSpan,
       anchorNeed: baseline.needsConceptAnchor,
@@ -444,7 +437,7 @@ function App() {
       </header>
 
       <div className="progress-section">
-        <div className="progress-track">
+        <div className="progress-track" role="progressbar" aria-label="Onboarding progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progressPct)}>
           <div className="progress-fill" style={{ width: `${progressPct}%` }} />
         </div>
         <span className="progress-label">{progressLabel}</span>
@@ -475,15 +468,30 @@ function App() {
                 <div className="question-illustration"><img src={QUESTION_IMAGES[step]} alt="" /></div>
                 <h2 className="question-title"><Icon name={q.icon} /> {q.title}</h2>
                 <p className="question-sub">{q.subtitle}</p>
-                <div className="options-grid">
+                <div className="options-grid" role="radiogroup" aria-label={q.title}>
                   {q.options.map((opt) => (
                     <div
                       key={opt.value}
                       className={`option-card ${selectedValue === opt.value ? "selected" : ""} ${opt.skip ? "other-option" : ""}`}
                       data-value={opt.value}
                       role="radio"
+                      tabIndex={selectedValue === opt.value || (!selectedValue && q.options[0].value === opt.value) ? 0 : -1}
                       aria-checked={selectedValue === opt.value}
                       onClick={() => selectOption(q.id, opt.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          selectOption(q.id, opt.value);
+                        }
+                        const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+                        if (direction) {
+                          event.preventDefault();
+                          const current = q.options.findIndex(item => item.value === opt.value);
+                          const next = q.options[(current + direction + q.options.length) % q.options.length];
+                          selectOption(q.id, next.value);
+                          requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-value="${next.value}"]`)?.focus());
+                        }
+                      }}
                     >
                       <div className="option-emoji"><Icon name={opt.icon} /></div>
                       <div className="option-text-wrapper">
@@ -494,7 +502,7 @@ function App() {
                     </div>
                   ))}
                 </div>
-                {feedback && <div className="micro-feedback" key={feedback}>{feedback}</div>}
+                {feedback && <div className="micro-feedback" role="status" aria-live="polite" key={feedback}>{feedback}</div>}
               </div>
             );
           })()}
@@ -552,6 +560,7 @@ function App() {
           </button>
           <button
             className={`btn-next ${answers[QUESTIONS[step].id] ? "enabled" : ""}`}
+            disabled={!answers[QUESTIONS[step].id]}
             onClick={goNext}
           >
             {step === TOTAL_STEPS - 1 ? "View my profile" : "Continue"}

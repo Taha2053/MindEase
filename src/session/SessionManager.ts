@@ -278,8 +278,8 @@ export class SessionManager {
     // Call Layer 3 endSession with workspace data
     if (this.onLayer3EndSession) {
       try {
-        const stored = await browser.storage.local.get("sessionChunks");
-        const chunks = (stored.sessionChunks ?? []) as ContentChunk[];
+        const stored = await browser.storage.local.get(STORAGE_KEYS.SESSION_CHUNKS);
+        const chunks = (stored[STORAGE_KEYS.SESSION_CHUNKS] ?? []) as ContentChunk[];
         const highlights = this.getHighlights();
         const tabs = this.getTabs();
         const focus = this.getFocusSummary();
@@ -291,7 +291,6 @@ export class SessionManager {
         await this.onLayer3EndSession(undefined, highlights, tabs, focus);
       }
     }
-
     // Call Layer 2 endSession
     if (this.onLayer2EndSession) {
       await this.onLayer2EndSession();
@@ -306,7 +305,10 @@ export class SessionManager {
     this.clearTimers();
     this.session = null;
     try {
-      await browser.storage.local.remove(STORAGE_KEYS.WORKSPACE);
+      await browser.storage.local.remove([
+        STORAGE_KEYS.WORKSPACE,
+        STORAGE_KEYS.SESSION_CHUNKS,
+      ]);
     } catch (err) {
       console.warn("[MindEase] Workspace remove failed:", err);
     }

@@ -1,147 +1,208 @@
-<div align="center">
+# 🧠 MindEase — Adaptive Learning Browser Extension
 
-# 🧠 MindEase
-### *Learn the Way Your Brain Was Meant To*
+**Learn the way your brain was meant to.**
 
-**AI-native browser extension for neurodiverse learners**
-
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Vite](https://img.shields.io/badge/Vite-5.2-646CFF?style=flat-square&logo=vite)](https://vitejs.dev/)
-[![Chrome](https://img.shields.io/badge/Chrome-MV3-4285F4?style=flat-square&logo=googlechrome)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Firefox](https://img.shields.io/badge/Firefox-MV3-FF7139?style=flat-square&logo=firefox)](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
-
-*9th Global Competition on Design for Futures (GCD4F) — AI for Education Track*  
-*Team: The Architects | ENSIT, Tunis University, Tunisia*
-
-</div>
+MindEase is an AI-native browser extension (Manifest V3) designed for neurodiverse learners (ADHD, dyslexia, autism, and multilingual students). Instead of forcing students into dense, rigid text layouts, MindEase intercepts educational pages, PDFs, and lectures in real time, transforming them into structured, adaptive chunks with KaTeX math rendering, interactive definitions, AI-generated diagrams, text-to-speech audio, and personalized post-session synthesis.
 
 ---
 
-## What is MindEase?
+## 🌟 Why MindEase?
 
-Education was built for the average brain. **1 in 5 students doesn't have one.**
+Traditional education materials are structured for a single, uniform way of thinking. When a neurodiverse learner encounters dense walls of text:
+- Long paragraphs trigger cognitive fatigue and working memory overload.
+- Unstructured mathematical formulas create visual parsing barriers.
+- Technical vocabulary without context disrupts comprehension.
+- Missed or skimmed concepts go unnoticed until exam time.
 
-MindEase is a browser extension that intercepts educational content in real time — PDFs, websites, videos, live lectures — and restructures it to match each learner's individual cognitive profile. No manual setup. No clinical diagnosis required. It works silently in the background, adapting to the way each brain actually processes information.
-
-It is not an accessibility patch. It is a fundamental rethinking of how educational content reaches the learner.
+MindEase addresses this without rewriting or simplifying away factual content. It **annotates and restructures** original material into adaptive presentations tailored to each student's cognitive profile, while an online Reinforcement Learning (Q-learning) agent continually optimizes presentation parameters based on real interaction telemetry.
 
 ---
 
-## How It Works
+## 🧩 Architecture at a Glance
 
-MindEase operates through three interconnected layers:
+MindEase operates through a 3-Layer Cognitive Architecture:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Layer 1 — Real-Time Content Transformation                 │
-│  Intercepts PDFs, websites, videos and live lectures.       │
-│  Restructures content on the fly per the learner's profile. │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ cognitive profile
-┌─────────────────────────────▼───────────────────────────────┐
-│  Layer 2 — Adaptive Cognitive Profiling                     │
-│  A reinforcement-learning agent builds and continuously     │
-│  refines a model of how each specific brain learns.         │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ behavioral signals
-┌─────────────────────────────▼───────────────────────────────┐
-│  Layer 3 — Session Memory & Synthesis                       │
-│  Tracks engagement, detects gaps, finds cross-source        │
-│  connections, and generates a personalized knowledge        │
-│  artifact at the end of every session.                      │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Layer 1 — Real-Time Content Transformation (Mistral + Visuals + KaTeX)     │
+│  • Non-destructive LLM structural annotation (chunks, concepts, formulas)   │
+│  • Automated Napkin AI diagrams (flowcharts, mindmaps) & FLUX illustrations │
+│  • Free Puter.js / Web Speech TTS & OCR.space image text extraction         │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ Profile & Parameters
+┌──────────────────────────────────────▼──────────────────────────────────────┐
+│  Layer 2 — Adaptive Cognitive Profiling (Q-Learning RL Agent)               │
+│  • 81 Discrete Cognitive States (Highlight, Pause, Re-read, Skip rates)     │
+│  • 9 Actions: Dynamically adjusts chunk size, summaries, visual anchors    │
+│  • Transparent User Controls: Manual overrides always take precedence       │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │ Behavioral Telemetry
+┌──────────────────────────────────────▼──────────────────────────────────────┐
+│  Layer 3 — Session Memory & Synthesis (Multi-Tab Workspace)                 │
+│  • Real-time engagement scoring & knowledge gap classification              │
+│  • Cross-source concept connection detection across tabs and PDFs           │
+│  • Generates 7-section Knowledge Artifact & personalized study cards        │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Features
+## 🚀 Key Features
 
-- **Real-time adaptation** — content restructured before it hits the screen
-- **Cognitive profiling** — RL agent learns from highlights, pauses, re-reads, skips
-- **Session synthesis** — personalized study cards and knowledge artifact after every session
-- **Gap detection** — flags what the brain skipped or skimmed for review
-- **Cross-source linking** — connects concepts across PDFs, videos, and websites
-- **Privacy-first** — all processing and storage is local; no data leaves the device
-- **Zero setup** — no diagnosis, no manual configuration required
-
----
-
-## Tech Stack
-
-| | |
-|---|---|
-| Language | TypeScript |
-| Build tool | Vite + `vite-plugin-web-extension` |
-| Browsers | Chrome MV3, Firefox MV3 |
-| Storage | `chrome.storage.local` (fully local) |
-| Package manager | npm |
+- **Non-Destructive Content Transformation:** Preserves 100% of original text, equations, and examples while wrapping them into scannable chunks.
+- **Formula Typesetting with KaTeX:** Automatically identifies LaTeX and mathematical formulas in text and renders them cleanly.
+- **Smart AI Visuals & Diagrams:** Automatically generates Napkin AI flowcharts and HuggingFace FLUX illustrations for conceptual anchors.
+- **Interactive Vocabulary & Definitions:** Tooltip definitions for complex terms—especially helpful for second-language learners.
+- **Free Built-in Text-to-Speech:** Zero-configuration client-side speech synthesis with pacing and progress tracking.
+- **OCR Text Extraction & Explainer:** Right-click any image, formula, or diagram to extract text or get a concise tutor explanation.
+- **Online Reinforcement Learning:** Q-learning agent adjusts presentation parameters automatically without clinical surveys.
+- **Multi-Tab Study Workspace:** Tracks active study time, filters distractions, and logs interruptions.
+- **Comprehensive Post-Session Dashboard:** 10 visual analytical sections, flashcards, knowledge gaps, and exportable artifacts.
 
 ---
 
-## Getting Started
+## 🛠️ Tech Stack & Free Services
+
+- **Runtime:** TypeScript (Strict Mode), React 19, Vite, `vite-plugin-web-extension`
+- **Target Browsers:** Google Chrome (MV3) & Mozilla Firefox (MV3 Gecko)
+- **AI & LLM Services:**
+  - **Mistral AI (`mistral-small-latest`)**: Fast, accurate structural tagging and contextual explanations.
+  - **Napkin AI**: Automated vector diagrams, flowcharts, and mind maps.
+  - **HuggingFace Inference (`FLUX.1-dev`)**: Conceptual illustrations.
+  - **OCR.space**: Free image OCR text extraction.
+- **Client-Side Engines:**
+  - **KaTeX**: Fast math typesetting.
+  - **Web Speech / Puter.js**: Browser-native text-to-speech without external audio servers.
+  - **Local Storage**: Fully private; all Q-tables, profiles, notes, and session logs stay in `browser.storage.local`.
+
+---
+
+## 📦 Installation & Setup
+
+### Prerequisites
+- Node.js (v18 or higher recommended)
+- npm or uv/pnpm
+
+### 1. Clone & Install Dependencies
 
 ```bash
-# Clone the repository
 git clone https://github.com/Taha2053/MindEase.git
 cd MindEase
-
-# Install dependencies
 npm install
-
-# Development build (Chrome)
-npm run dev:chrome
-
-# Development build (Firefox)
-npm run dev:firefox
-
-# Production build (both browsers)
-npm run build
 ```
 
-### Loading the extension locally
+### 2. Configure Environment Variables
 
-**Chrome:**
-1. Go to `chrome://extensions`
-2. Enable **Developer mode**
-3. Click **Load unpacked** → select `dist/chrome`
+Create a `.env` file in the project root:
 
-**Firefox:**
-1. Go to `about:debugging`
-2. Click **This Firefox** → **Load Temporary Add-on**
-3. Select any file inside `dist/firefox`
+```env
+# Mistral AI API Key (required for content transformation & explanation)
+VITE_MISTRAL_API_KEY=your_mistral_api_key_here
 
----
+# Napkin AI API Key (optional — for automated diagram generation)
+VITE_NAPKIN_API_KEY=your_napkin_api_key_here
 
-## Project Structure
+# HuggingFace Token (optional — for FLUX illustrative image generation)
+VITE_HF_TOKEN=your_huggingface_token_here
 
+# OCR.space API Key (optional — for image text extraction)
+VITE_OCR_SPACE_API_KEY=your_ocr_space_api_key_here
 ```
-src/
-├── types/          # Shared TypeScript interfaces — read before editing any layer
-├── background/     # Service worker — session lifecycle & message routing
-├── content/        # Content script — runs on every visited page
-├── popup/          # Extension popup panel
-├── layer1/         # Real-Time Content Transformation
-├── layer2/         # Adaptive Cognitive Profiling
-└── layer3/         # Session Memory & Synthesis
+
+### 3. (Optional) Run the Napkin Proxy for Firefox Dev
+
+Firefox enforces strict origin constraints on extension requests (`moz-extension://`). If using Napkin AI in Firefox:
+
+```bash
+npm run napkin-proxy
 ```
 
 ---
 
-## Contributing
+## 💻 Build Commands
 
-```
-main                ← stable, reviewed code only
-feature/layer1-*    ← content transformation work
-feature/layer2-*    ← cognitive profiling work
-feature/layer3-*    ← session memory & synthesis work
-```
-
-All inter-layer communication uses typed messages defined in `src/types/index.ts`.  
-**Do not modify shared types without a team discussion.**
+| Command | Description |
+|---|---|
+| `npm run build:chrome` | Compiles production bundle for Google Chrome into `dist/chrome/` |
+| `npm run build:firefox` | Compiles production bundle for Mozilla Firefox into `dist/firefox/` |
+| `npm run build` | Compiles both Chrome and Firefox targets sequentially |
+| `npm run dev:chrome` | Starts Vite development server with Hot Module Reloading for Chrome |
+| `npm run dev:firefox` | Starts Vite development server with Hot Module Reloading for Firefox |
+| `npm test` | Runs the full Vitest unit test suite (35+ unit tests across all layers) |
 
 ---
 
-<div align="center">
-  <sub>Built with purpose for learners who think differently.</sub>
-</div>
+## 🌐 Loading the Extension in Your Browser
+
+### Google Chrome (or Brave / Edge / Chromium)
+1. Open Chrome and navigate to `chrome://extensions`.
+2. Enable **Developer mode** in the top-right corner.
+3. Click **Load unpacked**.
+4. Select the `dist/chrome` folder inside your MindEase project directory.
+
+### Mozilla Firefox
+1. Open Firefox and navigate to `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on...**.
+3. Select `dist/firefox/manifest.json` (or any file inside `dist/firefox/`).
+
+---
+
+## 📖 How to Use MindEase
+
+1. **Onboarding Questionnaire:**
+   When you first install the extension, the onboarding questionnaire opens automatically to establish your baseline profile (format preference, reading pace, attention span, cognitive condition, and learning approach).
+
+2. **Browsing & Studying:**
+   - When you visit an educational article, documentation page, or lecture, MindEase activates automatically.
+   - The adaptive sidebar presents the page restructured into digestible chunks, complete with KaTeX equations and visual diagrams.
+   - Click the **Read Aloud** button for audio narration.
+
+3. **Highlighting & Note-Taking:**
+   - Highlight any text on the page to save it as a study note.
+   - Notes are aggregated across all visited tabs in your study session.
+
+4. **Right-Click Context Tools:**
+   - **Explain with MindEase:** Highlight complex text, right-click, and get a concise tutor breakdown.
+   - **Extract Text with MindEase:** Right-click diagrams or slides to perform OCR text extraction.
+   - **Capture & Explain:** Take a screenshot of formulas or graphs to crop and analyze them.
+
+5. **Popup Controls & Overrides:**
+   - Click the MindEase extension icon to check active session status, adjust manual parameter overrides, or view live Q-table learning values.
+
+6. **Session Dashboard & Knowledge Artifact:**
+   - End your study session from the popup or close your study tabs.
+   - MindEase opens the **Dashboard**, presenting your complete 7-section Knowledge Artifact:
+     - Flagged gaps (missed or rushed sections)
+     - Cross-source concept links
+     - Personalized study flashcards
+     - Focus metrics and duration statistics
+     - Export options (Markdown / JSON)
+
+---
+
+## 🧪 Testing & Verification
+
+MindEase includes unit test suites verifying all layer contracts:
+
+```bash
+npm test
+```
+
+Test suites include:
+- `src/layer1/layer1.test.ts`: Annotation parsing, tag extraction, definition flags, formula wrapping.
+- `src/layer2/layer2.test.ts`: 81-state discretization, Q-learning updates, user overrides, explainability generator.
+- `src/layer3/layer3.test.ts`: Engagement score boundaries, gap severity sorting, flashcard generation, connection detection.
+- `src/session/session.test.ts`: Workspace lifecycle state transitions, focus time tracking, per-tab highlights.
+
+---
+
+## 📚 Technical Documentation
+
+For the comprehensive technical specification, mathematical models, message passing contracts, and state transition details, refer to:
+👉 **[`TECHNICAL_REFERENCE.md`](TECHNICAL_REFERENCE.md)**
+
+---
+
+## 📄 License
+
+MIT License. Built with purpose for learners who think differently.

@@ -444,7 +444,6 @@ function onExtensionStateChange(active: boolean): void {
     removeReopenButton();
     _cleanupYouTube?.();
     _cleanupYouTube = null;
-    stopQTablePolling();
   } else {
     const { decision, ambiguous } = shouldActivate();
     if (!decision) return;
@@ -734,6 +733,17 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     } else {
       showOcrResult(p.text, p.error);
     }
+  }
+
+  if (msg.type === "TTS_SPEAK") {
+    const { text } = msg.payload as { text: string };
+    if (text && text.trim().length > 0) {
+      speakTexts([text]);
+    }
+  }
+
+  if (msg.type === "TTS_STOP") {
+    stopTTS();
   }
 });
 
@@ -2691,21 +2701,14 @@ function injectOverlay(
     btn.textContent = "Generating...";
     (btn as HTMLButtonElement).disabled = true;
     try {
-      const response = await browser.runtime.sendMessage({
+      const profile = await browser.storage.local.get("mindease_profile");
+      const stored = profile.mindease_profile as Record<string, unknown> | undefined;
+      const useFlux = (stored?.baseline as Record<string, unknown> | undefined)?.formatPreference === "visual";
+      const response = (await browser.runtime.sendMessage({
         type: "GENERATE_VISUALS",
-        payload: { chunks: _contentChunks.slice(0, 5) },
-      });
-      const entries: VisualEntry[] = (response?.visuals ?? []).map((r: { fileId: string; concept: string; source: string; format: string; dataUrl: string; width: number; height: number; generatedAt: number; expiresAt: number }) => ({
-        id: r.fileId,
-        concept: r.concept,
-        source: "napkin",
-        format: r.format,
-        dataUrl: r.dataUrl,
-        width: r.width,
-        height: r.height,
-        generatedAt: Date.now(),
-        expiresAt: Date.now() + 25 * 60 * 1000,
-      }));
+        payload: { chunks: _contentChunks.slice(0, 5), useFlux },
+      })) as { type?: string; visuals?: VisualEntry[] } | undefined;
+      const entries: VisualEntry[] = response?.visuals ?? [];
       if (entries.length > 0) {
         renderVisuals(entries);
       } else {

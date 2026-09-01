@@ -9,6 +9,7 @@ import browser from "webextension-polyfill";
 import type { VisualEntry, VisualsCache, TransformationParams, ContentChunk } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { generateNapkinVisuals, generateNapkinVisualFromContent, type NapkinOptions } from "./napkinClient";
+import { generateFluxImages, type FluxResult } from "./fluxClient";
 
 /* ── Cache helpers ──────────────────────────────────────────────── */
 
@@ -21,7 +22,29 @@ async function loadVisualsCache(): Promise<VisualsCache> {
   }
 }
 
+const MAX_CACHE_ENTRIES = 20;
+const MAX_CACHE_BYTES = 8 * 1024 * 1024;
+
+function pruneVisualsCache(entries: VisualEntry[]): VisualEntry[] {
+  const unique = new Map<string, VisualEntry>();
+  for (const entry of [...entries].sort((a, b) => b.generatedAt - a.generatedAt)) {
+    const key = `${entry.source}:${entry.concept.trim().toLowerCase()}`;
+    if (!unique.has(key)) unique.set(key, entry);
+  }
+
+  const retained: VisualEntry[] = [];
+  let bytes = 0;
+  for (const entry of unique.values()) {
+    const entryBytes = entry.dataUrl.length * 2;
+    if (retained.length >= MAX_CACHE_ENTRIES || bytes + entryBytes > MAX_CACHE_BYTES) continue;
+    retained.push(entry);
+    bytes += entryBytes;
+  }
+  return retained;
+}
+
 async function saveVisualsCache(cache: VisualsCache): Promise<void> {
+  cache.entries = pruneVisualsCache(cache.entries);
   await browser.storage.local.set({ [STORAGE_KEYS.VISUALS_CACHE]: cache });
 }
 
@@ -30,7 +53,7 @@ async function saveVisualsCache(cache: VisualsCache): Promise<void> {
  * Called after content transformation when useVisualAnchors is true.
  *
  * Napkin: generates diagrams/infographics for ALL concepts
- * Flux: generates illustrative images (only if useFlux is true, controlled by profile)
+ * Flux: generates illustrative images (only if useFlux is true)
  *
  * Returns VisualEntry[] ready to be sent to the content script.
  */
@@ -38,6 +61,7 @@ export async function generateVisualsForConcepts(
   concepts: string[],
   params: TransformationParams,
   force = false,
+  useFlux = false,
 ): Promise<VisualEntry[]> {
   if (concepts.length === 0) return [];
   if (!params.useVisualAnchors && !force) return [];
@@ -54,14 +78,6 @@ export async function generateVisualsForConcepts(
   const napkinResults = await generateNapkinVisuals(uniqueConcepts.slice(0, 5), napkinOptions);
 
   for (const nr of napkinResults) {
-    const ext = nr.format === "png" ? "png" : "svg";
-    const filename = `MindEase/visuals/${sanitizeFilename(nr.concept)}.${ext}`;
-    browser.downloads.download({
-      url: nr.dataUrl,
-      filename,
-      saveAs: false,
-    }).catch(() => {}); // silent if downloads fail (e.g. no permission)
-
     entries.push({
       id: uuidv4(),
       concept: nr.concept,
@@ -73,6 +89,28 @@ export async function generateVisualsForConcepts(
       generatedAt: now,
       expiresAt: now + 25 * 60 * 1000,
     });
+  }
+
+  // 2. Flux illustrative images (optional)
+  if (useFlux) {
+    try {
+      const fluxResults = await generateFluxImages(uniqueConcepts.slice(0, 3));
+      for (const [concept, result] of fluxResults) {
+        entries.push({
+          id: uuidv4(),
+          concept,
+          source: "flux",
+          format: "png",
+          dataUrl: result.dataUrl,
+          width: result.width,
+          height: result.height,
+          generatedAt: now,
+          expiresAt: now + 25 * 60 * 1000,
+        });
+      }
+    } catch (err) {
+      console.warn("[VisualOrchestrator] Flux generation failed:", err);
+    }
   }
 
   // Cache results
@@ -92,6 +130,7 @@ export async function generateVisualsFromChunks(
   chunks: ContentChunk[],
   params: TransformationParams,
   force = false,
+  useFlux = false,
 ): Promise<VisualEntry[]> {
   if (chunks.length === 0) return [];
   if (!params.useVisualAnchors && !force) return [];
@@ -125,6 +164,29 @@ export async function generateVisualsFromChunks(
       });
     } else {
       console.warn("[VisualOrchestrator] Skipped chunk visual:", r.reason?.message || r.reason);
+    }
+  }
+
+  // Flux illustrative images for chunks (optional)
+  if (useFlux) {
+    const concepts = chunks.slice(0, 3).map(c => c.conceptTags[0] ?? `Section ${c.position + 1}`).filter(Boolean);
+    try {
+      const fluxResults = await generateFluxImages(concepts);
+      for (const [concept, result] of fluxResults) {
+        entries.push({
+          id: uuidv4(),
+          concept,
+          source: "flux",
+          format: "png",
+          dataUrl: result.dataUrl,
+          width: result.width,
+          height: result.height,
+          generatedAt: now,
+          expiresAt: now + 25 * 60 * 1000,
+        });
+      }
+    } catch (err) {
+      console.warn("[VisualOrchestrator] Flux chunk generation failed:", err);
     }
   }
 
@@ -174,11 +236,4 @@ export async function getCachedVisuals(concepts: string[]): Promise<VisualEntry[
   );
 }
 
-function sanitizeFilename(name: string): string {
-  return name
-    .replace(/[<>:"/\\|?*]/g, "_")
-    .replace(/\s+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 100) || "visual";
-}
+

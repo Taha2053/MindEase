@@ -7,11 +7,11 @@
 }
 
 html {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
   background: var(--bg-base);
   color: var(--text-primary);
-  font-size: 1.3rem;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   scroll-behavior: smooth;
 }
@@ -246,14 +246,16 @@ body {
 /* ── Section Cards ── */
 .section-card {
   background: var(--bg-surface);
+  border: 1px solid var(--border);
   border-radius: 18px;
   padding: 24px 28px;
-  margin-bottom: 20px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
-  transition: box-shadow 0.2s;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .section-card:hover {
-  box-shadow: 0 4px 12px rgba(0,0,0,0.04), 0 2px 4px rgba(0,0,0,0.02);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-hover);
 }
 .section-card-header {
   display: flex;
@@ -832,6 +834,104 @@ body {
   gap: 8px;
 }
 
+/* ── Session History ── */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.history-item {
+  background: var(--bg-surface-alt);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: background 0.2s;
+  position: relative;
+}
+.history-item:hover {
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg-surface-alt));
+}
+.history-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.history-name {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--accent);
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.15s;
+}
+.history-name:hover {
+  border-bottom-color: var(--accent);
+}
+.history-name-input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: inherit;
+  outline: none;
+  flex: 1;
+  min-width: 0;
+}
+.history-date {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.history-metrics {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.history-metric {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+.history-metric svg {
+  color: var(--text-muted);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.history-actions {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.history-item:hover .history-actions {
+  opacity: 1;
+}
+.history-action-btn {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border: none;
+  color: var(--danger);
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.history-action-btn:hover {
+  background: color-mix(in srgb, var(--danger) 25%, transparent);
+}
+
 /* ── Empty state ── */
 .empty-state {
   text-align: center;
@@ -865,6 +965,7 @@ body {
 .section-card:nth-child(8) { animation-delay: 0.32s; }
 .section-card:nth-child(9) { animation-delay: 0.36s; }
 .section-card:nth-child(10) { animation-delay: 0.4s; }
+.section-card:nth-child(11) { animation-delay: 0.44s; }
 
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(10px); }

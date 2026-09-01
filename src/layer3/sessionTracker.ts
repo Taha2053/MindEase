@@ -45,9 +45,9 @@ function classifyEngagement(score: number): EngagementLevel {
 export class SessionTracker {
   private log: SessionLog;
 
-  constructor(userId: string, profile: CognitiveProfile) {
+  constructor(userId: string, profile: CognitiveProfile, sessionId?: string) {
     this.log = {
-      sessionId:     uuidv4(),
+      sessionId:     sessionId ?? uuidv4(),
       userId,
       profile,
       sources:       [],

@@ -10,9 +10,8 @@ const FORWARD_BLOCKLIST = new Set([
 
 http
   .createServer((req, res) => {
-    const url = new URL(req.url, `http://localhost:${PORT}`);
-    const path = url.pathname + url.search;
-
+    const rawPath = url.pathname + url.search;
+    const normalizedPath = rawPath.startsWith("/v1") ? rawPath : `/v1${rawPath}`;
     const headers = {};
     for (const [k, v] of Object.entries(req.headers)) {
       if (!FORWARD_BLOCKLIST.has(k) && typeof v === "string") {
@@ -23,7 +22,7 @@ http
 
     const options = {
       hostname: NAPKIN_BASE,
-      path: `/v1${path}`,
+      path: normalizedPath,
       method: req.method,
       headers,
     };

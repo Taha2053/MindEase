@@ -375,7 +375,7 @@ const ACTIONS_LABELS = [
 function RLAgentPanel({ profile }: { profile: FullCognitiveProfile }) {
   const [open, setOpen] = useState(false);
   const [qTable, setQTable] = useState<QTable | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -400,7 +400,7 @@ function RLAgentPanel({ profile }: { profile: FullCognitiveProfile }) {
 
   return (
     <>
-      <button className="rl-toggle" onClick={() => setOpen(o => !o)}>
+      <button className="rl-toggle" onClick={() => setOpen(o => !o)} aria-expanded={open} aria-controls="mindease-rl-panel">
         <span className="rl-toggle-label">
           <span className="rl-toggle-icon">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -411,7 +411,7 @@ function RLAgentPanel({ profile }: { profile: FullCognitiveProfile }) {
           <ChevronDown size={14} />
         </span>
       </button>
-      <div className={`rl-panel ${open ? "open" : ""}`}>
+      <div id="mindease-rl-panel" className={`rl-panel ${open ? "open" : ""}`} hidden={!open}>
         {/* RL State rates */}
         <div className="rl-section-label">Behavior Signals</div>
         <div className="rl-rates">

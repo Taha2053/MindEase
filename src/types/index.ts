@@ -310,6 +310,19 @@ export interface WorkspaceSession {
   stateTransitions: StateTransition[];
 }
 
+// ── Session History (persisted across sessions for dashboard) ───────────────
+
+export interface SessionHistoryEntry {
+  sessionId: string;
+  name: string;
+  customName?: string;        // user-edited name, takes precedence over auto-generated name
+  endTime: number;
+  durationMs: number;
+  conceptCount: number;
+  focusScore: number;
+  resourceCount: number;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Layer 2 - Adaptive Cognitive Profiling - RL Agent Types
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -531,6 +544,10 @@ export const STORAGE_KEYS = {
   VISUALS_CACHE:   "mindease_visuals_cache",
   EXTENSION_ACTIVE: "mindease_extension_active",
   EXCLUDED_TABS: "mindease_excluded_tabs",
+  SESSION_HISTORY: "mindease_session_history",
+  SESSION_CHUNKS: "mindease_session_chunks",
+  ACTIVE_LAYER3_SESSION: "mindease_active_layer3_session",
+  LATEST_ARTIFACT: "latestArtifact",
 } as const;
 
 // ── Visual Generation Types ──────────────────────────────────────────
