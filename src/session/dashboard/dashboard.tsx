@@ -25,9 +25,16 @@ import {
   AlertTriangle, Link, AlignStartVertical, BookOpenText,
   MessageSquare, Film, Globe, GraduationCap,
   LayoutDashboard, Eye, ChartNoAxesColumn, Sparkles, Clock,
-  Volume2, VolumeX,
+  Volume2, VolumeX, Play,
 } from "lucide-react";
 import { speak, stop } from "@/utils/ttsManager";
+import {
+  submitDocumentForAnimation,
+  submitArxivPaperForAnimation,
+  pollJobStatus,
+  fetchDocumentVideos,
+} from "@/layer1/premiumClient";
+import type { PremiumJobStatus } from "@/types";
 
 /* ─── Helpers ──────────────────────────────────────────────────────────────── */
 
@@ -202,6 +209,7 @@ function drawFocusTimeline(
 function getNavItems(visualFirst: boolean): { id: string; label: string; icon: FC<{ size?: number }> }[] {
   const items = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
+    { id: "video-studio", label: "Video Studio", icon: Film },
     { id: "focus", label: "Focus", icon: Eye },
     { id: "resources", label: "Resources", icon: FolderOpen },
     { id: "learned", label: "Learned", icon: BookOpen },
@@ -772,6 +780,475 @@ const SectionVisuals: FC<{
   );
 };
 
+/* ─── Video Studio (Premium) ───────────────────────────────────────────────── */
+
+const SectionVideoStudio: FC<{ defaultTopic?: string }> = ({ defaultTopic }) => {
+  const [topic, setTopic] = useState(defaultTopic || "");
+  const [sourceType, setSourceType] = useState<"arxiv" | "wikipedia" | "website" | "custom">("custom");
+  const [urlOrId, setUrlOrId] = useState("");
+  const [content, setContent] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<PremiumJobStatus | null>(null);
+  const [activeDocId, setActiveDocId] = useState<string | null>(null);
+  const [videos, setVideos] = useState<Array<{ id: string; concept: string; video_url: string }>>([
+    {
+      id: "demo_attention",
+      concept: "MindEase Attention Animation (Local Demo)",
+      video_url: "http://localhost:8000/api/video/DemoAttentionScene",
+    },
+  ]);
+  const [selectedVideoIdx, setSelectedVideoIdx] = useState(0);
+
+  useEffect(() => {
+    if (!jobId) return;
+    const interval = setInterval(async () => {
+      try {
+        const status = await pollJobStatus(jobId);
+        setJobStatus(status);
+        if (status.status === "completed") {
+          clearInterval(interval);
+          const targetId = status.arxiv_id || status.paper_id || activeDocId || status.job_id;
+          const doc = await fetchDocumentVideos(targetId);
+          if (doc && doc.videos.length > 0) {
+            setVideos(prev => [...doc.videos, ...prev]);
+            setSelectedVideoIdx(0);
+          }
+        } else if (status.status === "failed") {
+          clearInterval(interval);
+        }
+      } catch (err) {
+        console.warn("[VideoStudio] Polling status error:", err);
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [jobId, activeDocId]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!topic.trim() && !urlOrId.trim() && !content.trim()) {
+      alert("Please enter a concept, paper ID, URL, or formula to animate.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setJobStatus(null);
+    try {
+      if (sourceType === "arxiv" && /^\d{4}\.\d{4,5}(v\d+)?$/.test(urlOrId.trim())) {
+        const res = await submitArxivPaperForAnimation(urlOrId.trim());
+        setJobId(res.job_id);
+        setActiveDocId(res.arxiv_id);
+      } else {
+        const res = await submitDocumentForAnimation({
+          title: topic.trim() || "Concept Animation",
+          source_type: sourceType === "wikipedia" ? "wikipedia" : (sourceType === "arxiv" ? "arxiv" : "website"),
+          url: urlOrId.trim() || undefined,
+          content: content.trim() || undefined,
+        });
+        setJobId(res.job_id);
+        setActiveDocId(res.arxiv_id);
+      }
+    } catch (err) {
+      alert("Failed to submit animation request: " + String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const currentVideo = videos[selectedVideoIdx] || videos[0];
+
+  return (
+    <section className="section-card" id="section-video-studio" data-section="video-studio">
+      <div className="section-card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Film size={18} style={{ color: "var(--accent)" }} />
+          <h2>AI Video Animation Studio</h2>
+        </div>
+        <span className="badge" style={{ background: "var(--accent-gradient)", color: "#1A1D3A", fontWeight: 700 }}>
+          3Blue1Brown Manim + Voiceover
+        </span>
+      </div>
+
+      <div className="video-studio-grid">
+        {/* Left: Generator Console */}
+        <div className="video-form-card">
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <Sparkles size={16} style={{ color: "var(--accent)" }} />
+            <h3 style={{ fontSize: "0.9rem", fontWeight: 600 }}>Create Animated Explainer</h3>
+          </div>
+          <p style={{ fontSize: "0.75rem", color: "var(--text-dim)", lineHeight: 1.4 }}>
+            Transform complex algorithms, math formulas, or research papers into synchronized 3Blue1Brown-style Manim videos.
+          </p>
+
+          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div className="video-field-group">
+              <label className="video-field-label">
+                Content Source
+              </label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {(["custom", "arxiv", "wikipedia", "website"] as const).map(type => (
+                  <button
+                    key={type}
+                    type="button"
+                    className={`video-chip ${sourceType === type ? "active" : ""}`}
+                    onClick={() => setSourceType(type)}
+                  >
+                    {type === "arxiv" ? "arXiv Paper" : type === "wikipedia" ? "Wikipedia" : type === "website" ? "Web Article" : "Custom Topic"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="video-field-group">
+              <label className="video-field-label" htmlFor="video-topic">
+                Concept Title / Name
+              </label>
+              <input
+                id="video-topic"
+                type="text"
+                className="video-input"
+                placeholder="e.g. Scaled Dot-Product Attention or Eigenvalues"
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+              />
+            </div>
+
+            {(sourceType === "arxiv" || sourceType === "wikipedia" || sourceType === "website") && (
+              <div className="video-field-group">
+                <label className="video-field-label" htmlFor="video-url">
+                  {sourceType === "arxiv" ? "arXiv Paper ID" : "Source URL"}
+                  <span>{sourceType === "arxiv" ? "e.g. 1706.03762" : "e.g. https://en.wikipedia.org/..."}</span>
+                </label>
+                <input
+                  id="video-url"
+                  type="text"
+                  className="video-input"
+                  placeholder={sourceType === "arxiv" ? "1706.03762" : "https://..."}
+                  value={urlOrId}
+                  onChange={(e) => setUrlOrId(e.target.value)}
+                />
+              </div>
+            )}
+
+            <div className="video-field-group">
+              <label className="video-field-label" htmlFor="video-content">
+                Formula or Core Description <span>(LaTeX or Markdown)</span>
+              </label>
+              <textarea
+                id="video-content"
+                className="video-textarea"
+                placeholder="e.g. Attention(Q, K, V) = softmax(QK^T / sqrt(d))V"
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="video-submit-btn"
+              disabled={isSubmitting || !!(jobStatus && jobStatus.status === "processing")}
+            >
+              {isSubmitting ? (
+                <>Submitting request...</>
+              ) : jobStatus && jobStatus.status === "processing" ? (
+                <><div className="loading-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Generating Animation...</>
+              ) : (
+                <><Film size={16} /> Render 3B1B Video Animation</>
+              )}
+            </button>
+          </form>
+
+          {/* Progress Box */}
+          {jobStatus && (
+            <div className="video-progress-box">
+              <div className="video-progress-header">
+                <span>{jobStatus.current_step || "Processing..."}</span>
+                <span style={{ color: jobStatus.status === "failed" ? "var(--danger)" : "var(--accent)" }}>
+                  {jobStatus.status === "completed" ? "✓ Done" : jobStatus.status === "failed" ? "✗ Failed" : `${Math.round(jobStatus.progress * 100)}%`}
+                </span>
+              </div>
+              <div className="video-progress-bar">
+                <div className="video-progress-fill" style={{ width: `${Math.max(8, Math.round(jobStatus.progress * 100))}%` }} />
+              </div>
+              {jobStatus.error && (
+                <p style={{ color: "var(--danger)", fontSize: "0.72rem" }}>{jobStatus.error}</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Right: Cinema Video Player */}
+        <div className="video-player-card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ fontSize: "0.9rem", fontWeight: 600 }}>Video Cinema</h3>
+            <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              {videos.length} Animation{videos.length !== 1 ? "s" : ""} Available
+            </span>
+          </div>
+
+          <div className="video-screen-wrap">
+            {currentVideo ? (
+              <video
+                key={currentVideo.video_url}
+                src={currentVideo.video_url}
+                controls
+                autoPlay={false}
+              />
+            ) : (
+              <div style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>No video loaded</div>
+            )}
+          </div>
+
+          {currentVideo && (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--text-primary)" }}>
+                  {currentVideo.concept}
+                </span>
+                <a
+                  href={currentVideo.video_url}
+                  download
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--accent)", textDecoration: "none", fontSize: "0.72rem", display: "flex", alignItems: "center", gap: 4 }}
+                >
+                  <FileDown size={14} /> Download MP4
+                </a>
+              </div>
+
+              {videos.length > 1 && (
+                <div className="video-list-chips">
+                  {videos.map((v, idx) => (
+                    <button
+                      key={v.id + idx}
+                      type="button"
+                      className={`video-chip ${selectedVideoIdx === idx ? "active" : ""}`}
+                      onClick={() => setSelectedVideoIdx(idx)}
+                    >
+                      <Play size={10} /> {trunc(v.concept, 24)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+};
+
+/* ─── Video Prompt Modal (One-Click Launcher) ──────────────────────────────── */
+
+const VideoPromptModal: FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  defaultTopic?: string;
+}> = ({ isOpen, onClose, defaultTopic }) => {
+  const [inputVal, setInputVal] = useState(defaultTopic || "");
+  const [formula, setFormula] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<PremiumJobStatus | null>(null);
+  const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
+  const [videoConcept, setVideoConcept] = useState("");
+
+  useEffect(() => {
+    if (!jobId) return;
+    const interval = setInterval(async () => {
+      try {
+        const status = await pollJobStatus(jobId);
+        setJobStatus(status);
+        if (status.status === "completed") {
+          clearInterval(interval);
+          const targetId = status.arxiv_id || status.paper_id || status.job_id;
+          const doc = await fetchDocumentVideos(targetId);
+          if (doc && doc.videos.length > 0) {
+            setRenderedVideoUrl(doc.videos[0].video_url);
+            setVideoConcept(doc.videos[0].concept);
+          }
+        } else if (status.status === "failed") {
+          clearInterval(interval);
+        }
+      } catch (err) {
+        console.warn("[VideoPromptModal] Polling error:", err);
+      }
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [jobId]);
+
+  if (!isOpen) return null;
+
+  const handleGenerate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const query = inputVal.trim();
+    if (!query) {
+      alert("Please enter an arXiv ID, Wikipedia link, or topic name.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setJobStatus(null);
+    setRenderedVideoUrl(null);
+
+    try {
+      const isArxiv = /^\d{4}\.\d{4,5}(v\d+)?$/.test(query);
+      if (isArxiv) {
+        const res = await submitArxivPaperForAnimation(query);
+        setJobId(res.job_id);
+      } else {
+        const isUrl = query.startsWith("http://") || query.startsWith("https://");
+        const res = await submitDocumentForAnimation({
+          title: isUrl ? "Web Animation" : query,
+          source_type: query.includes("wikipedia.org") ? "wikipedia" : (isUrl ? "website" : "article"),
+          url: isUrl ? query : undefined,
+          content: formula.trim() ? formula.trim() : (!isUrl ? query : undefined),
+        });
+        setJobId(res.job_id);
+      }
+    } catch (err) {
+      alert("Failed to start video generator: " + String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="v-modal-overlay" onClick={onClose}>
+      <div className="v-modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="v-modal-header">
+          <div className="v-modal-title">
+            <Film size={20} style={{ color: "var(--accent)" }} />
+            <span>AI Video Animation Studio</span>
+          </div>
+          <button className="v-modal-close" onClick={onClose} aria-label="Close">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="v-modal-body">
+          {renderedVideoUrl ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div className="video-screen-wrap">
+                <video src={renderedVideoUrl} controls autoPlay />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{videoConcept || inputVal}</span>
+                <a
+                  href={renderedVideoUrl}
+                  download
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--accent)", textDecoration: "none", fontSize: "0.75rem", display: "flex", alignItems: "center", gap: 4 }}
+                >
+                  <FileDown size={14} /> Download MP4
+                </a>
+              </div>
+              <button
+                type="button"
+                className="video-submit-btn"
+                onClick={() => {
+                  setRenderedVideoUrl(null);
+                  setJobStatus(null);
+                }}
+              >
+                <Sparkles size={14} /> Animate Another Concept
+              </button>
+            </div>
+          ) : (
+            <>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+                Transform any research paper, Wikipedia page, or mathematical formula into a synchronized <strong>3Blue1Brown-style Manim animation</strong> with AI voice narration.
+              </p>
+
+              <form onSubmit={handleGenerate} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div className="video-field-group">
+                  <label className="video-field-label" htmlFor="v-prompt-input">
+                    What would you like to animate?
+                    <span>arXiv ID, URL, or Concept</span>
+                  </label>
+                  <input
+                    id="v-prompt-input"
+                    type="text"
+                    className="video-input"
+                    placeholder="e.g. 1706.03762 or Attention Mechanism or https://en.wikipedia.org/..."
+                    value={inputVal}
+                    onChange={(e) => setInputVal(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+
+                <div className="video-field-group">
+                  <label className="video-field-label" htmlFor="v-formula-input">
+                    Key Formula or Description <span>(Optional)</span>
+                  </label>
+                  <textarea
+                    id="v-formula-input"
+                    className="video-textarea"
+                    placeholder="e.g. Attention(Q, K, V) = softmax(QK^T / sqrt(d))V"
+                    value={formula}
+                    onChange={(e) => setFormula(e.target.value)}
+                    rows={2}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="video-submit-btn"
+                  disabled={isSubmitting || !!(jobStatus && jobStatus.status === "processing")}
+                >
+                  {isSubmitting ? (
+                    "Submitting request..."
+                  ) : jobStatus && jobStatus.status === "processing" ? (
+                    <><div className="loading-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Generating Animation...</>
+                  ) : (
+                    <><Film size={16} /> Generate 3B1B Video Animation</>
+                  )}
+                </button>
+              </form>
+
+              {/* Live Progress Box */}
+              {jobStatus && (
+                <div className="video-progress-box">
+                  <div className="video-progress-header">
+                    <span>{jobStatus.current_step || "Processing..."}</span>
+                    <span style={{ color: jobStatus.status === "failed" ? "var(--danger)" : "var(--accent)" }}>
+                      {jobStatus.status === "completed" ? "✓ Done" : jobStatus.status === "failed" ? "✗ Failed" : `${Math.round(jobStatus.progress * 100)}%`}
+                    </span>
+                  </div>
+                  <div className="video-progress-bar">
+                    <div className="video-progress-fill" style={{ width: `${Math.max(8, Math.round(jobStatus.progress * 100))}%` }} />
+                  </div>
+                  {jobStatus.error && (
+                    <p style={{ color: "var(--danger)", fontSize: "0.72rem" }}>{jobStatus.error}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Sample preview button */}
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Have a rendered demo?</span>
+                <button
+                  type="button"
+                  style={{ background: "transparent", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}
+                  onClick={() => {
+                    setRenderedVideoUrl("http://localhost:8000/api/video/DemoAttentionScene");
+                    setVideoConcept("MindEase Attention Animation (Local Demo)");
+                  }}
+                >
+                  <Play size={12} /> Watch Attention Demo
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
 const SectionHistory: FC = () => {
   const [history, setHistory] = useState<SessionHistoryEntry[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1081,6 +1558,7 @@ const Dashboard: FC = () => {
   const [activeSection, setActiveSection] = useState("overview");
   const [generating, setGenerating] = useState(false);
   const [visuals, setVisuals] = useState<VisualEntry[]>([]);
+  const [videoModalOpen, setVideoModalOpen] = useState(false);
   const sectionRefs = useRef<Map<string, IntersectionObserverEntry>>(new Map());
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -1218,6 +1696,14 @@ const Dashboard: FC = () => {
             </div>
           </div>
           <div className="dash-header-right">
+            <button
+              className="dash-animate-btn"
+              onClick={() => setVideoModalOpen(true)}
+              title="Generate 3B1B Video Animation"
+            >
+              <Film size={16} />
+              <span>Animate Concept</span>
+            </button>
             <button className="header-btn" onClick={handleExport} aria-label="Export PDF" title="Export as PDF">
               <FileDown size={16} />
             </button>
@@ -1229,6 +1715,7 @@ const Dashboard: FC = () => {
 
         <main className="dash-content" ref={contentRef}>
           <SectionOverview artifact={data.artifact} session={data.session} />
+          <SectionVideoStudio defaultTopic={conceptLabels[0] || ""} />
           {visualFirst && (
             <SectionVisuals
               visuals={visuals}
@@ -1262,6 +1749,11 @@ const Dashboard: FC = () => {
           {data.session && <span>Session: {data.session.sessionId.slice(0, 8)}...</span>}
         </footer>
       </div>
+      <VideoPromptModal
+        isOpen={videoModalOpen}
+        onClose={() => setVideoModalOpen(false)}
+        defaultTopic={conceptLabels[0] || ""}
+      />
     </div>
   );
 };

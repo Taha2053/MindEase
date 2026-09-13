@@ -1,0 +1,762 @@
+"""
+Background job processing for ArXiviz.
+
+Processes papers asynchronously with progress tracking.
+"""
+
+import asyncio
+import logging
+import os
+import time
+
+try:
+    from langfuse import get_client, observe, propagate_attributes
+    _LANGFUSE_AVAILABLE = True
+except ImportError:  # langfuse optional — degrade to no-op decorator
+    _LANGFUSE_AVAILABLE = False
+
+    def observe(*_args, **_kwargs):
+        def _decorator(fn):
+            return fn
+        return _decorator
+
+
+def _langfuse_on() -> bool:
+    return _LANGFUSE_AVAILABLE and bool(
+        os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
+    )
+
+
+import analytics
+from agents.pipeline import generate_visualizations
+from db import queries
+from db.connection import async_session_maker
+from db.models import Section
+from models.paper import (
+    ArxivPaperMeta,
+    Equation,
+    Figure,
+    StructuredPaper,
+    Table,
+)
+from models.paper import (
+    Section as PaperSection,
+)
+from rendering import process_visualization
+from telemetry import detached_trace_context
+
+logger = logging.getLogger(__name__)
+
+
+def parse_render_concurrency(default: int = 3) -> int:
+    """Parse RENDER_CONCURRENCY safely.
+
+    An empty or non-numeric value must not fail jobs at render setup — fall
+    back to the documented default and log the misconfiguration instead.
+    """
+    raw = os.getenv("RENDER_CONCURRENCY", str(default))
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid RENDER_CONCURRENCY=%r — using default %d", raw, default
+        )
+        return default
+
+
+def resolve_terminal_job_status(
+    succeeded_count: int, total_count: int
+) -> tuple[str, str, str | None]:
+    """Decide a job's terminal status from render outcomes.
+
+    Returns ``(status, current_step, error)``. A job is only "completed" when at
+    least one visualization actually rendered — previously an all-failed run (or
+    a run that generated nothing) still reported success, showing the reader a
+    green checkmark over a paper with no visualizations.
+    """
+    if total_count == 0:
+        return (
+            "failed",
+            "No valid visualizations generated",
+            "The pipeline did not produce any valid visualizations for this paper. "
+            "The parsed paper text is still available.",
+        )
+    if succeeded_count == 0:
+        return (
+            "failed",
+            "All visualizations failed to render",
+            f"All {total_count} visualization(s) failed to render. "
+            "See visualization records for per-item errors.",
+        )
+    failed_count = total_count - succeeded_count
+    if failed_count:
+        return (
+            "completed",
+            f"Complete ({failed_count} visualization(s) failed)",
+            None,
+        )
+    return "completed", "Complete", None
+
+
+class ProgressBar:
+    """Simple progress bar for logging output."""
+
+    def __init__(self, total: int, name: str = "Progress"):
+        self.total = total
+        self.current = 0
+        self.name = name
+        self.start_time = time.monotonic()
+
+    def update(self, increment: int = 1):
+        self.current += increment
+        self._display()
+
+    def _display(self):
+        """Display progress bar in logs."""
+        if self.total == 0:
+            return
+
+        percent = self.current / self.total
+        bar_length = 30
+        filled = int(bar_length * percent)
+        bar = "█" * filled + "░" * (bar_length - filled)
+
+        elapsed = time.monotonic() - self.start_time
+        if self.current > 0 and percent > 0:
+            avg_time = elapsed / self.current
+            eta_seconds = avg_time * (self.total - self.current)
+            eta_str = f" ETA: {int(eta_seconds)}s"
+        else:
+            eta_str = ""
+
+        percent_str = f"{percent*100:5.1f}%"
+        logger.info(f"  [{self.name}] {bar} {percent_str} ({self.current}/{self.total}){eta_str}")
+
+
+async def process_paper_job(job_id: str, arxiv_id: str):
+    """Entry point for the background paper pipeline (FastAPI BackgroundTasks).
+
+    Runs detached from the request's OpenTelemetry context: Starlette executes
+    background tasks inside the request's ASGI span, and with Application
+    Insights instrumenting the API that span would otherwise become the
+    parent of the Langfuse trace — an orphan in Langfuse (telemetry.py).
+    """
+    with detached_trace_context():
+        await _traced_process_paper_job(job_id, arxiv_id)
+
+async def process_document_job(job_id: str, document_payload: dict):
+    """Entry point for the generalized document pipeline (web, Wikipedia, PDFs, MindEase sections)."""
+    with detached_trace_context():
+        await _traced_process_document_job(job_id, document_payload)
+
+
+@observe(name="process-document")
+async def _traced_process_document_job(job_id: str, document_payload: dict):
+    """Traced entry point for the background document pipeline."""
+    doc_id = document_payload.get("url") or document_payload.get("title") or "doc"
+    if not _langfuse_on():
+        await _process_document_job_impl(job_id, document_payload)
+        return
+
+    with propagate_attributes(
+        session_id=job_id,
+        trace_name="process-document",
+        tags=["pipeline", "document"],
+        metadata={"doc_identifier": doc_id},
+    ):
+        try:
+            await _process_document_job_impl(job_id, document_payload)
+        finally:
+            try:
+                get_client().flush()
+            except Exception:
+                logger.debug("Langfuse flush failed", exc_info=True)
+
+
+async def _process_document_job_impl(job_id: str, document_payload: dict):
+    """Main background processor for generalized documents."""
+    from ingestion.document_ingest import ingest_document
+
+    logger.info("=" * 60)
+    logger.info("STARTING DOCUMENT JOB: %s", job_id)
+    logger.info("Title: %s", document_payload.get("title"))
+    logger.info("=" * 60)
+
+    started_at = None
+    async with async_session_maker() as db:
+        try:
+            job_row = await queries.get_job(db, job_id)
+            started_at = job_row.created_at if job_row else None
+
+            await queries.update_job_status(
+                db, job_id,
+                status="processing",
+                current_step="Ingesting and structuring document content",
+                progress=0.15,
+            )
+
+            structured_paper = await ingest_document(
+                title=document_payload.get("title", "Document"),
+                source_type=document_payload.get("source_type", "website"),
+                url=document_payload.get("url"),
+                abstract=document_payload.get("abstract"),
+                content=document_payload.get("content"),
+                sections_input=document_payload.get("sections"),
+            )
+
+            doc_id = structured_paper.meta.arxiv_id
+            await _store_structured_paper(db, job_id, structured_paper, replace=True)
+
+            await queries.update_job_status(
+                db, job_id,
+                current_step="Analyzing concepts for visualization",
+                progress=0.50,
+            )
+
+            logger.info("Invoking visualization generation pipeline for document %s...", doc_id)
+            generated_visualizations = await generate_visualizations(structured_paper)
+            logger.info("Generated %d visualization(s)", len(generated_visualizations))
+
+            viz_records = []
+            doc_suffix = doc_id.replace(".", "_").replace("/", "_")
+            for i, visualization in enumerate(generated_visualizations):
+                viz_id = f"viz_{doc_suffix}_{i+1}"
+                await queries.upsert_visualization(
+                    db,
+                    viz_id=viz_id,
+                    paper_id=doc_id,
+                    section_id=visualization.section_id,
+                    concept=visualization.concept,
+                    storyboard={"raw": visualization.storyboard},
+                    manim_code=visualization.manim_code,
+                    status="pending",
+                )
+                viz_records.append({
+                    "id": viz_id,
+                    "manim_code": visualization.manim_code,
+                })
+
+            if not viz_records:
+                status, step, error = resolve_terminal_job_status(0, 0)
+                await queries.update_job_status(
+                    db, job_id,
+                    status=status,
+                    current_step=step,
+                    progress=1.0,
+                    error=error,
+                )
+                return
+
+            # Render visualizations
+            await queries.update_job_status(
+                db, job_id,
+                current_step="Rendering animations",
+                progress=0.75,
+                sections_total=len(viz_records),
+                sections_completed=0,
+            )
+
+            render_concurrency = parse_render_concurrency()
+            render_semaphore = asyncio.Semaphore(render_concurrency)
+            progress_lock = asyncio.Lock()
+            completed_count = 0
+            succeeded_count = 0
+
+            async def _render_one_doc(viz: dict):
+                nonlocal completed_count, succeeded_count
+                async with render_semaphore:
+                    status = "complete"
+                    video_url: str | None = None
+                    error: str | None = None
+                    try:
+                        video_url = await process_visualization(
+                            viz_id=viz["id"],
+                            manim_code=viz["manim_code"],
+                            quality="low_quality",
+                        )
+                    except Exception as e:
+                        status = "failed"
+                        error = str(e)
+                        logger.error("Failed to render %s: %s", viz["id"], error)
+
+                    async with async_session_maker() as task_db:
+                        await queries.update_visualization_status(
+                            task_db, viz["id"],
+                            status=status,
+                            video_url=video_url,
+                            error=error,
+                        )
+                        async with progress_lock:
+                            completed_count += 1
+                            if status == "complete":
+                                succeeded_count += 1
+                            render_progress = 0.75 + (0.20 * (completed_count / len(viz_records)))
+                            await queries.update_job_status(
+                                task_db, job_id,
+                                progress=render_progress,
+                                sections_completed=succeeded_count,
+                            )
+
+            await asyncio.gather(*[_render_one_doc(viz) for viz in viz_records])
+
+            status, step, error = resolve_terminal_job_status(succeeded_count, len(viz_records))
+            await queries.update_job_status(
+                db, job_id,
+                status=status,
+                current_step=step,
+                progress=1.0,
+                error=error,
+            )
+            logger.info("DOCUMENT JOB %s FINISHED: %s", job_id, status)
+        except Exception as e:
+            logger.exception("DOCUMENT JOB FAILED: %s", job_id)
+            await queries.update_job_status(db, job_id, status="failed", error=str(e))
+
+
+
+@observe(name="process-paper")
+async def _traced_process_paper_job(job_id: str, arxiv_id: str):
+    """Traced entry point for the background paper pipeline.
+
+    Wraps the implementation so every LLM/render span for this job is grouped
+    under one Langfuse session (keyed by job_id) and traces are flushed before
+    the background task ends.
+    """
+    if not _langfuse_on():
+        await _process_paper_job_impl(job_id, arxiv_id)
+        return
+
+    with propagate_attributes(
+        session_id=job_id,
+        trace_name="process-paper",
+        tags=["pipeline"],
+        metadata={"arxiv_id": arxiv_id},
+    ):
+        try:
+            await _process_paper_job_impl(job_id, arxiv_id)
+        finally:
+            # Background task runs off-request; flush traces before it ends.
+            try:
+                get_client().flush()
+            except Exception:
+                logger.debug("Langfuse flush failed", exc_info=True)
+
+
+async def _process_paper_job_impl(job_id: str, arxiv_id: str):
+    """
+    Main job processing function. Called as a background task.
+
+    Pipeline:
+    1. Ingest paper from arXiv (real fetch + parse)
+    2. Store paper and sections in database
+    3. Pick visualizations for sections
+    4. Render all visualizations
+    5. Update job status to completed
+    """
+    logger.info("=" * 60)
+    logger.info(f"STARTING JOB: {job_id}")
+    logger.info(f"ArXiv ID: {arxiv_id}")
+    logger.info("=" * 60)
+
+    # For the product events' duration_s; read once, before anything can fail.
+    started_at = None
+
+    async with async_session_maker() as db:
+        try:
+            job_row = await queries.get_job(db, job_id)
+            started_at = job_row.created_at if job_row else None
+
+            # Step 1: Ingest paper from arXiv
+            logger.info("STEP 1: Ingesting paper from arXiv")
+            logger.info("-" * 60)
+
+            await queries.update_job_status(
+                db, job_id,
+                status="processing",
+                current_step="Fetching paper from arXiv",
+                progress=0.10
+            )
+
+            paper_exists = await queries.paper_exists(db, arxiv_id)
+            # Same rule as the Temporal activity: a pre-fix abstract-only
+            # ingest is re-ingested, a healthy paper is skipped.
+            replace = paper_exists and await queries.paper_is_stale(db, arxiv_id)
+            if replace:
+                logger.info(f"Paper {arxiv_id} is a pre-fix abstract-only ingest; re-ingesting")
+            elif paper_exists:
+                logger.info(f"Paper {arxiv_id} already exists in database, skipping ingestion")
+            else:
+                logger.info(f"Paper {arxiv_id} not found, fetching from arXiv...")
+
+            if replace or not paper_exists:
+                await _ingest_and_store_paper(db, job_id, arxiv_id, replace=replace)
+            else:
+                # Paper already exists, just link the job to it
+                logger.info("Linking job to existing paper...")
+                job = await queries.get_job(db, job_id)
+                if job:
+                    job.paper_id = arxiv_id
+                    await db.commit()
+                logger.info("Job linked successfully")
+
+                # Update progress to match what would happen after ingestion
+                await queries.update_job_status(
+                    db, job_id,
+                    current_step="Paper already processed",
+                    progress=0.30
+                )
+
+            # Step 2: Generate visualizations from structured paper
+            logger.info("=" * 60)
+            logger.info("STEP 2: Generating visualizations from structured paper")
+            logger.info("=" * 60)
+
+            await queries.update_job_status(
+                db, job_id,
+                current_step="Analyzing concepts for visualization",
+                progress=0.50
+            )
+
+            db_paper = await queries.get_paper(db, arxiv_id)
+            logger.info(f"Found paper in database: {db_paper.title}")
+
+            db_sections = sorted(db_paper.sections, key=lambda s: s.order_index)
+            logger.info(f"Loaded {len(db_sections)} sections from database")
+
+            structured_paper = _build_structured_paper_from_db(db_paper, db_sections)
+            logger.info("Converted database sections to StructuredPaper format")
+
+            logger.info("Invoking visualization generation pipeline...")
+            generated_visualizations = await generate_visualizations(structured_paper)
+            logger.info(f"Generated {len(generated_visualizations)} visualization(s)")
+
+            # Create visualization records
+            logger.info("Creating visualization records in database...")
+            viz_records = []
+
+            # Use paper-based prefix for consistent viz_ids across re-runs
+            # Full sanitized arXiv id — a truncated prefix collided across
+            # sibling ids (e.g. 2608.23551 vs 2608.23553 both mapped to
+            # "26082355"), making papers overwrite each other's viz rows.
+            paper_suffix = arxiv_id.replace(".", "_").replace("/", "_")
+
+            for i, visualization in enumerate(generated_visualizations):
+                # Create consistent viz_id based on paper and index, not job
+                viz_id = f"viz_{paper_suffix}_{i+1}"
+                logger.info(f"  [{i+1}/{len(generated_visualizations)}] Creating record for {viz_id}")
+                logger.debug(f"    Concept: {visualization.concept}")
+                logger.debug(f"    Section: {visualization.section_id}")
+
+                await queries.upsert_visualization(
+                    db,
+                    viz_id=viz_id,
+                    paper_id=arxiv_id,
+                    section_id=visualization.section_id,
+                    concept=visualization.concept,
+                    storyboard={"raw": visualization.storyboard},
+                    manim_code=visualization.manim_code,
+                    status="pending",
+                )
+                viz_records.append({
+                    "id": viz_id,
+                    "manim_code": visualization.manim_code,
+                })
+
+            if not viz_records:
+                # The paper text is stored and readable, but the pipeline produced
+                # nothing to render. Reporting "completed" here told the reader the
+                # job succeeded while showing a paper with no visualizations.
+                logger.warning("No valid visualizations were generated from the paper")
+                status, step, error = resolve_terminal_job_status(0, 0)
+                await queries.update_job_status(
+                    db, job_id,
+                    status=status,
+                    current_step=step,
+                    progress=1.0,
+                    error=error,
+                )
+                analytics.job_outcome(
+                    job_id=job_id, arxiv_id=arxiv_id, status=status,
+                    videos_complete=0, videos_total=0, created_at=started_at, error=error,
+                )
+                return
+
+            # Step 3: Render visualizations
+            logger.info("=" * 60)
+            logger.info(f"STEP 3: Rendering {len(viz_records)} visualizations")
+            logger.info("=" * 60)
+
+            await queries.update_job_status(
+                db, job_id,
+                current_step="Generating animations",
+                progress=0.70,
+                sections_total=len(viz_records),
+                sections_completed=0
+            )
+
+            # Update again when actually rendering starts
+            await queries.update_job_status(
+                db, job_id,
+                current_step="Rendering videos",
+                progress=0.75
+            )
+
+            # Concurrent Manim renders are CPU-bound (manim + latex + ffmpeg);
+            # production telemetry shows rendering is ~74% of pipeline wall-clock
+            # on the 2-vCPU container, so this is the knob to tune per host.
+            render_concurrency = parse_render_concurrency()
+            render_semaphore = asyncio.Semaphore(render_concurrency)
+            progress_lock = asyncio.Lock()
+            progress_bar = ProgressBar(len(viz_records), "Video Rendering")
+            completed_count = 0
+            succeeded_count = 0
+
+            async def _render_one(viz: dict, index: int):
+                nonlocal completed_count, succeeded_count
+                async with render_semaphore:
+                    status = "complete"
+                    video_url: str | None = None
+                    error: str | None = None
+                    try:
+                        logger.info(f"Starting render: {viz['id']}")
+                        video_url = await process_visualization(
+                            viz_id=viz["id"],
+                            manim_code=viz["manim_code"],
+                            quality="low_quality",
+                        )
+                        logger.info(f"✓ Successfully rendered {viz['id']}")
+                    except Exception as e:
+                        status = "failed"
+                        error = str(e)
+                        logger.error(f"✗ Failed to render {viz['id']}: {error}")
+
+                    # Each concurrent render commits through its OWN session.
+                    # A single AsyncSession is not safe to share across tasks
+                    # running under asyncio.gather — interleaved operations raise
+                    # InterfaceError / corrupt session state. The progress_lock
+                    # serializes the shared counter, progress bar, and job-row
+                    # write so they stay consistent.
+                    async with async_session_maker() as task_db:
+                        await queries.update_visualization_status(
+                            task_db, viz["id"],
+                            status=status,
+                            video_url=video_url,
+                            error=error,
+                        )
+                        async with progress_lock:
+                            completed_count += 1
+                            if status == "complete":
+                                succeeded_count += 1
+                            progress_bar.update()
+                            render_progress = 0.75 + (0.20 * (completed_count / len(viz_records)))
+                            await queries.update_job_status(
+                                task_db, job_id,
+                                progress=render_progress,
+                                # Report only successful renders as completed
+                                # sections — a failed render produces no video.
+                                sections_completed=succeeded_count,
+                            )
+
+            logger.info(
+                f"Rendering {len(viz_records)} videos concurrently "
+                f"(max {render_concurrency} parallel)..."
+            )
+            await asyncio.gather(*[
+                _render_one(viz, i) for i, viz in enumerate(viz_records)
+            ])
+
+            failed_count = len(viz_records) - succeeded_count
+            logger.info(
+                "Rendering finished: %s succeeded, %s failed",
+                succeeded_count, failed_count,
+            )
+
+            # Brief pause to ensure all DB commits have settled
+            await asyncio.sleep(0.5)
+
+            # Step 4: Complete
+            logger.info("=" * 60)
+            logger.info("STEP 4: Finalizing job")
+            logger.info("=" * 60)
+
+            status, step, error = resolve_terminal_job_status(
+                succeeded_count, len(viz_records)
+            )
+            await queries.update_job_status(
+                db, job_id,
+                status=status,
+                current_step=step,
+                progress=1.0,
+                error=error,
+            )
+            # Product event (paper_completed / paper_failed_server); never raises.
+            analytics.job_outcome(
+                job_id=job_id, arxiv_id=arxiv_id, status=status,
+                videos_complete=succeeded_count, videos_total=len(viz_records),
+                created_at=started_at, error=error,
+            )
+
+            if status == "failed":
+                logger.error("✗ JOB FAILED: %s — every render failed", job_id)
+                return
+
+            logger.info("Job status updated to %s with progress 1.0", status)
+
+            logger.info("=" * 60)
+            logger.info(f"✓ JOB COMPLETED SUCCESSFULLY: {job_id}")
+            logger.info(f"✓ Paper: {arxiv_id}")
+            logger.info(f"✓ Visualizations rendered: {len(viz_records)}")
+            logger.info("=" * 60)
+
+        except Exception as e:
+            logger.exception(f"✗ JOB FAILED: {job_id} for paper {arxiv_id}")
+            logger.error(f"Error: {e!s}")
+            try:
+                await db.rollback()
+                await queries.update_job_status(
+                    db, job_id,
+                    status="failed",
+                    error=str(e)
+                )
+            except Exception:
+                logger.exception("Failed to update job status after error")
+            analytics.job_outcome(
+                job_id=job_id, arxiv_id=arxiv_id, status="failed",
+                videos_complete=None, videos_total=None, created_at=started_at, error=str(e),
+            )
+            raise
+
+
+async def _store_structured_paper(db, job_id: str, structured_paper: StructuredPaper, replace: bool = False):
+    """Store paper/document metadata and sections in the database."""
+    meta = structured_paper.meta
+    paper_exists = await queries.paper_exists(db, meta.arxiv_id)
+    if replace and paper_exists:
+        await queries.reset_paper_for_reingest(db, meta)
+    elif not paper_exists:
+        await queries.create_paper(
+            db,
+            arxiv_id=meta.arxiv_id,
+            title=meta.title,
+            authors=meta.authors,
+            abstract=meta.abstract,
+            pdf_url=meta.pdf_url,
+            html_url=meta.html_url,
+        )
+
+    job = await queries.get_job(db, job_id)
+    if job:
+        job.paper_id = meta.arxiv_id
+        await db.commit()
+
+    stored_count = 0
+    seen_ids = set()
+    for i, section in enumerate(structured_paper.sections):
+        sid = section.id
+        if sid in seen_ids:
+            sid = f"{sid}-{i}"
+        seen_ids.add(sid)
+
+        try:
+            async with db.begin_nested():
+                equations_json = [eq.latex for eq in section.equations]
+                figures_json = [fig.model_dump() for fig in section.figures]
+                tables_json = [tbl.model_dump() for tbl in section.tables]
+
+                section_obj = Section(
+                    id=sid,
+                    paper_id=meta.arxiv_id,
+                    title=section.title,
+                    content=section.content,
+                    summary=section.summary or None,
+                    level=section.level,
+                    order_index=i,
+                    equations=equations_json,
+                    figures=figures_json,
+                    tables=tables_json,
+                )
+                db.add(section_obj)
+            stored_count += 1
+        except Exception as e:
+            logger.warning(f"Failed to store section '{section.title}': {e}")
+
+    await db.commit()
+    logger.info(f"Stored paper/document '{meta.title}' with {stored_count}/{len(structured_paper.sections)} sections")
+
+
+async def _ingest_and_store_paper(db, job_id: str, arxiv_id: str, replace: bool = False):
+    """
+    Ingest a real paper from arXiv and store it in the database.
+
+    ``replace=True`` re-ingests a paper that exists but is stale (a pre-fix
+    ingest of the abstract page): metadata is updated and sections replaced.
+    """
+    from ingestion import ingest_paper
+
+    await queries.update_job_status(
+        db, job_id,
+        current_step="Fetching paper metadata from arXiv",
+        progress=0.15
+    )
+
+    structured_paper = await ingest_paper(arxiv_id, force_refresh=replace)
+
+    await queries.update_job_status(
+        db, job_id,
+        current_step="Parsing sections and content",
+        progress=0.30
+    )
+
+    await _store_structured_paper(db, job_id, structured_paper, replace=replace)
+
+
+def _build_structured_paper_from_db(db_paper, db_sections: list[Section]) -> StructuredPaper:
+    """Reconstruct StructuredPaper from database rows for generator pipeline input."""
+    meta = ArxivPaperMeta(
+        arxiv_id=db_paper.id,
+        title=db_paper.title,
+        authors=db_paper.authors or [],
+        abstract=db_paper.abstract or "",
+        pdf_url=db_paper.pdf_url or f"https://arxiv.org/pdf/{db_paper.id}",
+        html_url=db_paper.html_url,
+    )
+
+    sections: list[PaperSection] = []
+    for db_section in db_sections:
+        equations = [
+            Equation(latex=eq if isinstance(eq, str) else str(eq), context="")
+            for eq in (db_section.equations or [])
+        ]
+        figures = [
+            Figure(
+                id=fig.get("id", f"{db_section.id}-figure-{idx+1}"),
+                caption=fig.get("caption", ""),
+                page=fig.get("page"),
+            )
+            for idx, fig in enumerate(db_section.figures or [])
+            if isinstance(fig, dict)
+        ]
+        tables = [
+            Table(
+                id=tbl.get("id", f"{db_section.id}-table-{idx+1}"),
+                caption=tbl.get("caption", ""),
+                headers=tbl.get("headers", []),
+                rows=tbl.get("rows", []),
+            )
+            for idx, tbl in enumerate(db_section.tables or [])
+            if isinstance(tbl, dict)
+        ]
+
+        sections.append(
+            PaperSection(
+                id=db_section.id,
+                title=db_section.title,
+                level=db_section.level,
+                content=db_section.content or "",
+                equations=equations,
+                figures=figures,
+                tables=tables,
+            )
+        )
+
+    return StructuredPaper(meta=meta, sections=sections)

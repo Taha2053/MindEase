@@ -1,4 +1,5 @@
 /* ── Types ───────────────────────────────────────────────────────── */
+import { getApiKey } from "@/utils/apiKeyManager";
 
 export type NapkinStyle =
   | "colorful" | "casual" | "hand-drawn" | "formal" | "monochrome";
@@ -59,18 +60,17 @@ export interface NapkinResult {
 
 /* ── Config ─────────────────────────────────────────────────────── */
 
-const NAPKIN_API_BASE = import.meta.env.VITE_NAPKIN_API_BASE ?? "https://api.napkin.ai";
-
-const NAPKIN_API_KEY = import.meta.env.VITE_NAPKIN_API_KEY as string | undefined;
+const NAPKIN_API_BASE = import.meta.env.VITE_NAPKIN_API_BASE ?? "https://api.napkin.ai/v1";
 
 /* ── Auth headers ───────────────────────────────────────────────── */
 
-function authHeaders(): Record<string, string> {
-  if (!NAPKIN_API_KEY) {
-    throw new Error("[NapkinClient] VITE_NAPKIN_API_KEY is not set");
+async function authHeaders(): Promise<Record<string, string>> {
+  const key = await getApiKey("napkin");
+  if (!key) {
+    throw new Error("[NapkinClient] Napkin API key is not configured. Add it in MindEase Settings.");
   }
   return {
-    Authorization: `Bearer ${NAPKIN_API_KEY}`,
+    Authorization: `Bearer ${key}`,
     "Content-Type": "application/json",
     Accept: "application/json",
   };
@@ -97,7 +97,7 @@ async function createVisualRequest(
 
   const res = await fetch(`${NAPKIN_API_BASE}/visual`, {
     method: "POST",
-    headers: authHeaders(),
+    headers: await authHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -119,7 +119,7 @@ async function pollStatus(
 ): Promise<NapkinStatusResponse> {
   for (let i = 0; i < maxRetries; i++) {
     const res = await fetch(`${NAPKIN_API_BASE}/visual/${requestId}/status`, {
-      headers: authHeaders(),
+      headers: await authHeaders(),
     });
 
     if (!res.ok) {
@@ -157,8 +157,9 @@ async function downloadFile(fileUrl: string): Promise<Blob> {
     fetchUrl = `http://localhost:3001${path}${u.search}`;
   }
 
+  const napkinKey = await getApiKey("napkin");
   const res = await fetch(fetchUrl, {
-    headers: isDev ? { Authorization: `Bearer ${NAPKIN_API_KEY}` } : {},
+    headers: isDev && napkinKey ? { Authorization: `Bearer ${napkinKey}` } : {},
   });
 
   if (!res.ok) {

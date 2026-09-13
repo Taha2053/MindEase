@@ -1,3 +1,5 @@
+import { getApiKey } from "@/utils/apiKeyManager";
+
 interface OcrParsedResult {
   FileParseExitCode: number;
   ParsedText: string | null;
@@ -14,14 +16,13 @@ interface OcrResponse {
   ProcessingTimeInMilliseconds: string;
 }
 
-const OCR_API_KEY = import.meta.env.VITE_OCR_SPACE_API_KEY as string | undefined;
 const OCR_BASE = "https://api.ocr.space/parse/image";
 
 async function ocrRequest(formField: string, value: string, language: string): Promise<string> {
-  if (!OCR_API_KEY) {
-    throw new Error("[OcrClient] VITE_OCR_SPACE_API_KEY is not set");
+  const apiKey = await getApiKey("ocr");
+  if (!apiKey) {
+    throw new Error("[OcrClient] OCR.space API key is not configured. Add it in MindEase Settings.");
   }
-
   const body = new URLSearchParams({
     [formField]: value,
     language,
@@ -31,7 +32,7 @@ async function ocrRequest(formField: string, value: string, language: string): P
   const res = await fetch(OCR_BASE, {
     method: "POST",
     headers: {
-      apikey: OCR_API_KEY,
+      apikey: apiKey,
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: body.toString(),

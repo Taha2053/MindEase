@@ -9,7 +9,9 @@
     "build:firefox": "vite build --mode firefox",
     "build": "npm run build:chrome && npm run build:firefox",
     "test": "vitest run",
-    "napkin-proxy": "node napkin-proxy.mjs"
+    "napkin-proxy": "node napkin-proxy.mjs",
+    "server": "uv run --directory server uvicorn main:app --reload --port 8000",
+    "server:test": "uv run --directory server pytest tests/"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.42",

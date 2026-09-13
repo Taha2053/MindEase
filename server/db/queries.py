@@ -1,0 +1,631 @@
+"""
+Database queries for ArXiviz.
+
+CRUD operations for papers, sections, visualizations, and processing jobs.
+"""
+
+import re
+import uuid
+from datetime import UTC, datetime, timedelta
+
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC now — DB columns are TIMESTAMP WITHOUT TIME ZONE, so values
+    must stay naive; this just replaces the deprecated _utcnow_naive()."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+from sqlalchemy import delete, distinct, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from models.paper import ArxivPaperMeta
+
+from .models import Feedback, Paper, ProcessingJob, Section, Visualization
+
+# === Processing Jobs ===
+
+async def create_job(db: AsyncSession, arxiv_id: str) -> str:
+    """Create a new processing job and return the job_id."""
+    job_id = f"job_{uuid.uuid4().hex[:12]}"
+    job = ProcessingJob(
+        id=job_id,
+        paper_id=None,  # Set after paper record is created to avoid FK violation
+        status="queued",
+        progress=0.0,
+        current_step="Queued for processing",
+        created_at=_utcnow_naive(),
+    )
+    db.add(job)
+    await db.commit()
+    return job_id
+
+
+async def get_job(db: AsyncSession, job_id: str) -> ProcessingJob | None:
+    """Get a processing job by ID."""
+    result = await db.execute(
+        select(ProcessingJob).where(ProcessingJob.id == job_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_active_job_for_paper(
+    db: AsyncSession, arxiv_id: str, max_age_hours: float = 2.0
+) -> ProcessingJob | None:
+    """Find a genuinely in-flight job for a paper, newest first.
+
+    Jobs older than ``max_age_hours`` are ignored: a worker interrupted mid-run
+    (e.g. by a redeploy) strands its job at "processing" forever, and treating
+    such a zombie as active would block the paper from ever being re-processed
+    via dedupe. No real pipeline run approaches this age (p95 is ~7 minutes).
+
+    Note: jobs are created with paper_id=None (FK) and linked by the worker a
+    few seconds in, so this misses just-created jobs — callers pair it with the
+    in-memory recent-jobs map in api.throttle for the immediate-duplicate window.
+    """
+    cutoff = _utcnow_naive() - timedelta(hours=max_age_hours)
+    result = await db.execute(
+        select(ProcessingJob)
+        .where(
+            ProcessingJob.paper_id == arxiv_id,
+            ProcessingJob.status.in_(("queued", "processing")),
+            ProcessingJob.created_at >= cutoff,
+        )
+        .order_by(ProcessingJob.created_at.desc())
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
+async def count_jobs_created_since(db: AsyncSession, since: datetime) -> int:
+    """Jobs created at/after ``since`` (naive UTC) — the durable input to the
+    daily new-paper cap. Counts every created row, including ones later marked
+    duplicate/failed: conservative on purpose, the cap is a spend ceiling."""
+    result = await db.execute(
+        select(func.count()).select_from(ProcessingJob).where(ProcessingJob.created_at >= since)
+    )
+    return int(result.scalar_one())
+
+
+async def reap_stale_jobs(db: AsyncSession, max_age_hours: float = 2.0) -> int:
+    """Mark long-stranded queued/processing jobs as failed.
+
+    A worker killed mid-run (redeploy, crash, OOM) never updates its job row,
+    leaving it at "processing" forever — misleading pollers and, before the
+    dedupe staleness cutoff, blocking re-processing. Called opportunistically
+    on job submission; returns the number of jobs reaped.
+    """
+    cutoff = _utcnow_naive() - timedelta(hours=max_age_hours)
+    result = await db.execute(
+        select(ProcessingJob).where(
+            ProcessingJob.status.in_(("queued", "processing")),
+            ProcessingJob.created_at < cutoff,
+        )
+    )
+    stale = list(result.scalars().all())
+    for job in stale:
+        job.status = "failed"
+        job.error = (
+            "Job was interrupted (worker restarted mid-run) and never resumed. "
+            "Submit the paper again to re-process it."
+        )
+    if stale:
+        await db.commit()
+    return len(stale)
+
+
+async def update_job_status(
+    db: AsyncSession,
+    job_id: str,
+    status: str | None = None,
+    progress: float | None = None,
+    current_step: str | None = None,
+    sections_completed: int | None = None,
+    sections_total: int | None = None,
+    error: str | None = None,
+):
+    """Update a processing job's status."""
+    job = await get_job(db, job_id)
+    if not job:
+        return None
+
+    if status is not None:
+        job.status = status
+    if progress is not None:
+        job.progress = progress
+    if current_step is not None:
+        job.current_step = current_step
+    if sections_completed is not None:
+        job.sections_completed = sections_completed
+    if sections_total is not None:
+        job.sections_total = sections_total
+    if error is not None:
+        job.error = error
+    if status == "completed":
+        job.completed_at = _utcnow_naive()
+
+    await db.commit()
+    return job
+
+
+# === Feedback ===
+
+async def create_feedback(
+    db: AsyncSession,
+    kind: str,
+    viz_id: str | None = None,
+    paper_id: str | None = None,
+    vote: str | None = None,
+    reason: str | None = None,
+    comment: str | None = None,
+) -> Feedback:
+    """Store one piece of viewer feedback."""
+    fb = Feedback(
+        id=f"fb_{uuid.uuid4().hex[:12]}",
+        kind=kind,
+        viz_id=viz_id,
+        paper_id=paper_id,
+        vote=vote,
+        reason=reason,
+        comment=comment,
+        created_at=_utcnow_naive(),
+    )
+    db.add(fb)
+    await db.commit()
+    return fb
+
+
+# === Stale (abstract-only) papers ===
+
+# The ingest that refuses abstract pages (PR #69) went live at this instant
+# (UTC, naive like every timestamp in this schema). Papers ingested or
+# re-ingested after it are trusted whatever their length: the summarizer
+# refuses sources under MIN_SOURCE_WORDS, and a short real paper must not be
+# re-ingested on every request. Before it, ~31% of the corpus was the arXiv
+# abstract inflated to ~300 words by the old summarizer floor.
+ABSTRACT_INGEST_FIXED_AT = datetime(2026, 9, 9, tzinfo=UTC).replace(tzinfo=None)
+# Measured on the live corpus (1,016 pre-fix papers, 2026-09-09): inflated
+# abstracts total 2,000-3,266 chars of stored text; the shortest real paper
+# summary is 3,463. Halfway into that gap.
+STALE_TEXT_CHARS = 3400
+
+
+def is_stale(ingested_at: datetime | None, text_chars: int) -> bool:
+    """Pre-fix ingest whose stored text is abstract-sized: not a paper."""
+    if ingested_at is not None and ingested_at >= ABSTRACT_INGEST_FIXED_AT:
+        return False
+    return text_chars < STALE_TEXT_CHARS
+
+
+async def paper_is_stale(db: AsyncSession, paper_id: str) -> bool:
+    """Stale papers are hidden from the gallery and the reader, and
+    re-ingested (not skipped) on the next request."""
+    result = await db.execute(select(Paper.updated_at, Paper.created_at).where(Paper.id == paper_id))
+    row = result.one_or_none()
+    if row is None:
+        return False
+    chars = await db.execute(
+        select(func.coalesce(func.sum(func.length(Section.content)), 0)).where(Section.paper_id == paper_id)
+    )
+    return is_stale(row[0] or row[1], int(chars.scalar_one() or 0))
+
+
+async def reset_paper_for_reingest(db: AsyncSession, meta: ArxivPaperMeta) -> None:
+    """Replace a stale paper's metadata and drop its sections so the ingest
+    loop can store the real ones. Old visualization rows are unlinked from
+    the sections (FK) rather than deleted — feedback references them, and
+    finalize_job supersedes them once the new run has videos. ``updated_at``
+    moves past ABSTRACT_INGEST_FIXED_AT, so the paper is trusted from here."""
+    # Core statements, not loaded objects: a Paper loaded earlier in this
+    # session (with its sections) must not resurrect the deleted rows on flush.
+    await db.execute(
+        update(Paper).where(Paper.id == meta.arxiv_id).values(
+            title=meta.title, authors=meta.authors, abstract=meta.abstract,
+            pdf_url=meta.pdf_url, html_url=meta.html_url, updated_at=_utcnow_naive(),
+        )
+    )
+    await db.execute(update(Visualization).where(Visualization.paper_id == meta.arxiv_id).values(section_id=None))
+    await db.execute(delete(Section).where(Section.paper_id == meta.arxiv_id))
+    await db.commit()
+    db.expire_all()
+
+
+# Pre-fix ids were ``viz_{arxiv_id.replace(".", "")[:8]}_{n}``: eight characters
+# of the id, so ``viz_17060376_1`` and, for old-style ids, ``viz_math/061_1``.
+# Full ids are never eight characters (``0805.3898`` is nine).
+_LEGACY_VIZ_ID_RE = re.compile(r"^viz_[^_]{8}_\d+$")
+
+
+async def supersede_legacy_truncated_rows(db: AsyncSession) -> int:
+    """Idempotent, run at every API start: legacy truncated-id rows are hidden
+    wherever the paper also has a full-id complete row, so re-processed papers
+    stop showing two generations of videos. Papers whose only videos are
+    legacy rows keep them."""
+    result = await db.execute(
+        select(Visualization.id, Visualization.paper_id, Visualization.status, Visualization.video_url)
+    )
+    rows = result.all()
+    has_new_complete = {
+        pid for vid, pid, status, url in rows
+        if not _LEGACY_VIZ_ID_RE.match(vid) and status == "complete" and url
+    }
+    legacy_ids = [
+        vid for vid, pid, status, url in rows
+        if _LEGACY_VIZ_ID_RE.match(vid) and status != "superseded" and pid in has_new_complete
+    ]
+    if legacy_ids:
+        await db.execute(
+            update(Visualization).where(Visualization.id.in_(legacy_ids)).values(status="superseded")
+        )
+        await db.commit()
+    return len(legacy_ids)
+
+
+# === Papers ===
+
+async def get_paper(db: AsyncSession, arxiv_id: str) -> Paper | None:
+    """Get a paper by arXiv ID with all related sections and visualizations."""
+    result = await db.execute(
+        select(Paper)
+        .where(Paper.id == arxiv_id)
+        .options(
+            selectinload(Paper.sections),
+            selectinload(Paper.visualizations),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def create_paper(
+    db: AsyncSession,
+    arxiv_id: str,
+    title: str,
+    authors: list[str],
+    abstract: str,
+    pdf_url: str,
+    html_url: str | None = None,
+) -> Paper:
+    """Create a new paper."""
+    paper = Paper(
+        id=arxiv_id,
+        title=title,
+        authors=authors,
+        abstract=abstract,
+        pdf_url=pdf_url,
+        html_url=html_url,
+    )
+    db.add(paper)
+    await db.commit()
+    await db.refresh(paper)
+    return paper
+
+
+async def list_paper_summaries(db: AsyncSession, active_job_max_age_hours: float = 2.0) -> list[dict]:
+    """Explore-gallery rows without loading section text for every paper.
+
+    ``playable_sections`` = distinct sections that have a complete video (what
+    the paper page can actually show); ``processing`` = a job for the paper is
+    genuinely in flight. The old implementation selectinloaded every section's
+    content and every viz row for all papers (2.4s / 297KB at 942 papers) and
+    counted rows of any status.
+    """
+    playable = (
+        select(
+            Visualization.paper_id.label("paper_id"),
+            func.count(distinct(Visualization.section_id)).label("n"),
+        )
+        .where(Visualization.status == "complete", Visualization.video_url.isnot(None))
+        .group_by(Visualization.paper_id)
+        .subquery()
+    )
+    text = (
+        select(
+            Section.paper_id.label("paper_id"),
+            func.coalesce(func.sum(func.length(Section.content)), 0).label("chars"),
+        )
+        .group_by(Section.paper_id)
+        .subquery()
+    )
+    cutoff = _utcnow_naive() - timedelta(hours=active_job_max_age_hours)
+    active = (
+        select(ProcessingJob.paper_id.label("paper_id"))
+        .where(
+            ProcessingJob.status.in_(("queued", "processing")),
+            ProcessingJob.created_at >= cutoff,
+        )
+        .distinct()
+        .subquery()
+    )
+    result = await db.execute(
+        select(
+            Paper.id,
+            Paper.title,
+            Paper.authors,
+            Paper.created_at,
+            Paper.updated_at,
+            func.coalesce(playable.c.n, 0),
+            active.c.paper_id.isnot(None),
+            func.coalesce(text.c.chars, 0),
+        )
+        .outerjoin(playable, playable.c.paper_id == Paper.id)
+        .outerjoin(active, active.c.paper_id == Paper.id)
+        .outerjoin(text, text.c.paper_id == Paper.id)
+        .order_by(Paper.created_at.desc())
+    )
+    return [
+        {
+            "paper_id": pid, "title": title, "authors": authors or [],
+            "created_at": created, "updated_at": updated,
+            "playable_sections": int(n), "processing": bool(is_active),
+            "text_chars": int(chars or 0),
+        }
+        for pid, title, authors, created, updated, n, is_active, chars in result.all()
+    ]
+
+
+async def list_papers(db: AsyncSession) -> list[Paper]:
+    """List all papers with their sections and visualizations."""
+    result = await db.execute(
+        select(Paper)
+        .options(
+            selectinload(Paper.sections),
+            selectinload(Paper.visualizations),
+        )
+        .order_by(Paper.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def paper_exists(db: AsyncSession, arxiv_id: str) -> bool:
+    """Check if a paper exists in the database."""
+    result = await db.execute(
+        select(Paper.id).where(Paper.id == arxiv_id)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+# === Sections ===
+
+async def create_section(
+    db: AsyncSession,
+    section_id: str,
+    paper_id: str,
+    title: str,
+    content: str,
+    level: int = 1,
+    order_index: int = 0,
+    equations: list | None = None,
+    figures: list | None = None,
+    tables: list | None = None,
+) -> Section:
+    """Create a new section."""
+    section = Section(
+        id=section_id,
+        paper_id=paper_id,
+        title=title,
+        content=content,
+        level=level,
+        order_index=order_index,
+        equations=equations or [],
+        figures=figures or [],
+        tables=tables or [],
+    )
+    db.add(section)
+    await db.commit()
+    return section
+
+
+# === Visualizations ===
+
+async def create_visualization(
+    db: AsyncSession,
+    viz_id: str,
+    paper_id: str,
+    section_id: str,
+    concept: str,
+    status: str = "pending",
+    video_url: str | None = None,
+    storyboard: dict | None = None,
+    manim_code: str | None = None,
+) -> Visualization:
+    """Create a new visualization."""
+    viz = Visualization(
+        id=viz_id,
+        paper_id=paper_id,
+        section_id=section_id,
+        concept=concept,
+        storyboard=storyboard,
+        manim_code=manim_code,
+        status=status,
+        video_url=video_url,
+    )
+    db.add(viz)
+    await db.commit()
+    return viz
+
+
+async def get_visualizations_for_paper(
+    db: AsyncSession,
+    paper_id: str,
+    since: datetime | None = None,
+    include_superseded: bool = False,
+) -> list[Visualization]:
+    """A paper's visualization rows, oldest first.
+
+    ``since`` scopes to rows created by a particular run (a job's created_at);
+    superseded rows — previous runs' rows, hidden once a newer run succeeded —
+    are excluded unless asked for.
+    """
+    stmt = select(Visualization).where(Visualization.paper_id == paper_id)
+    if since is not None:
+        stmt = stmt.where(Visualization.created_at >= since)
+    if not include_superseded:
+        stmt = stmt.where(Visualization.status != "superseded")
+    result = await db.execute(stmt.order_by(Visualization.created_at.asc(), Visualization.id.asc()))
+    return list(result.scalars().all())
+
+
+def next_viz_index(rows: list[Visualization]) -> int:
+    """First unused ``_N`` suffix across ALL of a paper's rows (superseded
+    included): ids are never reused, so feedback votes keep pointing at the
+    video they were cast on."""
+    highest = 0
+    for row in rows:
+        m = re.search(r"_(\d+)$", row.id)
+        if m:
+            highest = max(highest, int(m.group(1)))
+    return highest + 1
+
+
+async def insert_visualization_with_next_index(
+    *,
+    paper_suffix: str,
+    paper_id: str,
+    section_id: str | None,
+    concept: str,
+    storyboard: dict | None,
+    manim_code: str | None,
+    session_maker,
+    attempts: int = 5,
+) -> str:
+    """INSERT a checkpoint row under the first unused ``viz_{suffix}_{N}`` id.
+
+    Read-then-insert in its own session, retried on IntegrityError, so two
+    overlapping generation attempts can never write the same id (an upsert
+    would silently overwrite the other attempt's row).
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    last_exc: Exception | None = None
+    for _ in range(attempts):
+        async with session_maker() as db:
+            rows = await get_visualizations_for_paper(db, paper_id, include_superseded=True)
+            viz_id = f"viz_{paper_suffix}_{next_viz_index(rows)}"
+            try:
+                await create_visualization(
+                    db, viz_id=viz_id, paper_id=paper_id, section_id=section_id,
+                    concept=concept, status="pending", storyboard=storyboard, manim_code=manim_code,
+                )
+                return viz_id
+            except IntegrityError as exc:
+                last_exc = exc
+                await db.rollback()
+    raise RuntimeError(f"Could not allocate a visualization id for {paper_id}") from last_exc
+
+
+async def supersede_visualizations_before(
+    db: AsyncSession, paper_id: str, before: datetime
+) -> int:
+    """Hide a paper's rows from previous runs once a newer run has produced
+    videos. Rows are NOT deleted: feedback.viz_id references them (a hard
+    delete violated that foreign key and, worse, would have discarded the
+    labeled ground truth the feedback loop exists to collect)."""
+    rows = await get_visualizations_for_paper(db, paper_id)
+    older = [r for r in rows if r.created_at is not None and r.created_at < before]
+    for r in older:
+        r.status = "superseded"
+    if older:
+        await db.commit()
+    return len(older)
+
+
+async def fail_pending_visualizations(
+    db: AsyncSession, paper_id: str, error: str, since: datetime | None = None
+) -> int:
+    """Mark still-pending rows failed (a job that died mid-render used to
+    strand them at 'pending' forever, where the gallery counted them as
+    visuals). ``since`` limits it to the failed run's own rows."""
+    rows = await get_visualizations_for_paper(db, paper_id, since=since)
+    stranded = [r for r in rows if r.status in ("pending", "rendering")]
+    for r in stranded:
+        r.status = "failed"
+        r.error = error
+    if stranded:
+        await db.commit()
+    return len(stranded)
+
+
+async def get_visualization(db: AsyncSession, viz_id: str) -> Visualization | None:
+    """Get a single visualization by id."""
+    result = await db.execute(
+        select(Visualization).where(Visualization.id == viz_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_visualization_status(
+    db: AsyncSession,
+    viz_id: str,
+    status: str,
+    video_url: str | None = None,
+    error: str | None = None,
+):
+    """Update a visualization's status."""
+    result = await db.execute(
+        select(Visualization).where(Visualization.id == viz_id)
+    )
+    viz = result.scalar_one_or_none()
+    if not viz:
+        return None
+
+    viz.status = status
+    if status == "failed":
+        # Never leave a failed row pointing at a (stale) video.
+        viz.video_url = video_url
+    elif video_url:
+        viz.video_url = video_url
+    if error:
+        viz.error = error
+
+    await db.commit()
+    return viz
+
+
+async def upsert_visualization(
+    db: AsyncSession,
+    viz_id: str,
+    paper_id: str,
+    section_id: str,
+    concept: str,
+    status: str = "pending",
+    video_url: str | None = None,
+    storyboard: dict | None = None,
+    manim_code: str | None = None,
+) -> Visualization:
+    """Create or update a visualization."""
+    result = await db.execute(
+        select(Visualization).where(Visualization.id == viz_id)
+    )
+    viz = result.scalar_one_or_none()
+
+    if viz:
+        # Update existing visualization
+        viz.paper_id = paper_id  # was never rewritten -> orphan rows across sibling papers
+        viz.section_id = section_id
+        viz.concept = concept
+        viz.status = status
+        if status == "pending":
+            # A re-run must not keep serving the previous run's video/error.
+            viz.video_url = None
+            viz.error = None
+        if video_url:
+            viz.video_url = video_url
+        if storyboard:
+            viz.storyboard = storyboard
+        if manim_code:
+            viz.manim_code = manim_code
+    else:
+        # Create new visualization
+        viz = Visualization(
+            id=viz_id,
+            paper_id=paper_id,
+            section_id=section_id,
+            concept=concept,
+            storyboard=storyboard,
+            manim_code=manim_code,
+            status=status,
+            video_url=video_url,
+        )
+        db.add(viz)
+
+    await db.commit()
+    return viz

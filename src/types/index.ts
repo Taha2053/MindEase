@@ -550,7 +550,53 @@ export const STORAGE_KEYS = {
   ACTIVE_LAYER3_SESSION: "mindease_active_layer3_session",
   LATEST_ARTIFACT: "latestArtifact",
   TTS_SETTINGS: "mindease_tts_settings",
+  API_KEYS: "mindease_api_keys",
 } as const;
+
+export interface UserApiKeys {
+  mistralApiKey?: string;
+  napkinApiKey?: string;
+  hfToken?: string;
+  ocrSpaceApiKey?: string;
+  premiumServerUrl?: string;
+  updatedAt?: number;
+}
+
+// ── Premium Service Types (Manim Video Animation Pipeline) ────────────────────
+
+export interface ProcessDocumentPayload {
+  title: string;
+  source_type: "website" | "wikipedia" | "pdf" | "article" | "lecture" | "arxiv";
+  url?: string;
+  abstract?: string;
+  content?: string;
+  sections?: Array<{
+    id: string;
+    title: string;
+    content: string;
+    level?: number;
+    summary?: string;
+    equations?: string[];
+  }>;
+}
+
+export interface PremiumJobResponse {
+  job_id: string;
+  arxiv_id: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  message?: string;
+}
+
+export interface PremiumJobStatus {
+  job_id: string;
+  arxiv_id?: string;
+  paper_id?: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  progress: number;
+  current_step: string;
+  error?: string | null;
+  video_urls?: string[];
+}
 
 // ── Text-to-Speech Types ─────────────────────────────────────────────
 

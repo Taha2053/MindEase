@@ -1,9 +1,9 @@
 import type { TransformationParams, BaselineProfile } from "@/types";
+import { getApiKey } from "@/utils/apiKeyManager";
 
-const MISTRAL_API_KEY = import.meta.env.VITE_MISTRAL_API_KEY as string;
 
 const API_BASE = "https://api.mistral.ai/v1";
-const MODEL = "mistral-small-latest";
+const CANDIDATE_MODELS = ["codestral-latest", "ministral-8b-latest", "mistral-small-latest"];
 
 interface FullTransformParams {
   transformationParams: TransformationParams;
@@ -11,29 +11,48 @@ interface FullTransformParams {
 }
 
 async function callLLM(prompt: string, maxTokens = 4096, temperature = 0.3): Promise<string> {
-  const response = await fetch(`${API_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${MISTRAL_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: maxTokens,
-      temperature,
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Mistral error ${response.status}: ${err}`);
+  const apiKey = await getApiKey("mistral");
+  if (!apiKey) {
+    throw new Error("Mistral API key is not configured. Please paste your key in MindEase Settings (no rebuild needed).");
   }
 
-  const data = (await response.json()) as {
-    choices: Array<{ message: { content: string } }>;
-  };
-  return data.choices[0].message.content;
+  let lastError: Error | null = null;
+  for (const model of CANDIDATE_MODELS) {
+    try {
+      const response = await fetch(`${API_BASE}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: maxTokens,
+          temperature,
+        }),
+      });
+
+      if (response.status === 429) {
+        console.warn(`[MindEase LLM] Model ${model} rate-limited (429), trying fallback model...`);
+        continue;
+      }
+
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`Mistral error ${response.status}: ${err}`);
+      }
+
+      const data = (await response.json()) as {
+        choices: Array<{ message: { content: string } }>;
+      };
+      return data.choices[0].message.content;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  throw lastError || new Error("Mistral LLM call failed across all candidate models.");
 }
 
 function buildProfileBlock(params: FullTransformParams): string {

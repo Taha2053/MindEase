@@ -19,7 +19,10 @@ import {
 import {
   Brain, Moon, Sun, Settings, ChevronDown,
   ChartBarBig, CircleCheck, Circle, Volume2, VolumeX,
+  AlertCircle,
 } from "lucide-react";
+import { ApiKeyModal } from "./ApiKeyModal";
+import { hasRequiredKeys } from "@/utils/apiKeyManager";
 import type { TtsSettings } from "@/types";
 import {
   speak, stop, loadTtsSettings, saveTtsSettings,
@@ -67,9 +70,12 @@ function ThemeToggle({ theme, onToggle }: {
 
 /* ── Header ── */
 
-function Header({ theme, onThemeToggle }: {
+function Header({
+  theme, onThemeToggle, onOpenSettings,
+}: {
   theme: "dark" | "light";
   onThemeToggle: (next: "dark" | "light") => void;
+  onOpenSettings: () => void;
 }) {
   return (
     <div className="header">
@@ -78,6 +84,15 @@ function Header({ theme, onThemeToggle }: {
         <div className="header-title">MindEase</div>
         <div className="header-sub">Adaptive Learning</div>
       </div>
+      <button
+        type="button"
+        className="settings-btn-popup"
+        onClick={onOpenSettings}
+        title="API Keys & Services Settings"
+        aria-label="API Keys & Services Settings"
+      >
+        <Settings size={16} />
+      </button>
       <ThemeToggle theme={theme} onToggle={onThemeToggle} />
     </div>
   );
@@ -701,6 +716,18 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
 
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [hasKeys, setHasKeys] = useState(true);
+
+  const checkKeys = useCallback(async () => {
+    const ok = await hasRequiredKeys();
+    setHasKeys(ok);
+  }, []);
+
+  useEffect(() => {
+    checkKeys();
+  }, [checkKeys]);
+
   // Live timer tick
   useEffect(() => {
     if (!extActive || !workspace || workspace.state !== "active") return;
@@ -827,7 +854,22 @@ function App() {
 
   return (
     <>
-      <Header theme={theme} onThemeToggle={setTheme} />
+      <Header
+        theme={theme}
+        onThemeToggle={setTheme}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
+      {!hasKeys && (
+        <div
+          className="api-alert-banner"
+          onClick={() => setIsSettingsOpen(true)}
+          title="Click to configure your API key"
+        >
+          <AlertCircle size={14} />
+          <span>API Key needed for AI restructuring</span>
+          <span className="api-alert-action">Enter Key &rarr;</span>
+        </div>
+      )}
       <div className="body-wrap">
         <SessionBar
           session={workspace}
@@ -861,7 +903,11 @@ function App() {
 
         <Explanations explanations={explanations} />
       </div>
-      {loading && <div className="loading-overlay"><div className="loading-spinner" /></div>}
+      <ApiKeyModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onKeysSaved={checkKeys}
+      />
     </>
   );
 }

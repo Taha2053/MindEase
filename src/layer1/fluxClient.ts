@@ -5,14 +5,14 @@
    ============================================================ */
 
 import { InferenceClient } from "@huggingface/inference";
+import { getApiKey } from "@/utils/apiKeyManager";
 
-const HF_TOKEN = import.meta.env.VITE_HF_TOKEN as string | undefined;
-
-function getClient(): InferenceClient {
-  if (!HF_TOKEN) {
-    throw new Error("[FluxClient] VITE_HF_TOKEN is not set in environment");
+async function getClient(): Promise<InferenceClient> {
+  const token = await getApiKey("hf");
+  if (!token) {
+    throw new Error("[FluxClient] Hugging Face token is not configured. Add it in MindEase Settings.");
   }
-  return new InferenceClient(HF_TOKEN);
+  return new InferenceClient(token);
 }
 
 export interface FluxResult {
@@ -30,7 +30,7 @@ export async function generateFluxImage(
   concept: string,
   context?: string,
 ): Promise<FluxResult> {
-  const client = getClient();
+  const client = await getClient();
 
   const inputs = context
     ? `${concept} - ${context}`

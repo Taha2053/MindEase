@@ -1,0 +1,267 @@
+"""Cost protection for the public processing endpoint.
+
+Every ``POST /api/process`` run costs real money (LLM generation + rendering,
+roughly $0.10/paper) and minutes of the container's 2 vCPUs — and the endpoint
+is public with real traffic. Two guards:
+
+- Sliding-window rate limits: per-client-IP and a global cap across all clients.
+- A short-TTL recent-jobs map used for duplicate-submit detection during the
+  window before the worker links ``job.paper_id`` (it's NULL at creation to
+  avoid an FK violation, so a DB lookup alone misses immediate double-clicks).
+
+State is in-memory and per-replica. With Container Apps at 1-2 replicas that
+bounds cost within a small factor of the configured limits, which is the goal —
+this is a cost fuse, not billing-grade accounting. A shared store (Redis) is the
+upgrade path if replicas grow.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import logging
+import os
+import threading
+import time
+from collections import deque
+from datetime import datetime, timedelta
+from urllib.parse import urlsplit
+
+from fastapi import HTTPException, Request
+
+logger = logging.getLogger(__name__)
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+class SlidingWindowLimiter:
+    """Thread-safe sliding-window counter. ``max_events == 0`` disables it."""
+
+    def __init__(self, max_events: int, window_seconds: float):
+        self.max_events = max_events
+        self.window_seconds = window_seconds
+        self._events: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def reset(self) -> None:
+        """Drop all recorded events (used by tests)."""
+        with self._lock:
+            self._events.clear()
+
+    def check(self, key: str, now: float | None = None) -> tuple[bool, int]:
+        """Peek: would a request be allowed right now? Records nothing."""
+        if self.max_events == 0:
+            return True, 0
+        now = time.monotonic() if now is None else now
+        cutoff = now - self.window_seconds
+        with self._lock:
+            q = self._events.get(key)
+            if not q:
+                return True, 0
+            while q and q[0] <= cutoff:
+                q.popleft()
+            if len(q) >= self.max_events:
+                retry_after = int(q[0] + self.window_seconds - now) + 1
+                return False, max(1, retry_after)
+            return True, 0
+
+    def record(self, key: str, now: float | None = None) -> None:
+        """Count one event against ``key``."""
+        if self.max_events == 0:
+            return
+        now = time.monotonic() if now is None else now
+        cutoff = now - self.window_seconds
+        with self._lock:
+            self._events.setdefault(key, deque()).append(now)
+            # Opportunistic cleanup so the map doesn't grow unboundedly.
+            if len(self._events) > 10_000:
+                dead = [k for k, v in self._events.items() if not v or v[-1] <= cutoff]
+                for k in dead:
+                    del self._events[k]
+
+    def allow(self, key: str, now: float | None = None) -> tuple[bool, int]:
+        """Record-and-check in one step. Returns (allowed, retry_after_seconds).
+
+        For several limiters guarding ONE decision use ``enforce_all`` instead:
+        it peeks every limiter before recording on any, so a denial by one
+        never consumes the caller's budget on the others.
+        """
+        allowed, retry_after = self.check(key, now)
+        if allowed:
+            self.record(key, now)
+        return allowed, retry_after
+
+
+class RecentJobs:
+    """arxiv_id -> job_id remembered for a short TTL, for duplicate submits."""
+
+    def __init__(self, ttl_seconds: float = 600):
+        self.ttl_seconds = ttl_seconds
+        self._jobs: dict[str, tuple[str, float]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, arxiv_id: str, now: float | None = None) -> str | None:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            entry = self._jobs.get(arxiv_id)
+            if not entry:
+                return None
+            job_id, ts = entry
+            if now - ts > self.ttl_seconds:
+                del self._jobs[arxiv_id]
+                return None
+            return job_id
+
+    def put(self, arxiv_id: str, job_id: str, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            self._jobs[arxiv_id] = (job_id, now)
+            if len(self._jobs) > 10_000:
+                cutoff = now - self.ttl_seconds
+                for k in [k for k, (_, ts) in self._jobs.items() if ts <= cutoff]:
+                    del self._jobs[k]
+
+    def clear(self, arxiv_id: str) -> None:
+        with self._lock:
+            self._jobs.pop(arxiv_id, None)
+
+
+def client_ip(request: Request) -> str:
+    """Client IP as seen by the ingress proxy.
+
+    Container Apps ingress APPENDS the true peer address to X-Forwarded-For, so
+    the RIGHTMOST value is the only one we set; everything left of it is
+    client-supplied. Taking the first value (the old behaviour) let anyone mint
+    a fresh per-IP rate-limit bucket per request with a spoofed header — the
+    crawler that ran 250 papers/day through the "5 per hour" limit did exactly
+    that or equivalent. Single trusted hop assumed (one ingress in front).
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        last = forwarded.split(",")[-1].strip()
+        if last:
+            return last
+    return request.client.host if request.client else "unknown"
+
+
+def request_context(request: Request) -> str:
+    """Compact forensics for admission logs, so a paced crawler on rotating
+    IPs can still be told apart from people: user agent, Accept-Language,
+    Referer host and Origin. Never the raw IP."""
+    h = request.headers
+    ua = h.get("user-agent", "-").replace('"', "'")[:90]
+    lang = h.get("accept-language", "-").replace('"', "'")[:24]
+    ref = urlsplit(h.get("referer", "")).netloc or "-"
+    origin = h.get("origin", "-")[:40]
+    return f'ua="{ua}" lang="{lang}" ref={ref} origin={origin}'
+
+
+def ip_fingerprint(ip: str) -> str:
+    """Pseudonymous 12-char tag for logs: HMAC-SHA256 of the address under
+    IP_HASH_SECRET. Lets us correlate a burst of submissions to one client
+    without writing raw addresses; a plain hash of an IPv4 would be a 2^32
+    lookup, so set IP_HASH_SECRET in production."""
+    key = os.getenv("IP_HASH_SECRET", "") or "arxivisual-unkeyed"
+    return hmac.new(key.encode(), ip.encode(), hashlib.sha256).hexdigest()[:12]
+
+
+def enforce(limiter: SlidingWindowLimiter, key: str, detail: str, client_tag: str = "") -> None:
+    """Record-and-check ONE limiter; raise the standard 429 on denial."""
+    allowed, retry_after = limiter.allow(key)
+    if not allowed:
+        logger.info("Rate limit denied: %s (client %s)", detail[:60], client_tag or key)
+        raise HTTPException(
+            status_code=429, detail=detail, headers={"Retry-After": str(retry_after)}
+        )
+
+
+def enforce_all(
+    checks: list[tuple[SlidingWindowLimiter, str, str]], client_tag: str = ""
+) -> None:
+    """Two-phase admission across several limiters: peek all, then record all.
+
+    Chained record-and-check let a denial by the global limiter still consume
+    the caller's per-IP daily slot — three "at capacity" answers in a busy
+    hour locked a real user out for 24h without starting a paper.
+    """
+    for limiter, key, detail in checks:
+        allowed, retry_after = limiter.check(key)
+        if not allowed:
+            logger.info("Rate limit denied: %s (client %s)", detail[:60], client_tag)
+            raise HTTPException(
+                status_code=429, detail=detail, headers={"Retry-After": str(retry_after)}
+            )
+    for limiter, key, _ in checks:
+        limiter.record(key)
+
+
+# Defaults: a person exploring the site can start 5 papers an hour; the whole
+# world combined is capped by the durable global window below (30/hour default;
+# prod sets 6). Set either env to 0 to disable that limiter.
+per_ip_limiter = SlidingWindowLimiter(
+    max_events=_int_env("RATE_LIMIT_PROCESS_PER_IP", 5),
+    window_seconds=_int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600),
+)
+
+
+def global_window_cap() -> int:
+    """Ceiling on NEW-paper jobs per rolling window across the whole service.
+    Counted from the jobs table by the route (see ``global_window_verdict``),
+    not in memory: the in-memory limiter was per replica, so with two API
+    replicas "6/hour" was really up to 12. 0 disables."""
+    return _int_env("RATE_LIMIT_PROCESS_GLOBAL", 30)
+
+
+def global_window_seconds() -> int:
+    return _int_env("RATE_LIMIT_PROCESS_WINDOW_SECONDS", 3600)
+
+
+def global_window_verdict(started_in_window: int) -> tuple[bool, int]:
+    """(saturated, retry_after_seconds) for the durable global window, given
+    the number of jobs created within it. Like the daily cap: a fuse, not a
+    ledger — concurrency can overshoot by a request or two."""
+    cap = global_window_cap()
+    if cap <= 0 or started_in_window < cap:
+        return False, 0
+    return True, 60
+
+# A slower second per-IP window: 5/hour still allows 120/day from one patient
+# client. Daily quotas belong to a person, not a script.
+per_ip_daily_limiter = SlidingWindowLimiter(
+    max_events=_int_env("RATE_LIMIT_PROCESS_PER_IP_DAILY", 3),
+    window_seconds=86400,
+)
+
+
+def daily_cap_verdict(started_today: int, now: datetime) -> tuple[bool, int]:
+    """(exhausted, retry_after_seconds) for the durable daily cap, given the
+    number of jobs already created since UTC midnight. ``now`` is naive UTC
+    (DB convention). Not atomic with the insert — a fuse, not a ledger: it can
+    overshoot by in-flight concurrency, never by a crawler's persistence."""
+    cap = daily_new_paper_cap()
+    if cap <= 0 or started_today < cap:
+        return False, 0
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    seconds_left = int((day_start + timedelta(days=1) - now).total_seconds())
+    return True, max(60, seconds_left)
+
+
+def daily_new_paper_cap() -> int:
+    """Hard ceiling on NEW-paper generations per UTC day, enforced against the
+    jobs table (durable across replicas and restarts, unlike the in-memory
+    limiters). This is the spend guarantee: cached papers stay free, and a
+    crawler can at most burn one day's cap. 0 disables."""
+    return _int_env("DAILY_NEW_PAPER_CAP", 80)
+recent_jobs = RecentJobs(ttl_seconds=_int_env("PROCESS_DEDUPE_TTL_SECONDS", 600))
+
+# Feedback is cheap to store but still abusable; own bucket AND own window —
+# tuning the /api/process cost fuse must not silently retune feedback.
+feedback_limiter = SlidingWindowLimiter(
+    max_events=_int_env("RATE_LIMIT_FEEDBACK_PER_IP", 30),
+    window_seconds=_int_env("RATE_LIMIT_FEEDBACK_WINDOW_SECONDS", 3600),
+)

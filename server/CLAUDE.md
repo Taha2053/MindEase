@@ -1,0 +1,182 @@
+# arXivisual Backend — Agent Context
+
+FastAPI service that turns an arXiv ID into narrated Manim explainer videos, live on Azure Container Apps
+(arxivisual.org). Deep dive: `../docs/ARCHITECTURE.md`. Infra (Terraform, production): `../infra/README.md`.
+
+## Architecture
+
+```
+POST /api/process  (api/routes.py: rate-limit + dedupe [api/throttle.py] + stale-job reap [db/queries.py])
+        │
+        ├─ USE_TEMPORAL=1 → Temporal workflow  paper-{arxiv_id}   (temporal_app/workflows.py, durable)
+        └─ off / Temporal error → FastAPI BackgroundTasks legacy path (jobs/worker.py) — fail-open
+        │
+  ingest (ingestion/) → agent pipeline (agents/pipeline.py) → parallel renders
+  (rendering/local_runner.py: manim subprocess + TTS) → Cloudflare R2 upload (rendering/storage.py)
+  → visual QA (agents/visual_qa.py) → repair pass (temporal_app/activities.py) → honest finalize
+        │
+  Postgres via async SQLAlchemy (db/) ← frontend polls GET /api/status/{job_id}
+```
+
+- **LLM**: Azure OpenAI GPT-5 family, provider-switchable via `agents/base.py` (Dedalus = legacy fallback).
+- **TTS**: Azure OpenAI `gpt-4o-mini-tts` as manim-voiceover `OpenAIService`; env routed to Azure's
+  OpenAI-compatible endpoint at render time by `rendering/local_runner.py:_tts_subprocess_env`.
+- **Rendering**: local subprocess (`RENDER_MODE=local`, the default and what prod runs). Modal exists
+  (`rendering/modal_runner.py`) only as an unused optional mode. **There is no Redis anywhere.**
+- **DB**: Postgres (asyncpg) when `DATABASE_URL` set, SQLite `./arxiviz.db` locally. No alembic — schema is
+  `Base.metadata.create_all` in `db/connection.py:init_db()` at startup.
+- **Observability**: Langfuse v3 (OTel-based) — `langfuse.openai` drop-in client wraps every LLM call, plus
+  `@observe` spans; active iff both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set. Azure Application
+  Insights (`telemetry.py`, Azure Monitor OTel distro; iff `APPLICATIONINSIGHTS_CONNECTION_STRING`) is configured
+  first thing in `main.py` / `temporal_app/worker.py` and pins Langfuse to its own never-global TracerProvider —
+  otherwise Langfuse adopts Azure's provider, its LLM spans (prompts included) get exported to App Insights and
+  Azure's sampler drops most of them. Product events go to PostHog (`analytics.py`; iff `POSTHOG_API_KEY`).
+
+## Pipeline stages (agents/pipeline.py)
+
+| # | Stage | File | Kind |
+|---|-------|------|------|
+| 1 | SectionAnalyzer | `agents/section_analyzer.py` | LLM: pick concepts worth animating |
+| 2 | VisualizationPlanner | `agents/visualization_planner.py` | LLM: scene-by-scene storyboard |
+| 3 | ManimGenerator (voice-aware) | `agents/manim_generator.py` | LLM: full `VoiceoverScene` code, few-shot by viz type |
+| 4 | CodeValidator | `agents/code_validator.py` | gate: AST/structure/auto-fixes + static rules (MathTex splitting, `camera.frame` outside MovingCameraScene), no LLM |
+| 5 | SpatialValidator | `agents/spatial_validator.py` | gate: bounds/overlap regex, no LLM |
+| 6 | VoiceoverScriptValidator | `agents/voiceover_script_validator.py` | gate: narration quality, heuristics + LLM judge |
+| 7 | RenderTester | `agents/render_tester.py` | gate: dry-run construct() execution in a stubbed subprocess (auto-skipped when `RENDER_MODE=modal`) |
+
+SectionAnalyzer and VisualizationPlanner run in JSON mode on Azure (`response_format=json_object`; the
+Dedalus fallback can only be prompted) with a short analyst persona (`prompts/system/json_analyst.md`, not
+the 17KB Manim reference), lenient JSON repair and one retry (`agents.base.call_llm_json`, shared with the
+ingestion organizer); candidates are de-duplicated by concept before the cap of 5. On the Temporal path each
+finished visualization is checkpointed (upserted + heartbeat, plus a 30s heartbeat timer) as it completes; a
+retried generation resumes from this run's checkpoints (rows created since the job began) and only fills
+the remaining slots. Previous runs' rows are never deleted (feedback references them): `finalize_job`
+marks them `superseded` once the new run produced videos, and superseded rows never reach the API. `GET /api/paper` lists EVERY complete video per section (`SectionResponse.videos`, newest first; `video_url` = `videos[0]` for older clients). The
+legacy in-process path (`jobs/worker.py`) still writes rows the old way — no checkpointing or superseding.
+
+Display text has ONE owner: `ingestion/text_normalize.py` (idempotent; applied by `section_formatter` at ingest
+and by `api/routes.py` at read time; abstracts use `from_organizer=False`). The frontend does no text repair.
+JSON-escape residue is undone at its origin (`_organize_into_sections`) and again idempotently here; the
+over-escaping it undoes is invited by `agents.base.call_llm_json`'s retry suffix.
+
+Gate failure → regenerate with combined feedback (`MAX_RETRIES=3` + `VOICE_QUALITY_RETRIES=2` attempts); all
+attempts failing → `VOICE_FAIL_BEHAVIOR="return_silent"`. Gates report to the eval harness through the
+`agents.pipeline.metrics_hook` seam (None in production). After rendering, a vision judge samples frames for
+layout defects (`agents/visual_qa.py`); on the Temporal path a `severity=major` verdict can drive one
+closed-loop layout repair + re-render (`temporal_app/activities.py:repair_visualization_code`).
+
+## Commands (from `backend/`)
+
+```bash
+uv sync --extra dev                          # install (dev extra = pytest)
+uv run pytest tests/                         # unit suite (~89 tests, hermetic; CI hard gate on py3.11+3.13)
+TEMPORAL_TESTS=1 uv run pytest tests/test_temporal_pipeline.py   # integration (downloads Temporal dev server)
+uvx ruff check .                             # lint — HARD CI gate; the tree is ruff-clean (policy in pyproject)
+uv run uvicorn main:app --reload             # API on :8000, docs at /docs
+uv run python -m temporal_app.worker         # Temporal worker (paper-pipeline + paper-render queues)
+uv run python evals/run_evals.py --papers 2 --max-viz 2 --output report.json   # real LLM spend (~$0.05–0.15/paper)
+uv run python evals/check_regression.py report.json evals/baselines.json
+```
+
+CI (`.github/workflows/`): `ci.yml` — backend pytest, frontend tsc + build, backend AND frontend docker image builds
+(hard gates; backend ruff and frontend eslint are both HARD gates). `security.yml` — gitleaks secret scan (blocking) +
+npm/pip audit (advisory). `evals.yml` — nightly 06:00 UTC golden-set evals, fails on baseline regression.
+`deploy-backend.yml` / `deploy-frontend.yml` — Azure OIDC login, ACR build, Container App roll, health verify
+(the frontend one polls `/healthz` until the reported commit matches; both apps live in `infra/` Terraform).
+
+## Env vars (\* = secret; template: `.env.example`)
+
+- `AZURE_OPENAI_API_KEY`\*, `AZURE_OPENAI_ENDPOINT` — primary provider (auto-detected; `LLM_PROVIDER=azure|dedalus` forces).
+- `AZURE_OPENAI_DEPLOYMENT` (default `gpt-5`), `AZURE_OPENAI_REASONING_EFFORT` (default `low`).
+- `DEDALUS_API_KEY`\* — legacy fallback provider (also powers optional Context7 docs via `agents/context7_docs.py`).
+- `DATABASE_URL`\* — Postgres; `postgres://` is auto-rewritten to `postgresql+asyncpg://`. Unset = SQLite.
+- `STORAGE_MODE` `local|r2`; for r2: `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`\*, `S3_SECRET_KEY`\*, `S3_PUBLIC_URL`.
+- `LANGFUSE_PUBLIC_KEY`\*, `LANGFUSE_SECRET_KEY`\*, `LANGFUSE_HOST`, `LANGFUSE_TRACING_ENVIRONMENT`.
+- `APPLICATIONINSIGHTS_CONNECTION_STRING`\* — Azure Application Insights (requests, outbound HTTP, exceptions,
+  logs) on API + worker; unset = off. `OTEL_TRACES_SAMPLER=microsoft.fixed_percentage` +
+  `OTEL_TRACES_SAMPLER_ARG=0.2` (prod) = 20% of App Insights traces — set BOTH; the arg alone means 0.2 traces/s
+  under the distro's default rate-limited sampler. Langfuse traces are never sampled by this (`telemetry.py`).
+- `POSTHOG_API_KEY`\*, `POSTHOG_HOST` (default `https://us.i.posthog.com`) — PostHog product events
+  (`analytics.py`): `paper_accepted` (distinct_id = client fingerprint), `paper_completed` /
+  `paper_failed_server` (distinct_id = job id, emitted on both pipeline paths). Unset key = no-op.
+- `ENVIRONMENT=production` — disables `POST /api/render` (404) unless `RENDER_API_SECRET`\* matches the
+  `X-Render-Secret` header. The endpoint executes caller-supplied Python; keep it locked.
+- `CORS_EXTRA_ORIGINS` — comma-separated browser origins admitted on top of arxivisual.org/www/localhost:3000
+  (`api/cors.py`; canonicalized, a non-origin fails startup). Production: the frontend Container App's own FQDN.
+- **Admission control on `POST /api/process`** (`api/throttle.py`, `api/turnstile.py`) — layered, each layer
+  assumes the previous is gamed (the code is public; a crawler ran ~250 papers/day through the old limits by
+  spoofing `X-Forwarded-For`): (1) `TURNSTILE_SECRET_KEY`\* — server-verified Cloudflare Turnstile, skipped
+  when unset, fails CLOSED when set; every token is minted with action `start-paper` and the paper id as cData
+  (`turnstile_cdata`, mirrored in `TurnstileWidget.tsx`) and the API refuses tokens for any other action/paper,
+  so one solved challenge starts one paper — deploy the frontend BEFORE the API when the binding changes; (2) `DAILY_NEW_PAPER_CAP` (80) — durable per-UTC-day ceiling counted from
+  the jobs table (the spend guarantee; cached papers stay free; 0 disables); (3) `RATE_LIMIT_PROCESS_GLOBAL`
+  (30 per `RATE_LIMIT_PROCESS_WINDOW_SECONDS`=3600; prod sets 6) — the global rolling window, ALSO counted from
+  the jobs table (it was an in-memory limiter, i.e. per replica: two replicas silently doubled it); (4) in-memory
+  per-IP sliding windows: `RATE_LIMIT_PROCESS_PER_IP` (5/h), `RATE_LIMIT_PROCESS_PER_IP_DAILY` (3/day),
+  `PROCESS_DEDUPE_TTL_SECONDS` (600).
+  `client_ip()` takes the RIGHTMOST `X-Forwarded-For` hop (the one the ingress appends) — never the first.
+  `ProcessRequest.arxiv_id` is validated and normalized (version suffix stripped) at the boundary — the paper is
+  stored under the base id, and non-arXiv identifiers are rejected with 422 before any budget is spent.
+- `RATE_LIMIT_FEEDBACK_PER_IP` (30) / `RATE_LIMIT_FEEDBACK_WINDOW_SECONDS` (3600) — bounds `POST /api/feedback` (viewer 👍/👎 per video + site
+  suggestions → `feedback` table). Video votes are labeled ground truth for calibrating the visual-QA judge;
+  `paper_id` is denormalized from the viz row, never trusted from the client.
+- `TEMPORAL_ADDRESS` (`localhost:7233`), `TEMPORAL_NAMESPACE` (`default`), `TEMPORAL_TLS=1` (prod reaches
+  Temporal via HTTP/2 ingress behind TLS :443 — raw TCP ingress is unroutable on Container Apps).
+
+## Feature flags
+
+- `USE_TEMPORAL=1` — durable orchestration; any Temporal error falls back (fail-open) to the legacy in-process path.
+- `ENABLE_VISUAL_QA=1` — vision judge on rendered frames (observe-only on legacy path; verdict feeds repair on Temporal path).
+- `VISUAL_QA_REPAIR=1` — one **vision-grounded** repair round for `major` defects (Temporal path only): the
+  rendered video is read back through the storage backend (never the CDN URL — stable keys cache for a year),
+  defect frames are sampled, and the repair model sees the pixels. Text-only repair is the fallback for every
+  vision-failure mode. Measured: text-only fixed 0/6; vision-grounded fixed 2/4 in its first production run.
+  Also: `VISUAL_QA_MODEL` (`gpt-5-mini`), `VISUAL_QA_REPAIR_MODEL` (defaults to the judge model),
+  `VISUAL_QA_FRAMES` (3).
+- `VOICEOVER_TTS_SERVICE` `openai|gtts` (default `openai` = Azure-routed), `VOICEOVER_VOICE_NAME` (`nova`),
+  `VOICEOVER_TTS_MODEL` (`gpt-4o-mini-tts`), `VOICEOVER_CACHE_DIR` (`/tmp/arxivisual-tts-cache`).
+- `RENDER_CONCURRENCY` (3) — parallel manim renders per host; `PIPELINE_CONCURRENCY` (2) — concurrent
+  generations on the Temporal worker (surplus queues on the server).
+- `RENDER_MODE` `local|modal` (default `local`; `modal` also disables the local RenderTester gate).
+- `RENDER_TEST_EXECUTE=1` (default) — RenderTester executes `construct()` in a dry-run subprocess with TTS
+  stubbed (`agents/dry_run_driver.py`, ~0.2s/scene, no network): catches the runtime-error class import
+  testing can't (e.g. numpy truth-value `if` on `get_center()`). `0` = legacy import-only validation.
+  `RENDER_TEST_TIMEOUT_SECONDS` (120) bounds it; harness breakage AND timeouts fail open — under load the
+  dry run starves for CPU, and treating that as bad code burned 1,405 paid regenerations in one week.
+
+## Conventions — do not violate
+
+1. **Per-task DB sessions.** `AsyncSession` is not concurrency-safe: every concurrent task/activity opens its
+   own `async_session_maker()` (see `jobs/worker.py:_render_one`, all of `temporal_app/activities.py`). Never
+   share one session across `asyncio.gather`ed tasks.
+2. **Workflow code stays deterministic and sandbox-clean.** `temporal_app/workflows.py`: no I/O, no env reads,
+   no heavy imports — side effects and env-derived decisions (e.g. `repair_recommended`) belong in activities.
+3. **Never pass `cache_dir` as a str to manim-voiceover** — it crashes the cache lookup. Narration-cache
+   persistence is the runner's symlink (`local_runner.py:_link_persistent_voiceover_cache`); leave the library
+   on its default Path-typed codepath.
+4. **viz IDs use the full sanitized arXiv id**: `viz_{arxiv_id with ./ → _}_{n}`. A truncated prefix collided
+   across sibling ids (2608.23551 vs 2608.23553) and papers overwrote each other's rows.
+5. **Infra changes go through `infra/*.tf`** (terraform plan first — it manages live production), never ad-hoc `az`.
+6. **DB datetime columns are naive UTC** (`datetime.utcnow`). Do not introduce tz-aware datetimes; the dedupe
+   and reaper queries compare naive values.
+7. **All LLM calls route through `agents/base.py`** (`call_llm` / `BaseAgent._call_llm`) — provider switching
+   and Langfuse tracing live there.
+8. **Ingestion never stores an abstract page or raw parser output.** `find_latexml_html_url` probes the
+   LaTeXML pages themselves (`arxiv.org/html/{id}`, then `ar5iv.labs.arxiv.org/html/{id}`) with redirects
+   NOT followed; a 3xx counts only if it resolves to another `/html/` URL on those hosts that itself answers
+   200 — ar5iv sends unconverted ids to the arXiv abstract page, and ~31% of the library was once ingested
+   that way. Fetched bodies must contain `ltx_document`. Sources under 400 words raise
+   `SourceTooShortError` (never retried); other formatting failures are retried once in-function and the
+   Temporal ingest activity then fails the job with the real message (`ApplicationError`, non-retryable).
+9. **Pre-fix abstract-only papers are stale, not visualized.** A paper ingested before
+   `queries.ABSTRACT_INGEST_FIXED_AT` (when the ingest that refuses abstract pages went live) whose stored section
+   text totals under `STALE_TEXT_CHARS` (3,400; the live corpus has a gap between 3,266 and 3,463) is an inflated abstract, not a paper (`queries.is_stale`). Papers
+   ingested or re-ingested after that instant are trusted whatever their length — stored `content` is the ~35%
+   summary, so a short real paper must never loop through re-ingestion. `GET /api/papers` reports stale papers
+   `stale` (Explore hides them), `GET /api/paper/{id}` answers 404 so the reader offers Start, and both job paths
+   re-ingest instead of skipping (`_ingest_and_store_paper(replace=True)`: metadata + `updated_at` refreshed,
+   sections replaced, old viz rows unlinked from sections, then superseded by `finalize_job` once the new run has
+   videos). Legacy truncated-id viz rows (`viz_17060376_1`) are superseded at API startup where a full-id complete
+   row exists.
+10. **Keep `pytest` hermetic.** `testpaths=["tests"]` exists because scripts under `tools/` fire real API calls
+   on collection; new tests must not need network or real keys.

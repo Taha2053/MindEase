@@ -1,0 +1,95 @@
+[project]
+name = "mindease-premium-server"
+version = "0.1.0"
+description = "MindEase Premium Service - Multi-Source Manim Animation & Video Generation Pipeline"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # API framework
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    # Core AI + validation
+    "pydantic>=2.0.0",
+    "python-dotenv>=0.21.1,<0.22.0",
+    # Async / transport
+    "httpx>=0.25.0",
+    "asyncio-throttle>=1.0.0",
+    # Database / jobs
+    "sqlalchemy>=2.0.0",
+    "aiosqlite>=0.19.0",  # For local SQLite development
+    "asyncpg>=0.29.0",     # For PostgreSQL (Neon, Supabase, Railway, etc.)
+    "greenlet>=3.0.0",
+    # Ingestion (Team 1)
+    "arxiv>=2.0.0",
+    "pymupdf4llm>=0.0.5",
+    "pymupdf>=1.23.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+    # Rendering / visualization
+    "manim>=0.18.0",
+    "modal>=0.60.0",
+    "manim-voiceover[gtts,openai]>=0.3.0",
+    # Cloud storage (S3-compatible — Cloudflare R2)
+    "boto3>=1.34.0",
+    # LLM — Azure OpenAI (GPT-5 family; needs reasoning_effort support)
+    "openai>=1.60.0",
+    # Required by manim-voiceover (pkg_resources)
+    "setuptools>=65.0.0",
+    # Dedalus SDK + MCP Gateway (Context7 live docs)
+    "dedalus-labs>=0.2.0",
+    # Observability — LLM tracing / cost tracking
+    "langfuse>=3.0.0",
+    "temporalio>=1.32.0",
+    "posthog>=7.48.0",
+    "azure-monitor-opentelemetry>=1.8.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agents", "models", "prompts", "examples"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# Only collect the real unit-test suite. Without this, plain `pytest` also
+# collects the argparse scripts under tools/ and backend root, some of which
+# fire real Azure OpenAI calls and network fetches on collection/execution.
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["generated_output", "demo_scenes", "examples"]
+
+[tool.ruff.lint]
+allowed-confusables = ["\u222a"]  # pdf_parser matches literal set-union glyphs in papers
+# Correctness + hygiene set. Style-only churn (quotes, formatting) is left to
+# the formatter; rules here catch real mistakes.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM", "DTZ", "PLW", "RUF"]
+ignore = [
+  "B008",    # FastAPI Depends() in defaults is idiomatic
+  "BLE001",  # pipeline gates intentionally catch broad exceptions (fail-open design)
+  "SIM102",  # nested ifs are often clearer than compound conditions here
+  "RUF012",  # class-level dict constants (prompt/example maps) are de facto frozen
+  "PLW1510", # subprocess.run return codes are checked explicitly where they matter
+  "UP042",   # (str, Enum) bases are shared with pydantic response models; churn > value
+]
+
+[tool.ruff.lint.per-file-ignores]
+"ingestion/text_normalize.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_text_normalize.py" = ["RUF001"]
+"tools/*" = ["E402", "DTZ"]           # CLI scripts: sys.path setup + local timestamps
+"tests/*" = ["E402", "DTZ"]           # fixtures use naive datetimes on purpose
+"test_*.py" = ["E402"]                # root-level CLI scripts
+"temporal_app/worker.py" = ["E402"]
+"jobs/worker.py" = ["E402"]           # optional-langfuse import shim precedes app imports
+"main.py" = ["E402"]                  # load_dotenv() MUST run before app imports
+"ingestion/arxiv_fetcher.py" = ["E402"]  # dotenv-before-arxiv-import, same reason
+"db/queries.py" = ["E402"]            # naive-utc helper defined before ORM imports

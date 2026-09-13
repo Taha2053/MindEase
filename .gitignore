@@ -8,3 +8,17 @@ PAPER_ANALYSIS_AND_MEETING_BRIEF.md
 PAPER_ANALYSIS_AND_MEETING_BRIEF.pdf
 *.pdf
 2026-09-13/
+arXivisual/
+server/.venv/
+server/.env
+server/media/
+server/*.db
+server/*.db-shm
+server/*.db-wal
+server/**/__pycache__/
+server/.pytest_cache/
+server/demo-videos/
+server/zed_AIAYN/
+server/**/*.mp4
+server/**/*.wav
+server/**/*.mp3
