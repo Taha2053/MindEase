@@ -7,7 +7,17 @@
 
 import browser from "webextension-polyfill";
 import type { ContentChunk, VisualEntry, BaselineProfile, TransformationParams } from "@/types";
-import { speak as puterSpeak, stopPuterTts } from "@/content/puterTts";
+import {
+  speak as ttsSpeak,
+  pause as ttsPause,
+  resume as ttsResume,
+  stop as ttsStop,
+  isSpeaking,
+  isPaused,
+  loadTtsSettings,
+  saveTtsSettings,
+  DEFAULT_TTS_SETTINGS,
+} from "@/utils/ttsManager";
 import { STORAGE_KEYS } from "@/types";
 import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
 import { iconHTML } from "@/utils/icons";
@@ -735,15 +745,25 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     }
   }
 
+  if (msg.type === "CONTEXT_TTS") {
+    const p = msg.payload as { text: string };
+    if (p?.text && p.text.trim().length > 0) {
+      const rect = getSelectionRect();
+      showFloatingTtsPlayer(p.text, rect);
+    }
+  }
+
   if (msg.type === "TTS_SPEAK") {
     const { text } = msg.payload as { text: string };
     if (text && text.trim().length > 0) {
-      speakTexts([text]);
+      const rect = getSelectionRect();
+      showFloatingTtsPlayer(text, rect);
     }
   }
 
   if (msg.type === "TTS_STOP") {
     stopTTS();
+    hideFloatingTtsPlayer();
   }
 });
 
@@ -1020,12 +1040,13 @@ const OVERLAY_CSS = `
 
       /* ── Chunk cards ── */
       .mindease-chunk {
+        position: relative;
         margin-bottom: 12px;
         padding: 14px;
         background: var(--bg-surface);
         border-radius: 10px;
         border: 1px solid var(--border);
-        transition: border-color 0.15s;
+        transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
         animation: mindease-fadeUp 0.3s ease both;
       }
       .mindease-chunk:hover { border-color: var(--border-hover); }
@@ -1033,7 +1054,49 @@ const OVERLAY_CSS = `
         border-color: color-mix(in srgb, var(--accent) 20%, transparent);
         background: linear-gradient(135deg, var(--bg-surface), var(--bg-elevated));
       }
-
+      .mindease-chunk.tts-active-chunk {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent) !important;
+        background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface)) !important;
+      }
+      .chunk-speak-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 26px;
+        height: 26px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface));
+        color: var(--accent);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        opacity: 0.65;
+        transition: opacity 0.15s, background 0.15s, transform 0.15s;
+        padding: 0;
+        z-index: 2;
+      }
+      .mindease-chunk:hover .chunk-speak-btn {
+        opacity: 1;
+      }
+      .chunk-speak-btn:hover {
+        opacity: 1;
+        background: var(--accent);
+        color: #1A1D3A;
+        transform: scale(1.06);
+      }
+      .chunk-speak-btn.speaking {
+        opacity: 1;
+        background: var(--accent);
+        color: #1A1D3A;
+      }
+      .mindease-overlay-speed-btn.active {
+        background: var(--accent) !important;
+        color: #1A1D3A !important;
+        border-color: var(--accent) !important;
+      }
       .chunk-concept-tag {
         display: inline-flex;
         align-items: center;
@@ -2275,6 +2338,247 @@ function showCaptureResult(croppedDataUrl: string): void {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
+   Floating Selection TTS Player
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+let _floatingTtsEl: HTMLElement | null = null;
+let _floatingTtsRate = 1.0;
+let _floatingTtsText = "";
+
+const FLOATING_TTS_CSS = `
+#mindease-floating-tts {
+  position: fixed;
+  z-index: 2147483646;
+  width: 330px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-surface, #252A55);
+  border: 1px solid var(--border, #7286D3);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: var(--text-primary, #E5E0FF);
+  overflow: hidden;
+  animation: mindease-fadeUp 0.18s ease;
+}
+#mindease-floating-tts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--accent, #8EA7E9) 12%, var(--bg-surface, #252A55));
+  border-bottom: 1px solid var(--border, #7286D3);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--accent, #8EA7E9);
+}
+#mindease-floating-tts-close {
+  background: none;
+  border: none;
+  color: var(--text-muted, #8A8AB8);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 16px;
+  line-height: 1;
+}
+#mindease-floating-tts-close:hover { color: var(--text-primary, #E5E0FF); }
+#mindease-floating-tts-body {
+  padding: 10px 12px;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  max-height: 100px;
+  overflow-y: auto;
+  color: var(--text-primary, #E5E0FF);
+  background: color-mix(in srgb, var(--bg-base, #1A1D3A) 50%, transparent);
+  border-bottom: 1px solid var(--border, #7286D3);
+}
+#mindease-floating-tts-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  gap: 8px;
+}
+.mindease-tts-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent, #8EA7E9);
+  color: #1A1D3A;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.mindease-tts-btn-icon:hover { opacity: 0.9; }
+.mindease-tts-btn-secondary {
+  background: transparent;
+  color: var(--text-dim, #B8B8E0);
+  border: 1px solid var(--border, #7286D3);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.mindease-tts-btn-secondary:hover { color: var(--text-primary, #E5E0FF); border-color: var(--accent, #8EA7E9); }
+.mindease-tts-speed-group {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.mindease-tts-speed-btn {
+  padding: 2px 6px;
+  font-size: 0.68rem;
+  border-radius: 4px;
+  border: 1px solid var(--border, #7286D3);
+  background: transparent;
+  color: var(--text-dim, #B8B8E0);
+  cursor: pointer;
+}
+.mindease-tts-speed-btn.active {
+  background: var(--accent, #8EA7E9);
+  color: #1A1D3A;
+  font-weight: 600;
+  border-color: var(--accent, #8EA7E9);
+}
+`;
+
+function injectFloatingTtsStyles(): void {
+  if (document.getElementById("mindease-floating-tts-styles")) return;
+  const el = document.createElement("style");
+  el.id = "mindease-floating-tts-styles";
+  el.textContent = FLOATING_TTS_CSS;
+  document.head.appendChild(el);
+}
+
+function hideFloatingTtsPlayer(): void {
+  ttsStop();
+  if (_floatingTtsEl) {
+    _floatingTtsEl.remove();
+    _floatingTtsEl = null;
+  }
+}
+
+function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void {
+  injectFloatingTtsStyles();
+  hideFloatingTtsPlayer();
+
+  _floatingTtsText = text.trim();
+  if (!_floatingTtsText) return;
+
+  loadTtsSettings().then((settings) => {
+    _floatingTtsRate = settings.rate || 1.0;
+    renderPlayer();
+  });
+
+  function renderPlayer(): void {
+    const el = document.createElement("div");
+    _floatingTtsEl = el;
+    el.id = "mindease-floating-tts";
+    el.innerHTML = `
+      <div id="mindease-floating-tts-header">
+        <div style="display:flex;align-items:center;gap:6px">
+          ${iconHTML("volume-2")}
+          <span>MindEase Reader</span>
+          <span id="mindease-tts-counter" style="font-size:0.68rem;color:var(--text-dim,#B8B8E0)"></span>
+        </div>
+        <button id="mindease-floating-tts-close" title="Close reader">&times;</button>
+      </div>
+      <div id="mindease-floating-tts-body">${_escHtml(_floatingTtsText)}</div>
+      <div id="mindease-floating-tts-controls">
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="mindease-tts-btn-icon" id="mindease-ft-playpause">Pause</button>
+          <button class="mindease-tts-btn-secondary" id="mindease-ft-stop">Stop</button>
+        </div>
+        <div class="mindease-tts-speed-group">
+          <button class="mindease-tts-speed-btn${_floatingTtsRate === 0.75 ? " active" : ""}" data-rate="0.75">0.75x</button>
+          <button class="mindease-tts-speed-btn${_floatingTtsRate === 1.0 ? " active" : ""}" data-rate="1">1x</button>
+          <button class="mindease-tts-speed-btn${_floatingTtsRate === 1.25 ? " active" : ""}" data-rate="1.25">1.25x</button>
+          <button class="mindease-tts-speed-btn${_floatingTtsRate === 1.5 ? " active" : ""}" data-rate="1.5">1.5x</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(el);
+
+    const rect = initialRect || getSelectionRect();
+    const popupW = 330;
+    let left = window.innerWidth - popupW - 24;
+    let top = window.innerHeight - 190;
+    if (rect && rect.width > 0) {
+      left = rect.left + rect.width / 2 - popupW / 2;
+      top = rect.bottom + 10;
+      if (left < 12) left = 12;
+      if (left + popupW > window.innerWidth - 12) left = window.innerWidth - popupW - 12;
+      if (top + 170 > window.innerHeight) top = Math.max(12, rect.top - 180);
+    }
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+
+    const closeBtn = el.querySelector("#mindease-floating-tts-close");
+    closeBtn?.addEventListener("click", hideFloatingTtsPlayer);
+
+    const playPauseBtn = el.querySelector("#mindease-ft-playpause") as HTMLButtonElement | null;
+    const stopBtn = el.querySelector("#mindease-ft-stop") as HTMLButtonElement | null;
+    const bodyEl = el.querySelector("#mindease-floating-tts-body") as HTMLElement | null;
+    const counterEl = el.querySelector("#mindease-tts-counter") as HTMLElement | null;
+
+    playPauseBtn?.addEventListener("click", () => {
+      if (isSpeaking() && !isPaused()) {
+        ttsPause();
+        if (playPauseBtn) playPauseBtn.textContent = "Play";
+      } else if (isPaused()) {
+        ttsResume();
+        if (playPauseBtn) playPauseBtn.textContent = "Pause";
+      } else {
+        startSpeaking();
+      }
+    });
+
+    stopBtn?.addEventListener("click", () => {
+      ttsStop();
+      if (playPauseBtn) playPauseBtn.textContent = "Play";
+      if (counterEl) counterEl.textContent = "Stopped";
+    });
+
+    el.querySelectorAll(".mindease-tts-speed-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const rate = parseFloat((btn as HTMLElement).dataset.rate || "1.0");
+        _floatingTtsRate = rate;
+        saveTtsSettings({ rate });
+        el.querySelectorAll(".mindease-tts-speed-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        startSpeaking();
+      });
+    });
+
+    function startSpeaking(): void {
+      if (playPauseBtn) playPauseBtn.textContent = "Pause";
+      ttsSpeak(_floatingTtsText, {
+        rate: _floatingTtsRate,
+        onProgress: (idx, total, sentence) => {
+          if (counterEl) counterEl.textContent = `(${idx + 1}/${total})`;
+          if (bodyEl) {
+            bodyEl.innerHTML = `<span style="background:color-mix(in srgb,var(--accent,#8EA7E9) 30%,transparent);border-radius:3px;padding:2px 4px">${_escHtml(sentence)}</span>`;
+          }
+        },
+        onEnd: () => {
+          if (playPauseBtn) playPauseBtn.textContent = "Replay";
+          if (counterEl) counterEl.textContent = "Done";
+        },
+        onError: () => {
+          if (playPauseBtn) playPauseBtn.textContent = "Play";
+        },
+      }).catch(() => {});
+    }
+
+    startSpeaking();
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
    Floating Overlay Panel
    ═══════════════════════════════════════════════════════════════════════════════ */
 
@@ -2297,7 +2601,9 @@ function appendToOverlay(chunks: ContentChunk[]): void {
     const colorKey = palette[(existing + i) % palette.length];
     return `
       <div class="mindease-chunk ${concept ? "has-concept" : ""} color-${colorKey}
-           ${chunk.isExample ? "is-example" : ""} ${chunk.hasDefinitions ? "has-defs" : ""}">
+           ${chunk.isExample ? "is-example" : ""} ${chunk.hasDefinitions ? "has-defs" : ""}"
+           data-chunk-index="${existing + i}">
+        <button class="chunk-speak-btn" data-chunk-index="${existing + i}" title="Listen to this section" aria-label="Listen to this section">${iconHTML("volume-2")}</button>
         ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${_escHtml(concept)}</div>` : ""}
         <div class="chunk-body">${bodyHTML}</div>
         ${chunk.summary ? `<div class="chunk-summary">${iconHTML("arrow-right")} ${_escHtml(chunk.summary)}</div>` : ""}
@@ -2341,6 +2647,7 @@ function injectOverlay(
       <div class="mindease-chunk ${concept ? "has-concept" : ""} color-${colorKey}
            ${chunk.isExample ? "is-example" : ""} ${chunk.hasDefinitions ? "has-defs" : ""}"
            data-chunk-index="${i}">
+        <button class="chunk-speak-btn" data-chunk-index="${i}" title="Listen to this section" aria-label="Listen to this section">${iconHTML("volume-2")}</button>
         ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${_escHtml(concept)}</div>` : ""}
         <div class="chunk-body">${bodyHTML}</div>
         ${summary ? `<div class="chunk-summary">${iconHTML("arrow-right")} ${_escHtml(summary)}</div>` : ""}
@@ -2448,9 +2755,21 @@ function injectOverlay(
       </div>
     </div>
 
-    <div id="mindease-tts-bar" style="display:none;align-items:center;gap:10px;padding:6px 16px;background:color-mix(in srgb,var(--accent) 10%,var(--bg-surface));border-bottom:1px solid var(--border);font-size:0.72rem;color:var(--accent)">
-      <span class="tts-label" style="flex:1">Speaking&hellip;</span>
-      <button class="mindease-ctrl-btn" id="mindease-tts-stop" title="Stop" aria-label="Stop reading" style="width:22px;height:22px;font-size:10px">&times;</button>
+    <div id="mindease-tts-bar" style="display:none;align-items:center;justify-content:space-between;gap:8px;padding:6px 14px;background:color-mix(in srgb,var(--accent) 12%,var(--bg-surface));border-bottom:1px solid var(--border);font-size:0.75rem;color:var(--accent)">
+      <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
+        <span class="tts-icon">${iconHTML("volume-2")}</span>
+        <span class="tts-label" style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Speaking&hellip;</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+        <div class="mindease-tts-speed-bar" style="display:flex;gap:2px">
+          <button class="mindease-overlay-speed-btn" data-rate="0.75" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer">0.75x</button>
+          <button class="mindease-overlay-speed-btn active" data-rate="1" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--accent);background:var(--accent);color:#1A1D3A;font-weight:600;cursor:pointer">1x</button>
+          <button class="mindease-overlay-speed-btn" data-rate="1.25" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer">1.25x</button>
+          <button class="mindease-overlay-speed-btn" data-rate="1.5" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer">1.5x</button>
+        </div>
+        <button class="mindease-ctrl-btn" id="mindease-tts-pause" title="Pause / Resume" aria-label="Pause or Resume reading" style="width:24px;height:24px;font-size:10px;display:inline-flex;align-items:center;justify-content:center">❚❚</button>
+        <button class="mindease-ctrl-btn" id="mindease-tts-stop" title="Stop" aria-label="Stop reading" style="width:24px;height:24px;font-size:10px;display:inline-flex;align-items:center;justify-content:center">&times;</button>
+      </div>
     </div>
 
     <div id="mindease-body">
@@ -2735,6 +3054,7 @@ function injectOverlay(
   });
 
   /* ── TTS: Read aloud / Stop ── */
+  /* ── TTS: Read aloud / Stop / Pause ── */
   document.getElementById("mindease-tts-btn")?.addEventListener("click", () => {
     if (_ttsSpeaking) {
       stopTTS();
@@ -2743,7 +3063,46 @@ function injectOverlay(
     }
   });
   document.getElementById("mindease-tts-stop")?.addEventListener("click", stopTTS);
+  document.getElementById("mindease-tts-pause")?.addEventListener("click", () => {
+    const pauseBtn = document.getElementById("mindease-tts-pause");
+    if (isSpeaking() && !isPaused()) {
+      ttsPause();
+      if (pauseBtn) pauseBtn.textContent = "▶";
+    } else if (isPaused()) {
+      ttsResume();
+      if (pauseBtn) pauseBtn.textContent = "❚❚";
+    }
+  });
 
+  overlay.querySelectorAll(".mindease-overlay-speed-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const rate = parseFloat((btn as HTMLElement).dataset.rate || "1.0");
+      _ttsOverlayRate = rate;
+      saveTtsSettings({ rate });
+      overlay.querySelectorAll(".mindease-overlay-speed-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      if (_ttsSpeaking) {
+        if (_ttsActiveChunkIdx !== null) {
+          speakSingleChunk(_ttsActiveChunkIdx);
+        } else if (_ttsTexts.length > 0) {
+          speakTexts(_ttsTexts);
+        }
+      }
+    });
+  });
+
+  // Per-chunk speak buttons via event delegation
+  overlay.addEventListener("click", (e: MouseEvent) => {
+    const target = (e.target as HTMLElement)?.closest(".chunk-speak-btn") as HTMLElement | null;
+    if (!target) return;
+    const chunkIdxStr = target.dataset.chunkIndex;
+    if (chunkIdxStr !== undefined) {
+      const chunkIdx = parseInt(chunkIdxStr, 10);
+      if (!isNaN(chunkIdx)) {
+        speakSingleChunk(chunkIdx);
+      }
+    }
+  });
   /* ── Theme toggle in overlay ── */
   document.getElementById("mindease-theme-toggle")?.addEventListener("click", () => {
     const next = _theme === "light" ? "dark" : "light";
@@ -2911,14 +3270,90 @@ let _conceptsFromChunks: string[] = [];
 /* ── TTS State ──────────────────────────────────────────────────── */
 let _ttsSpeaking = false;
 let _ttsTexts: string[] = [];
+let _ttsActiveChunkIdx: number | null = null;
+let _ttsOverlayRate = 1.0;
 
 function stopTTS(): void {
-  stopPuterTts();
+  ttsStop();
   _ttsSpeaking = false;
+  _ttsActiveChunkIdx = null;
+
+  document.querySelectorAll(".mindease-chunk.tts-active-chunk").forEach((el) => el.classList.remove("tts-active-chunk"));
+  document.querySelectorAll(".chunk-speak-btn.speaking").forEach((btn) => {
+    btn.classList.remove("speaking");
+    btn.innerHTML = iconHTML("volume-2");
+  });
+
   const bar = document.getElementById("mindease-tts-bar");
   const btn = document.getElementById("mindease-tts-btn");
+  const pauseBtn = document.getElementById("mindease-tts-pause");
   if (bar) bar.style.display = "none";
   if (btn) btn.innerHTML = iconHTML("volume-2");
+  if (pauseBtn) pauseBtn.textContent = "❚❚";
+}
+
+function updateActiveChunkHighlight(chunkIdx: number): void {
+  document.querySelectorAll(".mindease-chunk").forEach((el, idx) => {
+    const attr = el.getAttribute("data-chunk-index");
+    const isTarget = attr !== null ? parseInt(attr, 10) === chunkIdx : idx === chunkIdx;
+    if (isTarget) {
+      el.classList.add("tts-active-chunk");
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const speakBtn = el.querySelector(".chunk-speak-btn");
+      if (speakBtn) {
+        speakBtn.classList.add("speaking");
+        speakBtn.innerHTML = '<span style="font-size:10px">■</span>';
+      }
+    } else {
+      el.classList.remove("tts-active-chunk");
+      const speakBtn = el.querySelector(".chunk-speak-btn");
+      if (speakBtn) {
+        speakBtn.classList.remove("speaking");
+        speakBtn.innerHTML = iconHTML("volume-2");
+      }
+    }
+  });
+}
+
+function speakSingleChunk(chunkIdx: number): void {
+  if (_ttsSpeaking && _ttsActiveChunkIdx === chunkIdx) {
+    stopTTS();
+    return;
+  }
+  stopTTS();
+
+  const chunk = _contentChunks[chunkIdx];
+  if (!chunk) return;
+
+  const cleanText = stripInlineTags(chunk.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  if (!cleanText) return;
+
+  _ttsSpeaking = true;
+  _ttsActiveChunkIdx = chunkIdx;
+  updateActiveChunkHighlight(chunkIdx);
+
+  const bar = document.getElementById("mindease-tts-bar");
+  const btn = document.getElementById("mindease-tts-btn");
+  const pauseBtn = document.getElementById("mindease-tts-pause");
+  if (bar) {
+    bar.style.display = "flex";
+    const label = bar.querySelector(".tts-label");
+    if (label) label.textContent = `Reading chunk ${chunkIdx + 1}...`;
+  }
+  if (btn) btn.innerHTML = iconHTML("x") + " Stop";
+  if (pauseBtn) pauseBtn.textContent = "❚❚";
+
+  ttsSpeak(cleanText, {
+    rate: _ttsOverlayRate,
+    onEnd: () => {
+      stopTTS();
+    },
+    onError: () => {
+      stopTTS();
+    },
+  }).catch(() => {
+    stopTTS();
+  });
 }
 
 function speakTexts(texts: string[]): void {
@@ -2926,15 +3361,19 @@ function speakTexts(texts: string[]): void {
   stopTTS();
   _ttsTexts = texts;
   _ttsSpeaking = true;
+  _ttsActiveChunkIdx = 0;
+
   const btn = document.getElementById("mindease-tts-btn");
   if (btn) btn.innerHTML = iconHTML("x") + " Stop";
 
   const bar = document.getElementById("mindease-tts-bar");
+  const pauseBtn = document.getElementById("mindease-tts-pause");
   if (bar) {
     bar.style.display = "flex";
     const label = bar.querySelector(".tts-label");
-    if (label) label.textContent = "Speaking\u2026";
+    if (label) label.textContent = `Reading chunk 1 of ${texts.length}...`;
   }
+  if (pauseBtn) pauseBtn.textContent = "❚❚";
 
   let i = 0;
   function speakNext(): void {
@@ -2942,11 +3381,16 @@ function speakTexts(texts: string[]): void {
       stopTTS();
       return;
     }
-    const bar = document.getElementById("mindease-tts-bar");
-    const label = bar?.querySelector(".tts-label");
-    if (label) label.textContent = `Speaking ${i + 1} of ${texts.length}\u2026`;
+    _ttsActiveChunkIdx = i;
+    updateActiveChunkHighlight(i);
 
-    puterSpeak(texts[i]).then(() => {
+    const b = document.getElementById("mindease-tts-bar");
+    const l = b?.querySelector(".tts-label");
+    if (l) l.textContent = `Reading chunk ${i + 1} of ${texts.length}...`;
+
+    ttsSpeak(texts[i], {
+      rate: _ttsOverlayRate,
+    }).then(() => {
       i++;
       speakNext();
     }).catch(() => {

@@ -25,7 +25,9 @@ import {
   AlertTriangle, Link, AlignStartVertical, BookOpenText,
   MessageSquare, Film, Globe, GraduationCap,
   LayoutDashboard, Eye, ChartNoAxesColumn, Sparkles, Clock,
+  Volume2, VolumeX,
 } from "lucide-react";
+import { speak, stop } from "@/utils/ttsManager";
 
 /* ─── Helpers ──────────────────────────────────────────────────────────────── */
 
@@ -273,6 +275,47 @@ const Sidebar: FC<SidebarProps> = ({ activeSection, onNavigate, theme, onThemeTo
   </aside>
 );
 
+
+/* ─── TTS Audio Button Component ───────────────────────────────────────────── */
+
+const TtsAudioButton: FC<{ text: string; label?: string; className?: string }> = ({ text, label, className = "" }) => {
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (playing) {
+        stop();
+      }
+    };
+  }, [playing]);
+
+  const handleToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (playing) {
+      stop();
+      setPlaying(false);
+    } else {
+      stop();
+      setPlaying(true);
+      speak(text, {
+        onEnd: () => setPlaying(false),
+        onError: () => setPlaying(false),
+      }).catch(() => setPlaying(false));
+    }
+  };
+
+  return (
+    <button
+      className={`dash-tts-btn ${playing ? "playing" : ""} ${className}`}
+      onClick={handleToggle}
+      title={playing ? "Stop listening" : "Listen aloud"}
+      aria-label={playing ? "Stop listening" : "Listen aloud"}
+    >
+      {playing ? <VolumeX size={13} /> : <Volume2 size={13} />}
+      {label && <span>{playing ? "Stop" : label}</span>}
+    </button>
+  );
+};
 /* ─── Section Components ───────────────────────────────────────────────────── */
 
 const SectionOverview: FC<{ artifact: PersonalizedArtifact | null; session: WorkspaceSession | null }> = ({ artifact, session }) => {
@@ -492,7 +535,10 @@ const SectionLearned: FC<{ artifact: PersonalizedArtifact | null }> = ({ artifac
         <div className="learned-grid">
           {cards.map((c, i) => (
             <div className="learned-item" key={i}>
-              <div className="li-concept">{c.concept}</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <div className="li-concept" style={{ marginBottom: 0 }}>{c.concept}</div>
+                <TtsAudioButton text={`${c.concept}. ${c.content}`} className="dash-tts-icon-only" />
+              </div>
               <div className="li-content">{c.content}</div>
               <span className="li-format">{c.format}</span>
             </div>
@@ -549,6 +595,7 @@ const SectionExplanations: FC = () => {
                   <span className={`explain-icon ${iconClass}`}><Icon size={18} /></span>
                   <span className="explain-title">{e.title}</span>
                   <span className="explain-action">{e.actionLabel}</span>
+                  <TtsAudioButton text={`${e.title}. ${e.explanation}`} className="dash-tts-icon-only" />
                 </div>
                 <div className="explain-body">{e.explanation}</div>
                 <div className="explain-meta">Adapted at {new Date(e.timestamp).toLocaleString()}</div>
@@ -578,7 +625,10 @@ const SectionReview: FC<{ artifact: PersonalizedArtifact | null }> = ({ artifact
             <div className="review-item" key={i}>
               <div className={`review-severity review-severity-${g.severity}`} />
               <div className="review-body">
-                <div className="review-concept">{g.conceptLabel}</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div className="review-concept">{g.conceptLabel}</div>
+                  <TtsAudioButton text={`${g.conceptLabel}: ${g.text}`} className="dash-tts-icon-only" />
+                </div>
                 <div className="review-text">{trunc(g.text, 120)}</div>
                 <span className={`review-badge review-badge-${g.severity}`}>{g.severity}</span>
               </div>

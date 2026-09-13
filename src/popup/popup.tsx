@@ -18,8 +18,13 @@ import {
 } from "@/layer2/userControls";
 import {
   Brain, Moon, Sun, Settings, ChevronDown,
-  ChartBarBig, CircleCheck, Circle,
+  ChartBarBig, CircleCheck, Circle, Volume2, VolumeX,
 } from "lucide-react";
+import type { TtsSettings } from "@/types";
+import {
+  speak, stop, loadTtsSettings, saveTtsSettings,
+  getVoices, DEFAULT_TTS_SETTINGS,
+} from "@/utils/ttsManager";
 
 /* ── Helpers ── */
 
@@ -366,6 +371,149 @@ function ContentControls({ profile }: { profile: FullCognitiveProfile }) {
   );
 }
 
+/* ── TTS Settings Panel ── */
+
+function TtsSettingsPanel() {
+  const [open, setOpen] = useState(false);
+  const [settings, setSettings] = useState<TtsSettings>(DEFAULT_TTS_SETTINGS);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    loadTtsSettings().then(setSettings);
+    getVoices().then(setVoices);
+  }, []);
+
+  const handleRateChange = async (rate: number) => {
+    const updated = await saveTtsSettings({ rate });
+    setSettings(updated);
+  };
+
+  const handlePitchChange = async (pitch: number) => {
+    const updated = await saveTtsSettings({ pitch });
+    setSettings(updated);
+  };
+
+  const handleVoiceChange = async (voiceURI: string) => {
+    const chosen = voices.find(v => v.voiceURI === voiceURI);
+    const updated = await saveTtsSettings({
+      voiceURI,
+      voiceName: chosen?.name,
+      voiceLang: chosen?.lang,
+    });
+    setSettings(updated);
+  };
+
+  const handleTestSpeech = async () => {
+    if (testing) {
+      stop();
+      setTesting(false);
+    } else {
+      stop();
+      setTesting(true);
+      speak("MindEase text to speech is ready to read your study materials.", {
+        rate: settings.rate,
+        pitch: settings.pitch,
+        voiceURI: settings.voiceURI,
+        onEnd: () => setTesting(false),
+        onError: () => setTesting(false),
+      }).catch(() => setTesting(false));
+    }
+  };
+
+  return (
+    <>
+      <button className="controls-toggle" onClick={() => setOpen(!open)} style={{ marginTop: 8 }}>
+        <span className="ct-label">
+          <Volume2 size={14} style={{ verticalAlign: "middle", marginRight: 4 }} />
+          Voice &amp; Speech (TTS)
+        </span>
+        <span className="ct-badge ct-badge-on">
+          {settings.rate}x
+        </span>
+        <span className={`ct-arrow ${open ? "open" : ""}`}>
+          <ChevronDown size={14} />
+        </span>
+      </button>
+      <div className={`controls-panel ${open ? "open" : ""}`}>
+        <div className="control-row">
+          <span className="control-label">Speed</span>
+          <span className="control-value">{settings.rate}x</span>
+          <div className="control-btns">
+            {[0.75, 1.0, 1.25, 1.5, 2.0].map((r) => (
+              <button
+                key={r}
+                className={`control-btn ${settings.rate === r ? "active" : ""}`}
+                onClick={() => handleRateChange(r)}
+              >
+                {r}x
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="control-row">
+          <span className="control-label">Pitch</span>
+          <span className="control-value">{settings.pitch === 0.8 ? "Low" : settings.pitch === 1.2 ? "High" : "Normal"}</span>
+          <div className="control-btns">
+            {[
+              { label: "Low", val: 0.8 },
+              { label: "Normal", val: 1.0 },
+              { label: "High", val: 1.2 },
+            ].map(({ label, val }) => (
+              <button
+                key={val}
+                className={`control-btn ${settings.pitch === val ? "active" : ""}`}
+                onClick={() => handlePitchChange(val)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {voices.length > 0 && (
+          <div className="control-row" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+            <span className="control-label">Voice</span>
+            <select
+              value={settings.voiceURI || ""}
+              onChange={(e) => handleVoiceChange(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "5px 8px",
+                fontSize: "0.72rem",
+                borderRadius: "6px",
+                border: "1px solid var(--border)",
+                background: "var(--bg-surface)",
+                color: "var(--text-primary)",
+                fontFamily: "var(--font-family)",
+              }}
+            >
+              <option value="">Default Browser Voice</option>
+              {voices.map((v) => (
+                <option key={v.voiceURI} value={v.voiceURI}>
+                  {v.name} ({v.lang})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div className="controls-footer" style={{ marginTop: 10 }}>
+          <button
+            className={`btn ${testing ? "btn-ghost" : "btn-primary"}`}
+            style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+            onClick={handleTestSpeech}
+          >
+            {testing ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            {testing ? "Stop Testing" : "Test Speech"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ── RL Agent Panel (live) ── */
 
 const ACTIONS_LABELS = [
@@ -704,6 +852,7 @@ function App() {
               onDashboard={handleDashboard}
             />
             <ContentControls profile={profile} />
+            <TtsSettingsPanel />
             <RLAgentPanel profile={profile} />
           </>
         ) : (

@@ -3,3 +3,8 @@ dist/
 .env
 .DS_Store
 *.local
+*.docx
+PAPER_ANALYSIS_AND_MEETING_BRIEF.md
+PAPER_ANALYSIS_AND_MEETING_BRIEF.pdf
+*.pdf
+2026-09-13/

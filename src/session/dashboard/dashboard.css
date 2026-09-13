@@ -529,6 +529,37 @@ body {
   letter-spacing: 0.05em;
 }
 
+/* ── Dashboard TTS Buttons ── */
+.dash-tts-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface-alt));
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.dash-tts-btn:hover {
+  background: var(--accent);
+  color: #1A1D3A;
+  border-color: var(--accent);
+}
+.dash-tts-btn.playing {
+  background: var(--accent);
+  color: #1A1D3A;
+  border-color: var(--accent);
+}
+.dash-tts-icon-only {
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
 /* ── Explanations ── */
 .explain-item {
   background: var(--bg-surface-alt);

@@ -180,6 +180,11 @@ function setupContextMenus(): void {
     title: "Extract text with MindEase",
     contexts: ["image"],
   });
+  browser.contextMenus.create({
+    id: "mindease-tts",
+    title: "Read aloud with MindEase",
+    contexts: ["selection"],
+  });
 }
 
 browser.contextMenus.onClicked.addListener((info, tab) => {
@@ -212,6 +217,15 @@ browser.contextMenus.onClicked.addListener((info, tab) => {
       }
     })();
   }
+  if (info.menuItemId === "mindease-tts") {
+    const text = info.selectionText?.trim();
+    if (!text) return;
+    browser.tabs.sendMessage(tabId, {
+      type: "CONTEXT_TTS",
+      payload: { text },
+    }).catch(() => {});
+  }
+
 
   if (info.menuItemId === "mindease-capture") {
     const windowId = tab?.windowId;

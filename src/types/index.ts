@@ -237,9 +237,10 @@ export type MessageType =
   | "CONTEXT_CAPTURE_RESULT" // background → content (screenshot dataUrl, payload: {dataUrl})
   | "OCR_IMAGE"              // content → background or context menu → background (request OCR for image URL)
   | "OCR_RESULT"             // background → content (OCR result, payload: {imageUrl, text} or {imageUrl, error})
-  | "TTS_SPEAK"              // content → background (speak text, payload: {text, options?})
-  | "TTS_STOP"               // content → background (stop speaking)
-  | "TTS_DONE";              // background → content (speaking finished, payload: {error?})
+  | "TTS_SPEAK"              // content → background or background → content (speak text, payload: {text, options?})
+  | "TTS_STOP"               // content → background or background → content (stop speaking)
+  | "TTS_DONE"               // background → content (speaking finished, payload: {error?})
+  | "CONTEXT_TTS";           // background → content (context menu speak selection, payload: {text})
 
 export interface ExtensionMessage {
   type:    MessageType;
@@ -548,7 +549,33 @@ export const STORAGE_KEYS = {
   SESSION_CHUNKS: "mindease_session_chunks",
   ACTIVE_LAYER3_SESSION: "mindease_active_layer3_session",
   LATEST_ARTIFACT: "latestArtifact",
+  TTS_SETTINGS: "mindease_tts_settings",
 } as const;
+
+// ── Text-to-Speech Types ─────────────────────────────────────────────
+
+export interface TtsSettings {
+  rate: number;               // 0.5 to 2.0 (default: 1.0)
+  pitch: number;              // 0.5 to 1.5 (default: 1.0)
+  volume: number;             // 0.0 to 1.0 (default: 1.0)
+  voiceURI?: string;          // specific voice identifier
+  voiceName?: string;         // fallback voice name
+  voiceLang?: string;         // language tag e.g. "en-US"
+  autoHighlight: boolean;     // whether to highlight spoken text/chunk
+}
+
+export interface TtsPlayOptions {
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+  voiceURI?: string;
+  voiceLang?: string;
+  onStart?: () => void;
+  onEnd?: () => void;
+  onError?: (err: Error) => void;
+  onBoundary?: (charIndex: number, charLength?: number) => void;
+  onProgress?: (index: number, total: number, sentence: string) => void;
+}
 
 // ── Visual Generation Types ──────────────────────────────────────────
 
