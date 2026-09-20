@@ -7,6 +7,7 @@
    ============================================================ */
 
 import { getApiKey } from "@/utils/apiKeyManager";
+import { getSession } from "@/utils/supabase";
 import type {
   ProcessDocumentPayload,
   PremiumJobResponse,
@@ -16,6 +17,29 @@ import type {
 async function getServerBaseUrl(): Promise<string> {
   const url = await getApiKey("premiumServer");
   return (url || "http://localhost:8000").replace(/\/+$/, "");
+}
+
+async function premiumHeaders(accept: string): Promise<Record<string, string>> {
+  const session = await getSession();
+  return {
+    "Content-Type": "application/json",
+    Accept: accept,
+    ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}),
+  };
+}
+
+/** Request premium narration without exposing Azure credentials to the extension. */
+export async function synthesizePremiumSpeech(text: string): Promise<Blob> {
+  const baseUrl = await getServerBaseUrl();
+  const res = await fetch(`${baseUrl}/api/speech`, {
+    method: "POST",
+    headers: await premiumHeaders("audio/mpeg"),
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    throw new Error(`Premium speech is unavailable (${res.status})`);
+  }
+  return res.blob();
 }
 
 /**
@@ -28,10 +52,7 @@ export async function submitDocumentForAnimation(
   const baseUrl = await getServerBaseUrl();
   const res = await fetch(`${baseUrl}/api/process/document`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
+    headers: await premiumHeaders("application/json"),
     body: JSON.stringify(payload),
   });
 
@@ -52,10 +73,7 @@ export async function submitArxivPaperForAnimation(
   const baseUrl = await getServerBaseUrl();
   const res = await fetch(`${baseUrl}/api/process`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
+    headers: await premiumHeaders("application/json"),
     body: JSON.stringify({ arxiv_id: arxivId }),
   });
 

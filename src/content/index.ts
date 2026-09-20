@@ -32,6 +32,9 @@ import {
   type SidebarState,
 } from "@/content/sidebarManager";
 import { showDiscoveryPrompt } from "@/content/discoveryPrompt";
+import { requestAdaptationChoice } from "@/content/adaptationPrompt";
+import { extractReadingText } from "@/content/sourceExtraction";
+import { isExcludedPage } from "@/utils/pagePrivacy";
 
 interface ActivationResult {
   decision: boolean;
@@ -39,6 +42,10 @@ interface ActivationResult {
 }
 
 function shouldActivate(): ActivationResult {
+  if (isExcludedPage(window.location.href, browser.extension.inIncognitoContext)
+    || document.querySelector('input[type="password"], input[autocomplete="cc-number"]')) {
+    return { decision: false, ambiguous: false };
+  }
   const { hostname, href: url } = window.location;
   const title = document.title;
 
@@ -459,11 +466,8 @@ function onExtensionStateChange(active: boolean): void {
     if (!decision) return;
     const sourceType = detectSourceType();
     if (!sourceType) return;
-    if (ambiguous) {
-      requestLLMClassification(sourceType);
-    } else {
-      activateForSession(sourceType);
-    }
+    // Classification remains local; provider calls require the adaptation choice.
+    activateForSession(sourceType);
   }
 }
 
@@ -515,12 +519,9 @@ async function activateForSession(sourceType: string): Promise<void> {
   btn.addEventListener("click", async () => {
     removeReopenButton();
     await saveSidebarState({ visible: true });
-    const text = document.body.innerText;
+    const text = extractReadingText();
     if (text.trim().length >= 50) {
-      browser.runtime.sendMessage({
-        type: "TRANSFORM_CONTENT",
-        payload: { text, pageType: "website" },
-      }).catch(() => {});
+      await requestAndSendTransformation(text, "website");
     }
   });
 }
@@ -552,6 +553,8 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
 }
 
 (async () => {
+  if (isExcludedPage(window.location.href, browser.extension.inIncognitoContext)
+    || document.querySelector('input[type="password"], input[autocomplete="cc-number"]')) return;
   _theme = await initTheme();
 
   // Always listen for state changes — handles tabs opened during a session too
@@ -562,26 +565,23 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
     }
   });
 
-  if (!shouldActivate().decision) {
-    showDiscoveryPrompt(_theme, () => {
-      _extensionActive = true;
-      browser.runtime.sendMessage({
-        type: "SESSION_START",
-        payload: {
-          sourceType: "website",
-          url: window.location.href,
-          timestamp: Date.now(),
-          title: document.title,
-        },
-      });
-      triggerContentTransformation("website");
-    });
-    return;
-  }
+  const activation = shouldActivate();
+  if (!activation.decision) return;
 
   _extensionActive = await isExtensionActive();
   if (!_extensionActive) {
-    console.log("[MindEase] Extension is inactive. Waiting for user to start a session.");
+    const sourceType = detectSourceType();
+    if (!sourceType) return;
+    setTimeout(() => {
+      void showDiscoveryPrompt(_theme, () => {
+        void (async () => {
+          _extensionActive = true;
+          await browser.storage.local.set({ [STORAGE_KEYS.EXTENSION_ACTIVE]: true });
+          await browser.runtime.sendMessage({ type: "SESSION_STATE_CHANGED", payload: { active: true } }).catch(() => {});
+          await activateForSession(sourceType);
+        })();
+      });
+    }, 1200);
     return;
   }
 
@@ -592,22 +592,61 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
 
 /* ─── Layer 1: Content Transformation ──────────────────────────────────────────── */
 
-function stripCitations(text: string): string {
-  return text.replace(/\[\d+(?:[,\s]*\d+)*\]/g, "").trim();
+async function requestAndSendTransformation(
+  text: string,
+  pageType: "website" | "pdf" | "video" | "lecture",
+): Promise<boolean> {
+  if (isExcludedPage(window.location.href, browser.extension.inIncognitoContext)
+    || document.querySelector('input[type="password"], input[autocomplete="cc-number"]')) return false;
+  const stored = await browser.storage.local.get(STORAGE_KEYS.PROFILE).catch(() => ({}));
+  const profile = (stored as Record<string, unknown>)[STORAGE_KEYS.PROFILE] as { baseline?: BaselineProfile } | undefined;
+  const adaptation = await requestAdaptationChoice(_theme, profile?.baseline);
+  if (!adaptation) return false;
+  showAdaptationStatus("MindEase is preparing the first adapted section…", false);
+  const response = await browser.runtime.sendMessage({
+    type: "TRANSFORM_CONTENT",
+    payload: { text, pageType, adaptation },
+  }).catch(() => null) as { received?: boolean } | null;
+  if (response?.received !== true) {
+    showAdaptationStatus("MindEase could not start this adaptation. Open Settings and check the Mistral configuration.", true);
+    return false;
+  }
+  return true;
+}
+
+function showAdaptationStatus(message: string, error: boolean): void {
+  let status = document.getElementById("mindease-adaptation-status");
+  if (!status) {
+    status = document.createElement("div");
+    status.id = "mindease-adaptation-status";
+    status.setAttribute("role", error ? "alert" : "status");
+    status.setAttribute("aria-live", "polite");
+    Object.assign(status.style, {
+      position: "fixed", right: "24px", bottom: "24px", zIndex: "2147483647",
+      maxWidth: "360px", padding: "14px 16px", borderRadius: "12px",
+      font: "600 14px/1.45 Inter, system-ui, sans-serif",
+      boxShadow: "0 12px 36px rgba(0,0,0,.28)",
+    });
+    document.body.appendChild(status);
+  }
+  status.setAttribute("role", error ? "alert" : "status");
+  status.style.background = error ? "#7F1D1D" : (_theme === "dark" ? "#010736" : "#F7E6CA");
+  status.style.color = error ? "#FFFFFF" : (_theme === "dark" ? "#F7E6CA" : "#24224A");
+  status.style.border = `2px solid ${error ? "#FCA5A5" : (_theme === "dark" ? "#F7E6CA" : "#0F52BA")}`;
+  status.textContent = message;
+  if (error) setTimeout(() => status?.remove(), 12_000);
 }
 
 function initContentTransformation(pageType: string): void {
-  try {
-    const raw = document.body.innerText;
-    const text = stripCitations(raw);
+  void (async () => {
+    try {
+    const text = extractReadingText();
     if (text.trim().length < 50) return;
-    browser.runtime.sendMessage({
-      type: "TRANSFORM_CONTENT",
-      payload: { text, pageType },
-    }).catch(() => {});
-  } catch (err) {
-    console.error("[MindEase] Transform send error:", err);
-  }
+    await requestAndSendTransformation(text, pageType as "website" | "pdf" | "video" | "lecture");
+    } catch (err) {
+      console.error("[MindEase] Transform send error:", err);
+    }
+  })();
 }
 
 /* ── Helper: HTML escape ── */
@@ -659,6 +698,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks && msg.chunks.length > 0) {
     if (!_extensionActive) return;
     removeReopenButton();
+    document.getElementById("mindease-adaptation-status")?.remove();
     if (msg.append) {
       appendToOverlay(msg.chunks);
     } else {
@@ -674,6 +714,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   }
   if (msg.type === "TRANSFORM_ERROR") {
     console.error("[MindEase Content] Transform error:", msg.error);
+    showAdaptationStatus(`Adaptation failed: ${msg.error || "The provider did not return valid grounded content."}`, true);
   }
   if (msg.type === "HIGHLIGHTS_UPDATED") {
     browser.storage.local.get("mindease_notes").then((updated) => {
@@ -782,21 +823,21 @@ window.addEventListener("message", (event: MessageEvent) => {
 const OVERLAY_CSS = `
       /* ── Theme variables (scoped to overlay) ── */
       #mindease-overlay[data-theme="dark"] {
-        --bg-base:        #1A1D3A;
-        --bg-surface:     #252A55;
-        --bg-surface-alt: #20254A;
-        --bg-elevated:    #2E3366;
-        --bg-overlay:     rgba(26, 29, 58, 0.95);
-        --border:         #7286D3;
-        --border-hover:   #8EA7E9;
-        --border-focus:   #8EA7E9;
-        --text-primary:   #E5E0FF;
-        --text-dim:       #B8B8E0;
-        --text-muted:     #8A8AB8;
-        --accent:         #8EA7E9;
-        --accent-secondary: #E5E0FF;
-        --accent-gradient:  linear-gradient(135deg, #8EA7E9, #E5E0FF);
-        --accent-glow:      rgba(142,167,233,0.25);
+        --bg-base:        #010736;
+        --bg-surface:     #010736;
+        --bg-surface-alt: #0B1241;
+        --bg-elevated:    #141B49;
+        --bg-overlay:     rgba(1, 7, 54, 0.95);
+        --border:         #807A77;
+        --border-hover:   #F7E6CA;
+        --border-focus:   #F7E6CA;
+        --text-primary:   #F7E6CA;
+        --text-dim:       #D8CDBA;
+        --text-muted:     #B9B1A7;
+        --accent:         #F7E6CA;
+        --accent-secondary: #F7E6CA;
+        --accent-gradient:  linear-gradient(135deg, #F7E6CA, #F7E6CA);
+        --accent-glow:      rgba(247, 230, 202,0.25);
         --danger:         #f87171;
         --success:        #4ade80;
         --warning:        #facc15;
@@ -806,20 +847,20 @@ const OVERLAY_CSS = `
       }
 
       #mindease-overlay[data-theme="light"] {
-        --bg-base:        #FFF2C6;
-        --bg-surface:     #FFF8DE;
+        --bg-base:        #F7E6CA;
+        --bg-surface:     #F7E6CA;
         --bg-surface-alt: #FFFBE8;
         --bg-elevated:    #FFFAE8;
         --bg-overlay:     rgba(255, 242, 198, 0.97);
         --border:         #AAC4F5;
-        --border-hover:   #8CA9FF;
-        --border-focus:   #8CA9FF;
+        --border-hover:   #0F52BA;
+        --border-focus:   #0F52BA;
         --text-primary:   #2D2B55;
         --text-dim:       #6E7FA8;
         --text-muted:     #94A8CC;
-        --accent:         #8CA9FF;
+        --accent:         #0F52BA;
         --accent-secondary: #AAC4F5;
-        --accent-gradient:  linear-gradient(135deg, #8CA9FF, #AAC4F5);
+        --accent-gradient:  linear-gradient(135deg, #0F52BA, #AAC4F5);
         --accent-glow:      rgba(140,169,255,0.20);
         --danger:         #dc2626;
         --success:        #16a34a;
@@ -1084,17 +1125,17 @@ const OVERLAY_CSS = `
       .chunk-speak-btn:hover {
         opacity: 1;
         background: var(--accent);
-        color: #1A1D3A;
+        color: #010736;
         transform: scale(1.06);
       }
       .chunk-speak-btn.speaking {
         opacity: 1;
         background: var(--accent);
-        color: #1A1D3A;
+        color: #010736;
       }
       .mindease-overlay-speed-btn.active {
         background: var(--accent) !important;
-        color: #1A1D3A !important;
+        color: #010736 !important;
         border-color: var(--accent) !important;
       }
       .chunk-concept-tag {
@@ -1281,10 +1322,6 @@ const OVERLAY_CSS = `
       .visual-card-source.napkin {
         background: color-mix(in srgb, #7C3AED 15%, transparent);
         color: #a78bfa;
-      }
-      .visual-card-source.flux {
-        background: color-mix(in srgb, #f59e0b 15%, transparent);
-        color: #fbbf24;
       }
       .visuals-badge {
         display: inline-flex;
@@ -1584,23 +1621,26 @@ const OVERLAY_CSS = `
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 function formatChunkText(raw: string): string {
-  const withDefs = raw.replace(
-    /\[DEF:\s*([^\]]+)\]/gi,
-    (_, term) =>
-      `<span class="m-def-term" data-def="${_escHtml(term.trim())}">${_escHtml(term.trim())}</span>`,
-  );
-  const explicitFormulas = withDefs.replace(
-    /\[FORMULA\]([\s\S]*?)\[\/FORMULA\]/gi,
-    (_, formula) => `<span class="m-formula">${katex.renderToString(formula.trim(), { displayMode: true, throwOnError: false })}</span>`,
-  );
-  const lines = explicitFormulas.split("\n").filter(l => l.trim());
+  const formulas: string[] = [];
+  const tokenized = raw
+    .replace(/\[FORMULA\]([\s\S]*?)\[\/FORMULA\]/gi, (_, formula: string) => {
+      const index = formulas.push(formula) - 1;
+      return `\nMINDEASEFORMULA${index}TOKEN\n`;
+    })
+    // A DEF marker identifies a term but does not contain a definition. Remove
+    // the marker instead of displaying the term twice or inventing a tooltip.
+    .replace(/\[DEF:\s*[^\]]+\]/gi, "");
+  const safeText = _escHtml(tokenized);
+  const lines = safeText.split("\n").filter(l => l.trim());
   const parts: string[] = [];
   let inList = false;
   for (const line of lines) {
     const trimmed = line.trim();
-    if (/^<\/*FORMULA>/.test(trimmed) || /^<span class="m-formula">/.test(trimmed)) {
+    const formulaMatch = trimmed.match(/^MINDEASEFORMULA(\d+)TOKEN$/);
+    if (formulaMatch) {
       if (inList) { parts.push("</ul>"); inList = false; }
-      parts.push(trimmed);
+      const formula = formulas[Number(formulaMatch[1])] ?? "";
+      parts.push(`<span class="m-formula">${katex.renderToString(formula.trim(), { displayMode: true, throwOnError: false })}</span>`);
     } else if (/^>\s/.test(trimmed)) {
       if (inList) { parts.push("</ul>"); inList = false; }
       parts.push(`<blockquote>${trimmed.replace(/^>\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</blockquote>`);
@@ -1648,7 +1688,6 @@ function stripInlineTags(text: string): string {
     .replace(/\[SUMMARY:[^\]]+\]/g, "")
     .replace(/\[CHUNK\s*\d*\]/gi, "")
     .replace(/^---+$/gm, "")
-    .replace(/\[\d+(?:[,\s]*\d+)*\]/g, "")
     .replace(/\[\/?EXAMPLE(?:_END)?\]/gi, "")
     .trim();
 }
@@ -1661,8 +1700,8 @@ const EXPLAIN_POPUP_CSS = `
 #mindease-explain-popup {
   position: fixed;
   z-index: 2147483646;
-  background: var(--bg-surface, #252A55);
-  border: 1px solid var(--border, #7286D3);
+  background: var(--bg-surface, #010736);
+  border: 1px solid var(--border, #807A77);
   border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.35);
   max-width: 360px;
@@ -1671,7 +1710,7 @@ const EXPLAIN_POPUP_CSS = `
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.8rem;
   line-height: 1.55;
-  color: var(--text-primary, #E5E0FF);
+  color: var(--text-primary, #F7E6CA);
   display: none;
   animation: mindease-fadeUp 0.15s ease;
   overflow: hidden;
@@ -1681,29 +1720,29 @@ const EXPLAIN_POPUP_CSS = `
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent, #8EA7E9) 10%, transparent);
-  border-bottom: 1px solid var(--border, #7286D3);
+  background: color-mix(in srgb, var(--accent, #F7E6CA) 10%, transparent);
+  border-bottom: 1px solid var(--border, #807A77);
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--accent, #8EA7E9);
+  color: var(--accent, #F7E6CA);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 #mindease-explain-close {
   background: none;
   border: none;
-  color: var(--text-muted, #8A8AB8);
+  color: var(--text-muted, #B9B1A7);
   cursor: pointer;
   padding: 2px;
   font-size: 14px;
   line-height: 1;
   border-radius: 4px;
 }
-#mindease-explain-close:hover { color: var(--text-primary, #E5E0FF); }
+#mindease-explain-close:hover { color: var(--text-primary, #F7E6CA); }
 #mindease-explain-loader {
   padding: 16px;
   text-align: center;
-  color: var(--text-muted, #8A8AB8);
+  color: var(--text-muted, #B9B1A7);
   font-size: 0.75rem;
 }
 #mindease-explain-loader::after {
@@ -1711,8 +1750,8 @@ const EXPLAIN_POPUP_CSS = `
   display: inline-block;
   width: 12px; height: 12px;
   margin-left: 6px;
-  border: 2px solid var(--border, #7286D3);
-  border-top-color: var(--accent, #8EA7E9);
+  border: 2px solid var(--border, #807A77);
+  border-top-color: var(--accent, #F7E6CA);
   border-radius: 50%;
   animation: mindease-spin 0.6s linear infinite;
   vertical-align: middle;
@@ -1721,15 +1760,15 @@ const EXPLAIN_POPUP_CSS = `
   padding: 10px 12px;
   display: none;
   font-size: 0.8rem;
-  color: var(--text-primary, #E5E0FF);
+  color: var(--text-primary, #F7E6CA);
 }
 #mindease-explain-selected {
   padding: 6px 12px;
   font-size: 0.72rem;
-  color: var(--text-dim, #B8B8E0);
+  color: var(--text-dim, #D8CDBA);
   font-style: italic;
-  border-top: 1px solid var(--border, #7286D3);
-  background: color-mix(in srgb, var(--bg-base, #1A1D3A) 40%, transparent);
+  border-top: 1px solid var(--border, #807A77);
+  background: color-mix(in srgb, var(--bg-base, #010736) 40%, transparent);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1811,8 +1850,8 @@ const CTX_EXPLAIN_CSS = `
 #mindease-ctx-loading {
   position: fixed;
   z-index: 2147483646;
-  background: color-mix(in srgb, var(--accent, #8EA7E9) 12%, var(--bg-surface, #252A55));
-  border: 1px solid var(--border, #7286D3);
+  background: color-mix(in srgb, var(--accent, #F7E6CA) 12%, var(--bg-surface, #010736));
+  border: 1px solid var(--border, #807A77);
   border-radius: 8px;
   padding: 6px 12px;
   display: flex;
@@ -1820,7 +1859,7 @@ const CTX_EXPLAIN_CSS = `
   gap: 8px;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.75rem;
-  color: var(--accent, #8EA7E9);
+  color: var(--accent, #F7E6CA);
   box-shadow: 0 4px 16px rgba(0,0,0,0.25);
   animation: mindease-fadeUp 0.12s ease;
   pointer-events: none;
@@ -1850,8 +1889,8 @@ const CTX_EXPLAIN_CSS = `
 #mindease-ctx-popup {
   position: fixed;
   z-index: 2147483646;
-  background: var(--bg-surface, #252A55);
-  border: 1px solid var(--border, #7286D3);
+  background: var(--bg-surface, #010736);
+  border: 1px solid var(--border, #807A77);
   border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.35);
   max-width: 360px;
@@ -1859,7 +1898,7 @@ const CTX_EXPLAIN_CSS = `
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.8rem;
   line-height: 1.55;
-  color: var(--text-primary, #E5E0FF);
+  color: var(--text-primary, #F7E6CA);
   display: none;
   animation: mindease-fadeUp 0.15s ease;
   overflow: hidden;
@@ -1869,30 +1908,30 @@ const CTX_EXPLAIN_CSS = `
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent, #8EA7E9) 10%, transparent);
-  border-bottom: 1px solid var(--border, #7286D3);
+  background: color-mix(in srgb, var(--accent, #F7E6CA) 10%, transparent);
+  border-bottom: 1px solid var(--border, #807A77);
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--accent, #8EA7E9);
+  color: var(--accent, #F7E6CA);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 #mindease-ctx-popup .ctx-popup-close {
   background: none;
   border: none;
-  color: var(--text-muted, #8A8AB8);
+  color: var(--text-muted, #B9B1A7);
   cursor: pointer;
   padding: 2px;
   font-size: 14px;
   line-height: 1;
   border-radius: 4px;
 }
-#mindease-ctx-popup .ctx-popup-close:hover { color: var(--text-primary, #E5E0FF); }
+#mindease-ctx-popup .ctx-popup-close:hover { color: var(--text-primary, #F7E6CA); }
 #mindease-ctx-popup .ctx-popup-body {
   padding: 12px 14px;
   font-size: 0.82rem;
   line-height: 1.6;
-  color: var(--text-primary, #E5E0FF);
+  color: var(--text-primary, #F7E6CA);
   word-wrap: break-word;
   overflow-y: auto;
   flex: 1;
@@ -2079,7 +2118,7 @@ const CAPTURE_CSS = `
 #mindease-capture-overlay .cap-selection {
   position: absolute;
   border: 2px dashed #fff;
-  background: rgba(142,167,233,0.08);
+  background: rgba(247, 230, 202,0.08);
   pointer-events: none;
   display: none;
 }
@@ -2104,20 +2143,20 @@ const CAPTURE_CSS = `
 }
 #mindease-capture-overlay .cap-toolbar button:hover { opacity: 0.85; }
 #mindease-capture-overlay .cap-toolbar .cap-confirm {
-  background: var(--accent, #8EA7E9);
-  color: #1A1D3A;
+  background: var(--accent, #F7E6CA);
+  color: #010736;
 }
 #mindease-capture-overlay .cap-toolbar .cap-cancel {
-  background: var(--bg-surface, #252A55);
-  color: var(--text-dim, #B8B8E0);
-  border: 1px solid var(--border, #7286D3);
+  background: var(--bg-surface, #010736);
+  color: var(--text-dim, #D8CDBA);
+  border: 1px solid var(--border, #807A77);
 }
 
 #mindease-capture-result {
   position: fixed;
   z-index: 2147483647;
-  background: var(--bg-surface, #252A55);
-  border: 1px solid var(--border, #7286D3);
+  background: var(--bg-surface, #010736);
+  border: 1px solid var(--border, #807A77);
   border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.35);
   max-width: 480px;
@@ -2125,7 +2164,7 @@ const CAPTURE_CSS = `
   overflow: hidden;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.8rem;
-  color: var(--text-primary, #E5E0FF);
+  color: var(--text-primary, #F7E6CA);
   animation: mindease-fadeUp 0.15s ease;
 }
 #mindease-capture-result .cap-result-header {
@@ -2133,24 +2172,24 @@ const CAPTURE_CSS = `
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent, #8EA7E9) 10%, transparent);
-  border-bottom: 1px solid var(--border, #7286D3);
+  background: color-mix(in srgb, var(--accent, #F7E6CA) 10%, transparent);
+  border-bottom: 1px solid var(--border, #807A77);
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--accent, #8EA7E9);
+  color: var(--accent, #F7E6CA);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 #mindease-capture-result .cap-result-close {
   background: none;
   border: none;
-  color: var(--text-muted, #8A8AB8);
+  color: var(--text-muted, #B9B1A7);
   cursor: pointer;
   padding: 2px;
   font-size: 14px;
   line-height: 1;
 }
-#mindease-capture-result .cap-result-close:hover { color: var(--text-primary, #E5E0FF); }
+#mindease-capture-result .cap-result-close:hover { color: var(--text-primary, #F7E6CA); }
 #mindease-capture-result .cap-result-body {
   padding: 12px;
 }
@@ -2158,17 +2197,17 @@ const CAPTURE_CSS = `
   display: block;
   max-width: 100%;
   border-radius: 6px;
-  border: 1px solid var(--border, #7286D3);
+  border: 1px solid var(--border, #807A77);
   margin-bottom: 10px;
 }
 #mindease-capture-result .cap-result-body .cap-ocr-placeholder {
   text-align: center;
-  color: var(--text-dim, #B8B8E0);
+  color: var(--text-dim, #D8CDBA);
   font-size: 0.75rem;
   padding: 8px;
-  background: color-mix(in srgb, var(--accent, #8EA7E9) 8%, transparent);
+  background: color-mix(in srgb, var(--accent, #F7E6CA) 8%, transparent);
   border-radius: 6px;
-  border: 1px dashed var(--border, #7286D3);
+  border: 1px dashed var(--border, #807A77);
 }
 `;
 
@@ -2298,8 +2337,8 @@ function showCaptureResult(croppedDataUrl: string): void {
     max-width:min(500px,calc(100vw - 32px));
     max-height:calc(100vh - 32px);
     display:flex;flex-direction:column;
-    background:var(--bg-surface,#252A55);
-    border:1px solid var(--border,#7286D3);
+    background:var(--bg-surface,#010736);
+    border:1px solid var(--border,#807A77);
     border-radius:14px;
     box-shadow:0 8px 32px rgba(0,0,0,0.35);
     overflow:hidden;
@@ -2310,13 +2349,13 @@ function showCaptureResult(croppedDataUrl: string): void {
   popup.style.transform = "translate(-50%,-50%)";
 
   popup.innerHTML = `
-    <div class="cap-result-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border,#7286D3);font-size:0.82rem;font-weight:600;color:var(--accent,#8EA7E9)">
+    <div class="cap-result-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border,#807A77);font-size:0.82rem;font-weight:600;color:var(--accent,#F7E6CA)">
       <span>Captured region</span>
-      <button class="cap-result-close" style="background:none;border:none;cursor:pointer;padding:2px 8px;font-size:16px;color:var(--text-muted,#8A8AB8)">&times;</button>
+      <button class="cap-result-close" style="background:none;border:none;cursor:pointer;padding:2px 8px;font-size:16px;color:var(--text-muted,#B9B1A7)">&times;</button>
     </div>
     <div class="cap-result-body" style="padding:12px 14px;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:10px">
       <img src="${croppedDataUrl}" alt="Captured region" style="max-width:100%;height:auto;border-radius:8px" />
-      <div class="cap-ocr-placeholder" style="font-size:0.82rem;color:var(--text-dim,#8A8AB8)">
+      <div class="cap-ocr-placeholder" style="font-size:0.82rem;color:var(--text-dim,#B9B1A7)">
         OCR in progress...
       </div>
     </div>
@@ -2351,12 +2390,12 @@ const FLOATING_TTS_CSS = `
   z-index: 2147483646;
   width: 330px;
   max-width: calc(100vw - 32px);
-  background: var(--bg-surface, #252A55);
-  border: 1px solid var(--border, #7286D3);
+  background: var(--bg-surface, #010736);
+  border: 1px solid var(--border, #807A77);
   border-radius: 12px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  color: var(--text-primary, #E5E0FF);
+  color: var(--text-primary, #F7E6CA);
   overflow: hidden;
   animation: mindease-fadeUp 0.18s ease;
 }
@@ -2365,31 +2404,31 @@ const FLOATING_TTS_CSS = `
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent, #8EA7E9) 12%, var(--bg-surface, #252A55));
-  border-bottom: 1px solid var(--border, #7286D3);
+  background: color-mix(in srgb, var(--accent, #F7E6CA) 12%, var(--bg-surface, #010736));
+  border-bottom: 1px solid var(--border, #807A77);
   font-size: 0.74rem;
   font-weight: 600;
-  color: var(--accent, #8EA7E9);
+  color: var(--accent, #F7E6CA);
 }
 #mindease-floating-tts-close {
   background: none;
   border: none;
-  color: var(--text-muted, #8A8AB8);
+  color: var(--text-muted, #B9B1A7);
   cursor: pointer;
   padding: 2px 6px;
   font-size: 16px;
   line-height: 1;
 }
-#mindease-floating-tts-close:hover { color: var(--text-primary, #E5E0FF); }
+#mindease-floating-tts-close:hover { color: var(--text-primary, #F7E6CA); }
 #mindease-floating-tts-body {
   padding: 10px 12px;
   font-size: 0.8rem;
   line-height: 1.55;
   max-height: 100px;
   overflow-y: auto;
-  color: var(--text-primary, #E5E0FF);
-  background: color-mix(in srgb, var(--bg-base, #1A1D3A) 50%, transparent);
-  border-bottom: 1px solid var(--border, #7286D3);
+  color: var(--text-primary, #F7E6CA);
+  background: color-mix(in srgb, var(--bg-base, #010736) 50%, transparent);
+  border-bottom: 1px solid var(--border, #807A77);
 }
 #mindease-floating-tts-controls {
   display: flex;
@@ -2402,8 +2441,8 @@ const FLOATING_TTS_CSS = `
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: var(--accent, #8EA7E9);
-  color: #1A1D3A;
+  background: var(--accent, #F7E6CA);
+  color: #010736;
   border: none;
   border-radius: 6px;
   padding: 5px 12px;
@@ -2415,14 +2454,14 @@ const FLOATING_TTS_CSS = `
 .mindease-tts-btn-icon:hover { opacity: 0.9; }
 .mindease-tts-btn-secondary {
   background: transparent;
-  color: var(--text-dim, #B8B8E0);
-  border: 1px solid var(--border, #7286D3);
+  color: var(--text-dim, #D8CDBA);
+  border: 1px solid var(--border, #807A77);
   border-radius: 6px;
   padding: 4px 8px;
   font-size: 0.72rem;
   cursor: pointer;
 }
-.mindease-tts-btn-secondary:hover { color: var(--text-primary, #E5E0FF); border-color: var(--accent, #8EA7E9); }
+.mindease-tts-btn-secondary:hover { color: var(--text-primary, #F7E6CA); border-color: var(--accent, #F7E6CA); }
 .mindease-tts-speed-group {
   display: flex;
   gap: 3px;
@@ -2432,16 +2471,16 @@ const FLOATING_TTS_CSS = `
   padding: 2px 6px;
   font-size: 0.68rem;
   border-radius: 4px;
-  border: 1px solid var(--border, #7286D3);
+  border: 1px solid var(--border, #807A77);
   background: transparent;
-  color: var(--text-dim, #B8B8E0);
+  color: var(--text-dim, #D8CDBA);
   cursor: pointer;
 }
 .mindease-tts-speed-btn.active {
-  background: var(--accent, #8EA7E9);
-  color: #1A1D3A;
+  background: var(--accent, #F7E6CA);
+  color: #010736;
   font-weight: 600;
-  border-color: var(--accent, #8EA7E9);
+  border-color: var(--accent, #F7E6CA);
 }
 `;
 
@@ -2482,7 +2521,7 @@ function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void
         <div style="display:flex;align-items:center;gap:6px">
           ${iconHTML("volume-2")}
           <span>MindEase Reader</span>
-          <span id="mindease-tts-counter" style="font-size:0.68rem;color:var(--text-dim,#B8B8E0)"></span>
+          <span id="mindease-tts-counter" style="font-size:0.68rem;color:var(--text-dim,#D8CDBA)"></span>
         </div>
         <button id="mindease-floating-tts-close" title="Close reader">&times;</button>
       </div>
@@ -2561,7 +2600,7 @@ function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void
         onProgress: (idx, total, sentence) => {
           if (counterEl) counterEl.textContent = `(${idx + 1}/${total})`;
           if (bodyEl) {
-            bodyEl.innerHTML = `<span style="background:color-mix(in srgb,var(--accent,#8EA7E9) 30%,transparent);border-radius:3px;padding:2px 4px">${_escHtml(sentence)}</span>`;
+            bodyEl.innerHTML = `<span style="background:color-mix(in srgb,var(--accent,#F7E6CA) 30%,transparent);border-radius:3px;padding:2px 4px">${_escHtml(sentence)}</span>`;
           }
         },
         onEnd: () => {
@@ -2586,6 +2625,8 @@ function appendToOverlay(chunks: ContentChunk[]): void {
   const container = document.getElementById("tab-content");
   const marker = document.getElementById("mindease-loading-marker");
   if (!container) return;
+  _contentChunks.push(...chunks);
+  _ttsTexts.push(...chunks.map(chunk => chunk.sourceText ?? stripInlineTags(chunk.text)));
   const palette = ["accent", "secondary", "tertiary", "quaternary"];
   const existing = container.querySelectorAll(".mindease-chunk").length;
   const html = chunks.map((chunk, i) => {
@@ -2597,7 +2638,9 @@ function appendToOverlay(chunks: ContentChunk[]): void {
       .replace(/^---+$/gm, "")
       .replace(/\[\/?EXAMPLE(?:_END)?\]/gi, "")
       .trim();
-    const bodyHTML = formatChunkText(cleanText);
+    const bodyHTML = chunk.sourceText !== undefined
+      ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere">${_escHtml(chunk.sourceText)}</div>`
+      : formatChunkText(cleanText);
     const colorKey = palette[(existing + i) % palette.length];
     return `
       <div class="mindease-chunk ${concept ? "has-concept" : ""} color-${colorKey}
@@ -2606,7 +2649,7 @@ function appendToOverlay(chunks: ContentChunk[]): void {
         <button class="chunk-speak-btn" data-chunk-index="${existing + i}" title="Listen to this section" aria-label="Listen to this section">${iconHTML("volume-2")}</button>
         ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${_escHtml(concept)}</div>` : ""}
         <div class="chunk-body">${bodyHTML}</div>
-        ${chunk.summary ? `<div class="chunk-summary">${iconHTML("arrow-right")} ${_escHtml(chunk.summary)}</div>` : ""}
+        ${chunk.summary ? `<div class="chunk-summary"><strong>AI explanation</strong> ${_escHtml(chunk.summary)}</div>` : ""}
       </div>
     `;
   }).join("");
@@ -2641,7 +2684,9 @@ function injectOverlay(
     const cleanText = stripInlineTags(chunk.text);
     const palette = ["accent", "secondary", "tertiary", "quaternary"];
     const colorKey = palette[i % palette.length];
-    const bodyHTML = formatChunkText(cleanText);
+    const bodyHTML = chunk.sourceText !== undefined
+      ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere">${_escHtml(chunk.sourceText)}</div>`
+      : formatChunkText(cleanText);
 
     return `
       <div class="mindease-chunk ${concept ? "has-concept" : ""} color-${colorKey}
@@ -2650,14 +2695,16 @@ function injectOverlay(
         <button class="chunk-speak-btn" data-chunk-index="${i}" title="Listen to this section" aria-label="Listen to this section">${iconHTML("volume-2")}</button>
         ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${_escHtml(concept)}</div>` : ""}
         <div class="chunk-body">${bodyHTML}</div>
-        ${summary ? `<div class="chunk-summary">${iconHTML("arrow-right")} ${_escHtml(summary)}</div>` : ""}
+        ${summary ? `<div class="chunk-summary"><strong>AI explanation</strong> ${_escHtml(summary)}</div>` : ""}
       </div>
     `;
   }
 
   let orderedChunks = [...chunks];
 
-  if (baselineProfile.learningApproach === "example-first") {
+  if (chunks.every(chunk => chunk.sourceText !== undefined)) {
+    orderedChunks.sort((a, b) => a.position - b.position);
+  } else if (baselineProfile.learningApproach === "example-first") {
     const examples = orderedChunks.filter(c => c.isExample);
     const rest = orderedChunks.filter(c => !c.isExample);
     orderedChunks = [...examples, ...rest];
@@ -2670,7 +2717,7 @@ function injectOverlay(
   _formatPreference = baselineProfile.formatPreference;
   _conceptsFromChunks = [...new Set(orderedChunks.flatMap(c => c.conceptTags).filter(Boolean))];
   _ttsTexts = orderedChunks
-    .map(c => stripInlineTags(c.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
+    .map(c => c.sourceText ?? stripInlineTags(c.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
     .filter(Boolean);
   _contentChunks = orderedChunks;
   console.log(`[Content] Extracted ${_conceptsFromChunks.length} concepts, ${_contentChunks.length} chunks`);
@@ -2691,7 +2738,7 @@ function injectOverlay(
   overlay.setAttribute("data-pace", readingPace);
   overlay.setAttribute("data-density", infoDensity);
   overlay.setAttribute("data-second-lang", String(secondLang));
-  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("role", "complementary");
   overlay.setAttribute("aria-label", "MindEase study panel");
   overlay.setAttribute("aria-hidden", "false");
 
@@ -2763,7 +2810,7 @@ function injectOverlay(
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <div class="mindease-tts-speed-bar" style="display:flex;gap:2px">
           <button class="mindease-overlay-speed-btn" data-rate="0.75" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer">0.75x</button>
-          <button class="mindease-overlay-speed-btn active" data-rate="1" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--accent);background:var(--accent);color:#1A1D3A;font-weight:600;cursor:pointer">1x</button>
+          <button class="mindease-overlay-speed-btn active" data-rate="1" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--accent);background:var(--accent);color:#010736;font-weight:600;cursor:pointer">1x</button>
           <button class="mindease-overlay-speed-btn" data-rate="1.25" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer">1.25x</button>
           <button class="mindease-overlay-speed-btn" data-rate="1.5" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer">1.5x</button>
         </div>
@@ -2895,26 +2942,7 @@ function injectOverlay(
   setupSelectionPopup(document.getElementById("mindease-body")!);
 
 
-  /* ── Focus trap ── */
-  function focusTrap(e: KeyboardEvent): void {
-    const focusable = overlay.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    );
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (e.key === "Tab") {
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-  }
-  overlay.addEventListener("keydown", focusTrap);
-
+  // Persistent reading region: keyboard focus may leave for the source page.
   /* ── Keyboard: Escape to close ── */
   overlay.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
@@ -2968,7 +2996,7 @@ function injectOverlay(
       await saveSidebarState({ visible: true });
       overlay.style.display = "flex";
       overlay.removeAttribute("aria-hidden");
-      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("role", "complementary");
       setTimeout(() => {
         const firstBtn = overlay.querySelector<HTMLElement>("#mindease-minimize");
         firstBtn?.focus();
@@ -3020,12 +3048,9 @@ function injectOverlay(
     btn.textContent = "Generating...";
     (btn as HTMLButtonElement).disabled = true;
     try {
-      const profile = await browser.storage.local.get("mindease_profile");
-      const stored = profile.mindease_profile as Record<string, unknown> | undefined;
-      const useFlux = (stored?.baseline as Record<string, unknown> | undefined)?.formatPreference === "visual";
       const response = (await browser.runtime.sendMessage({
         type: "GENERATE_VISUALS",
-        payload: { chunks: _contentChunks.slice(0, 5), useFlux },
+        payload: { chunks: _contentChunks.slice(0, 5) },
       })) as { type?: string; visuals?: VisualEntry[] } | undefined;
       const entries: VisualEntry[] = response?.visuals ?? [];
       if (entries.length > 0) {
@@ -3325,7 +3350,7 @@ function speakSingleChunk(chunkIdx: number): void {
   const chunk = _contentChunks[chunkIdx];
   if (!chunk) return;
 
-  const cleanText = stripInlineTags(chunk.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  const cleanText = chunk.sourceText ?? stripInlineTags(chunk.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
   if (!cleanText) return;
 
   _ttsSpeaking = true;
@@ -3499,10 +3524,11 @@ async function initYouTubeMode(): Promise<void> {
   const pageText = document.querySelector("#description")?.textContent?.slice(0, 2000)
     ?? document.title + " - YouTube video";
 
-  browser.runtime.sendMessage({
-    type: "TRANSFORM_CONTENT",
-    payload: { text: pageText, pageType: "video" },
-  }).catch(() => {});
+  const accepted = await requestAndSendTransformation(pageText, "video");
+  if (!accepted) {
+    captionOverlay.remove();
+    return;
+  }
 
   let captionChunks: string[] = [];
 
@@ -3574,13 +3600,10 @@ async function initPDFMode(): Promise<void> {
     gap: 8px;
     box-shadow: 0 2px 12px rgba(0,0,0,0.2);
   `;
-  loader.innerHTML = `<span style="display:inline-flex;animation:mindease-spin 1s linear infinite">${iconHTML("refresh-cw")}</span> MindEase &mdash; Simplifying PDF...`;
+  const accepted = await requestAndSendTransformation(pdfText, "pdf");
+  if (!accepted) return;
+  loader.innerHTML = `<span style="display:inline-flex;animation:mindease-spin 1s linear infinite">${iconHTML("refresh-cw")}</span> MindEase &mdash; Structuring PDF...`;
   document.body?.appendChild(loader);
-
-  browser.runtime.sendMessage({
-    type: "TRANSFORM_CONTENT",
-    payload: { text: pdfText, pageType: "pdf" },
-  }).catch(() => {});
 
   setTimeout(() => loader?.remove(), 30000);
 }

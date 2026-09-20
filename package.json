@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "AI-native browser extension for neurodiverse learners - GCD4F 2026",
   "scripts": {
+    "config:check": "node tools/check-env.mjs",
     "dev:chrome": "vite --mode chrome",
     "dev:firefox": "vite --mode firefox",
     "build:chrome": "vite build --mode chrome",
@@ -24,7 +25,6 @@
     "vitest": "^4.1.7"
   },
   "dependencies": {
-    "@huggingface/inference": "^4.13.18",
     "katex": "^0.17.0",
     "lucide-react": "^1.21.0",
     "react": "^19.2.7",

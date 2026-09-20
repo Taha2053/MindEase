@@ -1,8 +1,10 @@
 import browser from "webextension-polyfill";
 import type { TtsSettings, TtsPlayOptions } from "@/types";
 import { STORAGE_KEYS } from "@/types";
+import { synthesizePremiumSpeech } from "@/layer1/premiumClient";
 
 export const DEFAULT_TTS_SETTINGS: TtsSettings = {
+  provider: "browser",
   rate: 1.0,
   pitch: 1.0,
   volume: 1.0,
@@ -18,6 +20,8 @@ let _isPlaying = false;
 let _isPaused = false;
 let _cancelRequested = false;
 let _activeUtterance: SpeechSynthesisUtterance | null = null;
+let _activeAudio: HTMLAudioElement | null = null;
+let _activeAudioUrl: string | null = null;
 let _keepAliveTimer: number | null = null;
 let _activeResolve: (() => void) | null = null;
 let _activeReject: ((err: Error) => void) | null = null;
@@ -154,6 +158,47 @@ export function splitIntoSentences(rawText: string): string[] {
   return chunks.length > 0 ? chunks : [clean];
 }
 
+export function groupSpeechText(sentences: string[], maxChars = 4500): string[] {
+  const groups: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    const parts: string[] = [];
+    for (let offset = 0; offset < sentence.length; offset += maxChars) {
+      parts.push(sentence.slice(offset, offset + maxChars));
+    }
+    for (const part of parts) {
+      const candidate = current ? `${current} ${part.trim()}` : part.trim();
+      if (candidate.length > maxChars && current) {
+        groups.push(current);
+        current = part.trim();
+      } else {
+        current = candidate;
+      }
+    }
+  }
+  if (current) groups.push(current);
+  return groups;
+}
+
+function playAudioBlob(blob: Blob, volume: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    _activeAudio = audio;
+    _activeAudioUrl = url;
+    audio.volume = volume;
+    const finish = (error?: Error) => {
+      URL.revokeObjectURL(url);
+      if (_activeAudio === audio) _activeAudio = null;
+      if (_activeAudioUrl === url) _activeAudioUrl = null;
+      error ? reject(error) : resolve();
+    };
+    audio.onended = () => finish();
+    audio.onerror = () => finish(new Error("Premium speech audio could not be played"));
+    audio.play().catch((error) => finish(error instanceof Error ? error : new Error(String(error))));
+  });
+}
+
 /**
  * Periodic keep-alive for Chromium browsers to prevent silent speech synthesis cancellation.
  */
@@ -235,13 +280,6 @@ export async function speak(
   textOrTexts: string | string[],
   options?: TtsPlayOptions,
 ): Promise<void> {
-  const synth = getSynth();
-  if (!synth) {
-    const err = new Error("Text-to-speech is not supported in this browser.");
-    options?.onError?.(err);
-    return Promise.reject(err);
-  }
-
   // Stop any active playback first
   stop();
   _cancelRequested = false;
@@ -249,6 +287,7 @@ export async function speak(
   _isPaused = false;
 
   const settings = await loadTtsSettings();
+  const synth = getSynth();
   const voices = await getVoices();
 
   // Find requested or configured voice
@@ -288,6 +327,30 @@ export async function speak(
 
   options?.onStart?.();
 
+  if (settings.provider === "azure") {
+    try {
+      const groups = groupSpeechText(sentences);
+      for (const [index, group] of groups.entries()) {
+        if (_cancelRequested || !_isPlaying) break;
+        options?.onProgress?.(index, groups.length, group);
+        await playAudioBlob(await synthesizePremiumSpeech(group), options?.volume ?? settings.volume);
+      }
+      _isPlaying = false;
+      _isPaused = false;
+      options?.onEnd?.();
+      return;
+    } catch (error) {
+      console.warn("[TTS] Premium speech failed; using the browser voice.", error);
+    }
+  }
+
+  if (!synth) {
+    const err = new Error("Text-to-speech is not supported in this browser.");
+    _isPlaying = false;
+    options?.onError?.(err);
+    return Promise.reject(err);
+  }
+
   return new Promise<void>((resolve, reject) => {
     _activeResolve = resolve;
     _activeReject = reject;
@@ -326,6 +389,11 @@ export async function speak(
  * Pause current speech playback
  */
 export function pause(): void {
+  if (_activeAudio && !_activeAudio.paused) {
+    _activeAudio.pause();
+    _isPaused = true;
+    return;
+  }
   const synth = getSynth();
   if (synth && synth.speaking && !synth.paused) {
     synth.pause();
@@ -337,6 +405,11 @@ export function pause(): void {
  * Resume paused speech playback
  */
 export function resume(): void {
+  if (_activeAudio && _activeAudio.paused) {
+    void _activeAudio.play();
+    _isPaused = false;
+    return;
+  }
   const synth = getSynth();
   if (synth && synth.paused) {
     synth.resume();
@@ -361,6 +434,15 @@ export function stop(): void {
     _activeResolve = null;
   }
   _activeUtterance = null;
+  if (_activeAudio) {
+    _activeAudio.pause();
+    _activeAudio.src = "";
+    _activeAudio = null;
+  }
+  if (_activeAudioUrl) {
+    URL.revokeObjectURL(_activeAudioUrl);
+    _activeAudioUrl = null;
+  }
 
   if (synth) {
     synth.cancel();

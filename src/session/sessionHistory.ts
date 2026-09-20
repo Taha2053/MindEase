@@ -1,6 +1,8 @@
 import browser from "webextension-polyfill";
 import type { SessionHistoryEntry, KeyConceptEntry, FocusMetrics, ResourceEntry } from "@/types";
 import { STORAGE_KEYS } from "@/types";
+import { deleteFeedback } from "./feedback";
+import { syncNow } from "@/utils/supabase";
 
 function generateAutoName(
   concepts: KeyConceptEntry[],
@@ -42,6 +44,7 @@ export async function saveSessionHistory(
   // cap at 100 sessions to avoid unbounded storage growth
   const trimmed = history.slice(0, 100);
   await browser.storage.local.set({ [STORAGE_KEYS.SESSION_HISTORY]: trimmed });
+  await syncNow().catch(() => {});
 }
 
 export async function loadSessionHistory(): Promise<SessionHistoryEntry[]> {
@@ -56,14 +59,17 @@ export async function updateSessionName(sessionId: string, newName: string): Pro
   if (entry) {
     entry.customName = newName;
     await browser.storage.local.set({ [STORAGE_KEYS.SESSION_HISTORY]: history });
+    await syncNow().catch(() => {});
   }
 }
 
 export async function deleteSessionEntry(sessionId: string): Promise<void> {
+  await deleteFeedback(sessionId);
   const result = await browser.storage.local.get(STORAGE_KEYS.SESSION_HISTORY);
   const history = (result[STORAGE_KEYS.SESSION_HISTORY] as SessionHistoryEntry[] | undefined) ?? [];
   const filtered = history.filter(e => e.sessionId !== sessionId);
   await browser.storage.local.set({ [STORAGE_KEYS.SESSION_HISTORY]: filtered });
+  await syncNow().catch(() => {});
 
   // Also clean up the artifact and session log
   await browser.storage.local.remove([`artifact_${sessionId}`, `session_${sessionId}`]);

@@ -20,6 +20,28 @@ body {
   min-height: 100vh;
 }
 
+.feedback-panel > p { max-width: 68ch; margin: 12px 0; color: var(--text-dim); }
+.feedback-panel h2 { font-size: 1.35rem; letter-spacing: -.02em; }
+.feedback-panel fieldset { border: 0; padding: 0; margin: 24px 0; }
+.feedback-panel legend { font-weight: 600; margin-bottom: 12px; }
+.feedback-options { display: flex; flex-wrap: wrap; gap: 12px; }
+.feedback-options label { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); padding: 12px 16px; border-radius: 10px; cursor: pointer; }
+.feedback-options label:has(input:checked) { border-color: var(--accent); outline: 1px solid var(--accent); }
+.feedback-options input { accent-color: var(--accent); width: 18px; height: 18px; }
+.feedback-field { display: grid; gap: 10px; margin: 20px 0; font-weight: 600; }
+.feedback-field select, .feedback-field textarea { font: inherit; padding: 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-base); color: var(--text-primary); width: 100%; }
+.feedback-field textarea { resize: vertical; }
+.feedback-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
+.feedback-actions button { font: inherit; padding: 12px 20px; border: 1px solid var(--accent); border-radius: 8px; background: transparent; color: var(--text-primary); cursor: pointer; }
+.feedback-actions button:disabled { opacity: .55; cursor: default; }
+.feedback-panel :focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+.account-panel { border-top: 1px solid var(--border); margin-top: 28px; padding-top: 24px; }
+.account-form { display: grid; gap: 14px; max-width: 34rem; }
+.account-form label { display: grid; gap: 7px; font-weight: 600; }
+.account-form input { font: inherit; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); }
+.sync-choice { display: flex; align-items: center; gap: 10px; margin: 14px 0; }
+.sync-choice input { width: 18px; height: 18px; accent-color: var(--accent); }
+
 /* ── Loading ── */
 .loading-screen {
   display: flex;

@@ -11,8 +11,9 @@ function getHostname(): string {
 async function isDismissed(): Promise<boolean> {
   try {
     const result = await browser.storage.local.get(DISMISSED_KEY);
-    const dismissed = result[DISMISSED_KEY] as string[] | undefined;
-    return dismissed?.includes(getHostname()) ?? false;
+    const dismissed = result[DISMISSED_KEY] as Record<string, number> | undefined;
+    const timestamp = dismissed && !Array.isArray(dismissed) ? dismissed[getHostname()] : undefined;
+    return typeof timestamp === "number" && Date.now() - timestamp < 60 * 60 * 1000;
   } catch {
     return false;
   }
@@ -21,8 +22,9 @@ async function isDismissed(): Promise<boolean> {
 async function markDismissed(): Promise<void> {
   try {
     const result = await browser.storage.local.get(DISMISSED_KEY);
-    const dismissed = result[DISMISSED_KEY] as string[] | undefined;
-    const updated = [...new Set([...(dismissed ?? []), getHostname()])];
+    const dismissed = result[DISMISSED_KEY] as Record<string, number> | undefined;
+    const updated = dismissed && !Array.isArray(dismissed) ? { ...dismissed } : {};
+    updated[getHostname()] = Date.now();
     await browser.storage.local.set({ [DISMISSED_KEY]: updated });
   } catch {
     /* ignore */
@@ -43,19 +45,19 @@ const STYLES = `
 }
 
 #mindease-discovery-prompt[data-theme="dark"] {
-  --dp-bg: #252A55;
-  --dp-border: #7286D3;
-  --dp-text: #E5E0FF;
-  --dp-text-dim: #B8B8E0;
-  --dp-accent: #8EA7E9;
+  --dp-bg: #010736;
+  --dp-border: #807A77;
+  --dp-text: #F7E6CA;
+  --dp-text-dim: #D8CDBA;
+  --dp-accent: #F7E6CA;
   --dp-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
 #mindease-discovery-prompt[data-theme="light"] {
-  --dp-bg: #FFF8DE;
+  --dp-bg: #F7E6CA;
   --dp-border: #AAC4F5;
   --dp-text: #2D2B55;
   --dp-text-dim: #6E7FA8;
-  --dp-accent: #8CA9FF;
+  --dp-accent: #0F52BA;
   --dp-shadow: 0 8px 32px rgba(0,0,0,0.12);
 }
 .mindease-prompt-card {
@@ -74,7 +76,7 @@ const STYLES = `
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #8EA7E9, #E5E0FF);
+  background: linear-gradient(135deg, #F7E6CA, #F7E6CA);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -83,7 +85,7 @@ const STYLES = `
 .mindease-prompt-icon svg {
   width: 18px;
   height: 18px;
-  color: #1A1D3A;
+  color: #010736;
 }
 .mindease-prompt-text {
   font-size: 0.82rem;
@@ -114,8 +116,8 @@ const STYLES = `
   transform: translateY(0);
 }
 .mindease-prompt-btn-primary {
-  background: linear-gradient(135deg, #8EA7E9, #E5E0FF);
-  color: #1A1D3A;
+  background: linear-gradient(135deg, #F7E6CA, #F7E6CA);
+  color: #010736;
 }
 .mindease-prompt-btn-ghost {
   color: var(--dp-text-dim);

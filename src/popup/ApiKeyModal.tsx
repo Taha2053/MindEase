@@ -27,13 +27,11 @@ interface ApiKeyModalProps {
 export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved }) => {
   const [mistralKey, setMistralKey] = useState("");
   const [napkinKey, setNapkinKey] = useState("");
-  const [hfToken, setHfToken] = useState("");
   const [ocrKey, setOcrKey] = useState("");
   const [serverUrl, setServerUrl] = useState("http://localhost:8000");
 
   const [showMistral, setShowMistral] = useState(false);
   const [showNapkin, setShowNapkin] = useState(false);
-  const [showHf, setShowHf] = useState(false);
   const [showOcr, setShowOcr] = useState(false);
 
   const [isTestingMistral, setIsTestingMistral] = useState(false);
@@ -50,7 +48,6 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
       loadApiKeys().then((keys) => {
         setMistralKey(keys.mistralApiKey || "");
         setNapkinKey(keys.napkinApiKey || "");
-        setHfToken(keys.hfToken || "");
         setOcrKey(keys.ocrSpaceApiKey || "");
         setServerUrl(keys.premiumServerUrl || "http://localhost:8000");
         setMistralStatus(null);
@@ -103,7 +100,6 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
       await saveApiKeys({
         mistralApiKey: mistralKey.trim(),
         napkinApiKey: napkinKey.trim(),
-        hfToken: hfToken.trim(),
         ocrSpaceApiKey: ocrKey.trim(),
         premiumServerUrl: serverUrl.trim(),
       });
@@ -233,40 +229,6 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
                 onClick={() => setShowNapkin(!showNapkin)}
               >
                 {showNapkin ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
-          </div>
-
-          {/* Hugging Face Token */}
-          <div className="api-input-group">
-            <div className="api-label-row">
-              <label htmlFor="hf-token" className="api-label">
-                Hugging Face Token <span>(FLUX.1 concept illustrations)</span>
-              </label>
-              <a
-                href="https://huggingface.co/settings/tokens"
-                target="_blank"
-                rel="noreferrer"
-                className="api-help-link"
-              >
-                HF Tokens <ExternalLink size={10} />
-              </a>
-            </div>
-            <div className="api-field-wrap">
-              <input
-                id="hf-token"
-                type={showHf ? "text" : "password"}
-                className="api-input"
-                placeholder="Optional HF User Access Token"
-                value={hfToken}
-                onChange={(e) => setHfToken(e.target.value)}
-              />
-              <button
-                type="button"
-                className="api-eye-btn"
-                onClick={() => setShowHf(!showHf)}
-              >
-                {showHf ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
           </div>

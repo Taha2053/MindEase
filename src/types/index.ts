@@ -41,6 +41,7 @@ export interface CognitiveEvent {
 // ── Content Chunk (produced by Layer 1, tracked by Layer 3) ──────────────────
 
 export interface ContentChunk {
+  sourceText?: string;          // immutable extracted text; never model-authored
   id:          string;
   sourceId:    string;
   sourceType:  "pdf" | "website" | "video" | "lecture";
@@ -551,6 +552,8 @@ export const STORAGE_KEYS = {
   LATEST_ARTIFACT: "latestArtifact",
   TTS_SETTINGS: "mindease_tts_settings",
   API_KEYS: "mindease_api_keys",
+  AUTH_SESSION: "mindease_auth_session",
+  SYNC_PREFERENCES: "mindease_sync_preferences",
 } as const;
 
 export interface UserApiKeys {
@@ -601,6 +604,7 @@ export interface PremiumJobStatus {
 // ── Text-to-Speech Types ─────────────────────────────────────────────
 
 export interface TtsSettings {
+  provider: "browser" | "azure"; // explicit user choice; browser stays local
   rate: number;               // 0.5 to 2.0 (default: 1.0)
   pitch: number;              // 0.5 to 1.5 (default: 1.0)
   volume: number;             // 0.0 to 1.0 (default: 1.0)
@@ -625,7 +629,7 @@ export interface TtsPlayOptions {
 
 // ── Visual Generation Types ──────────────────────────────────────────
 
-export type VisualSource = "napkin" | "flux";
+export type VisualSource = "napkin";
 
 export interface VisualEntry {
   id: string;
@@ -649,5 +653,4 @@ export interface GenerateVisualPayload {
   sourceUrl: string;
   sourceTitle: string;
   concepts: string[];
-  useFlux: boolean;              // also generate Flux illustrative images
 }

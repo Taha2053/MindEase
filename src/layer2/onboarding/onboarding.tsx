@@ -1,16 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
-import InkBackground from "./InkBackground";
-import welcomeImg from "./assets/welcome.png";
-import q1FormatImg from "./assets/q1-format.png";
-import q2ApproachImg from "./assets/q2-approach.png";
-import q3DensityImg from "./assets/q3-density.png";
-import q4FocusImg from "./assets/q4-focus.png";
-import q5ConditionImg from "./assets/q5-condition.png";
-import q6LanguageImg from "./assets/q6-language.png";
-import q7PaceImg from "./assets/q7-pace.png";
-import q8MapImg from "./assets/q8-map.png";
-import doneImg from "./assets/q9-done.png";
 import { createRoot } from "react-dom/client";
 import browser from "webextension-polyfill";
 import type {
@@ -19,8 +8,9 @@ import type {
   CaptionSpeed, SummaryFrequency,
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
+import { syncNow } from "@/utils/supabase";
 import {
-  applyTheme, toggleTheme as themeManagerToggle,
+  applyTheme, loadTheme, toggleTheme as themeManagerToggle,
   type Theme,
 } from "@/utils/themeManager";
 import {
@@ -54,8 +44,8 @@ const QUESTIONS: Question[] = [
   {
     id: "formatPreference",
     icon: "Eye",
-    title: "How do ideas click for you?",
-    subtitle: "Everyone learns differently - what feels most natural?",
+    title: "Which format would you like to try first?",
+    subtitle: "A starting preference, not a fixed learning style. You can choose a different format for each material.",
     options: [
       { icon: "Palette", label: "Show me - I need to see it", description: "Diagrams, images, mind maps make everything clearer.", value: "visual" },
       { icon: "BookOpenText", label: "Just tell me plainly", description: "Words work fine. Good writing is all I need.", value: "text" },
@@ -74,8 +64,8 @@ const QUESTIONS: Question[] = [
   {
     id: "infoDensity",
     icon: "Ruler",
-    title: "How deep do you like to dive?",
-    subtitle: "Some want the sparknotes. Some want the full library.",
+    title: "How much explanation should appear at once?",
+    subtitle: "Your original material stays available in full. This changes the amount of extra explanation.",
     options: [
       { icon: "Zap", label: "Keep it sharp and quick", description: "Give me the essentials - I'll dig deeper if I need to.", value: "concise" },
       { icon: "Library", label: "Take me all the way down", description: "I want the full picture, nuance and all.", value: "detailed" },
@@ -84,33 +74,32 @@ const QUESTIONS: Question[] = [
   {
     id: "attentionSpan",
     icon: "Timer",
-    title: "What's your focus rhythm?",
-    subtitle: "Be honest - this helps us match your natural flow.",
+    title: "How long would you like each reading section to be?",
+    subtitle: "Choose a comfortable starting point. This does not measure your attention span.",
     options: [
-      { icon: "Zap", label: "Sprint - short intense bursts", description: "I do best with focused sprints under 10 min.", value: "short" },
-      { icon: "PersonStanding", label: "Jog - steady and consistent", description: "I can hold focus for 10\u201325 minutes comfortably.", value: "medium" },
-      { icon: "Heart", label: "Marathon - deep dive hours", description: "Once I'm in the zone, I can stay there a while.", value: "long" },
-      { icon: "Waves", label: "Depends on the day", description: "It really varies \u2014 let's see what works.", value: "medium", skip: true },
+      { icon: "Zap", label: "Short sections", description: "Frequent stopping points help me work through material.", value: "short" },
+      { icon: "PersonStanding", label: "Medium sections", description: "Group a few related ideas together.", value: "medium" },
+      { icon: "Heart", label: "Longer sections", description: "Keep more of the material visible together.", value: "long" },
     ],
   },
   {
     id: "condition",
     icon: "Brain",
-    title: "Does your brain have any quirks?",
-    subtitle: "This helps us tailor the experience. Everything's confidential.",
+    title: "Would you like to share a support need?",
+    subtitle: "Optional and self-declared. MindEase does not diagnose conditions. Your selected preferences take priority.",
     options: [
       { icon: "Text", label: "Dyslexia", description: "Adjust text formatting and use visual anchors.", value: "dyslexia" },
       { icon: "Feather", label: "ADHD", description: "Shorter chunks, fewer distractions, frequent wins.", value: "adhd" },
       { icon: "Rainbow", label: "Autism / ASD", description: "Clear structure, literal language, predictable layout.", value: "autism" },
       { icon: "Check", label: "None of the above", description: "Standard tuning based on your preferences.", value: "none" },
-      { icon: "Smile", label: "Prefer not to say", description: "That's totally okay.", value: "none", skip: true },
+      { icon: "Smile", label: "Prefer not to say", description: "Use my preferences without a condition label.", value: "undisclosed", skip: true },
     ],
   },
   {
     id: "secondLanguageLearner",
     icon: "Globe",
-    title: "Learning in a non-native language?",
-    subtitle: "We adjust sentence complexity and captions for you.",
+    title: "Would English terminology support be useful?",
+    subtitle: "English is currently supported. Original wording stays intact; explanations can help with unfamiliar terms.",
     options: [
       { icon: "Globe", label: "Yes \u2014 this isn't my first language", description: "Simpler sentences and slower pacing help.", value: "true" },
       { icon: "Home", label: "No \u2014 this is my native language", description: "I'm comfortable reading and listening.", value: "false" },
@@ -125,7 +114,6 @@ const QUESTIONS: Question[] = [
       { icon: "Clock", label: "Slow and careful", description: "I take my time, sometimes re-reading key parts.", value: "slow" },
       { icon: "PersonStanding", label: "Moderate and steady", description: "Comfortable cruising through most material.", value: "moderate" },
       { icon: "Rocket", label: "Fast and fluid", description: "I skim quickly and pick out the important bits.", value: "fast" },
-      { icon: "HelpCircle", label: "Not sure / It varies", description: "We'll figure it out together.", value: "moderate", skip: true },
     ],
   },
   {
@@ -136,17 +124,12 @@ const QUESTIONS: Question[] = [
     options: [
       { icon: "Map", label: "Yes \u2014 show me the big picture first", description: "I need to see where things fit before diving in.", value: "true" },
       { icon: "Search", label: "No \u2014 I'll explore as I go", description: "I prefer to build up to the big picture.", value: "false" },
-      { icon: "RefreshCw", label: "A bit of both / Not sure", description: "I'm flexible depending on the topic.", value: "false", skip: true },
     ],
   },
 ];
 
 const TOTAL_STEPS = QUESTIONS.length;
 
-const QUESTION_IMAGES = [
-  q1FormatImg, q2ApproachImg, q3DensityImg, q4FocusImg,
-  q5ConditionImg, q6LanguageImg, q7PaceImg, q8MapImg,
-];
 
 /* ─── Icon map for rendering ─── */
 
@@ -165,26 +148,6 @@ function Icon({ name, size = 24 }: { name: string; size?: number }) {
 
 /* ─── Feedback messages ─── */
 
-const FEEDBACK_MESSAGES: Record<string, string[]> = {
-  visual: ["Great eye!", "Visual thinker - love it!"],
-  text: ["Words are your superpower!", "Nice, a reader!"],
-  "example-first": ["Examples make it stick!", "Perfect approach!"],
-  "theory-first": ["Big-picture thinker!", "Love the curiosity!"],
-  concise: ["Short and sweet!", "Straight to the point!"],
-  detailed: ["Deep diver!", "Details matter!"],
-  short: ["Sprint style!", "Go you!"],
-  medium: ["Steady and strong!", "Nice rhythm!"],
-  long: ["Deep focus mode!", "Marathon mindset!"],
-  dyslexia: ["We've got you!", "Let's make it visual!"],
-  adhd: ["We'll keep it snappy!", "You're in good hands!"],
-  autism: ["Structure is key!", "Let's build clarity!"],
-  none: ["Perfect!", "You do you!"],
-  true: ["Glad we asked!", "We'll adjust for you!"],
-  false: ["Awesome!", "Native language - noted!"],
-  slow: ["Careful reader!", "No rush - comprehension first!"],
-  moderate: ["Comfortable pace!", "Solid!"],
-  fast: ["Speed reader!", "Fast and fluid!"],
-};
 
 /* ─── Helpers ─── */
 
@@ -236,53 +199,19 @@ function getTransformationParamsWithCondition(
     simplificationLevel = Math.min(3, simplificationLevel + 1) as SimplificationLevel;
   }
 
-  if (condition === "dyslexia") {
-    chunkSize = "small"; simplificationLevel = 3; useVisualAnchors = true;
-    if (captionSpeed === "fast") captionSpeed = "normal";
-  } else if (condition === "adhd") {
-    chunkSize = "small"; summaryFrequency = "high"; useVisualAnchors = true;
-  } else if (condition === "autism") {
-    simplificationLevel = Math.max(simplificationLevel, 2) as SimplificationLevel;
-    useVisualAnchors = true;
-  }
+  // Self-declared condition is context, never an override of chosen controls.
 
   return { chunkSize, simplificationLevel, captionSpeed, useVisualAnchors, summaryFrequency };
 }
 
-function generateProfileSummary(baseline: BaselineProfile, condition?: string): string {
-  const parts: string[] = [];
-
-  if (baseline.formatPreference === "visual") {
-    parts.push("You learn best visually \u2014 we'll use diagrams, images, and charts to help concepts click");
-  } else {
-    parts.push("You prefer text-based learning \u2014 we'll keep things clear and well-written");
-  }
-
-  if (baseline.attentionSpan === "short") {
-    parts.push("with short, focused bursts to match your sprint-style focus");
-  } else if (baseline.attentionSpan === "long") {
-    parts.push("and we'll give you room for deep, extended dives");
-  }
-
-  if (condition === "dyslexia") {
-    parts.push("We've adjusted formatting with visual anchors and chunked reading to support your flow");
-  } else if (condition === "adhd") {
-    parts.push("We'll keep content snappy and rewarding with frequent checkpoints");
-  } else if (condition === "autism") {
-    parts.push("Expect clear structure, literal language, and consistent layouts throughout");
-  }
-
-  if (baseline.secondLanguageLearner) {
-    parts.push("Since you're learning in a second language, we'll keep sentences clear and captions paced");
-  }
-
-  if (baseline.readingPace === "slow") {
-    parts.push("We'll move at a comfortable pace with extra simplification when needed");
-  } else if (baseline.readingPace === "fast") {
-    parts.push("We'll keep the pace moving to match your reading speed");
-  }
-
-  return parts.join(". ") + ".";
+function generateProfileSummary(baseline: BaselineProfile, _condition?: string): string {
+  return [
+    baseline.formatPreference === "visual"
+      ? "You chose visual explanations as a starting preference."
+      : "You chose structured text as a starting preference.",
+    "We will suggest options before adapting your material. Your source remains available.",
+    "These choices do not measure learning ability or diagnose a condition.",
+  ].join(" ");
 }
 
 /* ─── App component ─── */
@@ -294,10 +223,11 @@ function App() {
   const [theme, setTheme] = useState<Theme>("light");
   const [isEditMode, setIsEditMode] = useState(false);
   const [existingProfile, setExistingProfile] = useState<FullCognitiveProfile | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
-    applyTheme("light");
-    setTheme("light");
+    void loadTheme().then(saved => { applyTheme(saved); setTheme(saved); });
     const params = new URLSearchParams(window.location.search);
     const edit = params.get("edit") === "1";
     setIsEditMode(edit);
@@ -330,11 +260,7 @@ function App() {
 
   const selectOption = useCallback((questionId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));
-    const msgs = FEEDBACK_MESSAGES[value];
-    if (msgs) {
-      setFeedback(msgs[Math.floor(Math.random() * msgs.length)]);
-      setTimeout(() => setFeedback(null), 2000);
-    }
+    setFeedback("Preference selected. You can change it later.");
   }, []);
 
   const goNext = useCallback(async () => {
@@ -342,12 +268,21 @@ function App() {
     const q = QUESTIONS[step];
     if (!answers[q.id]) return;
     if (step === TOTAL_STEPS - 1) {
-      await saveProfile();
-      setStep(TOTAL_STEPS);
+      if (saving) return;
+      setSaving(true);
+      setSaveError("");
+      try {
+        await saveProfile();
+        setStep(TOTAL_STEPS);
+      } catch {
+        setSaveError("Your preferences could not be saved. Try again.");
+      } finally {
+        setSaving(false);
+      }
     } else {
       setStep((s) => s + 1);
     }
-  }, [step, answers]);
+  }, [step, answers, saving]);
 
   const goBack = useCallback(() => {
     if (step >= 0) setStep((s) => s - 1);
@@ -384,8 +319,8 @@ function App() {
         updatedAt: Date.now(),
         baseline, transformationParams: params,
       };
-      try { await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile }); }
-      catch { console.warn("[MindEase] Profile update failed"); }
+      await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
+      await syncNow().catch(() => {});
       try { await browser.runtime.sendMessage({ type: "PROFILE_UPDATED", payload: profile }); }
       catch { /* ok */ }
       return;
@@ -404,8 +339,8 @@ function App() {
       transformationParams: params,
     };
 
-    try { await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile, [STORAGE_KEYS.ONBOARDING_DONE]: true }); }
-    catch { console.warn("[MindEase] Profile save failed"); }
+    await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile, [STORAGE_KEYS.ONBOARDING_DONE]: true });
+    await syncNow().catch(() => {});
     try { await browser.runtime.sendMessage({ type: "ONBOARDING_COMPLETE" }); }
     catch { /* ok */ }
   }
@@ -416,7 +351,6 @@ function App() {
 
   return (
     <>
-      <InkBackground theme={theme} />
       <div className="container" role="main">
       <header className="brand-header">
         <div className="brand-left">
@@ -447,15 +381,14 @@ function App() {
         <div className="card">
           {step < 0 && (
             <div className="welcome-screen screen-enter" key="welcome">
-              <div className="welcome-illustration"><img src={welcomeImg} alt="MindEase illustration" /></div>
               <div className="welcome-icon"><Brain size={24} /></div>
               <h1 className="welcome-title">Welcome to MindEase</h1>
               <p className="welcome-sub">
-                A few quick questions and we'll build a learning experience
-                that adapts to <em>your</em> brain. No right answers - just you.
+                Set your starting preferences once. Choose how you want help with
+                the material you are studying, and adjust through feedback later.
               </p>
               <button className="welcome-cta" onClick={() => setStep(0)}>
-                Let's go →
+                Set my preferences
               </button>
             </div>
           )}
@@ -465,7 +398,6 @@ function App() {
             const selectedValue = answers[q.id];
             return (
               <div className="question-screen screen-enter" key={step}>
-                <div className="question-illustration"><img src={QUESTION_IMAGES[step]} alt="" /></div>
                 <h2 className="question-title"><Icon name={q.icon} /> {q.title}</h2>
                 <p className="question-sub">{q.subtitle}</p>
                 <div className="options-grid" role="radiogroup" aria-label={q.title}>
@@ -522,7 +454,6 @@ function App() {
 
             return (
               <div className="done-screen screen-enter" key="done">
-                <div className="done-illustration"><img src={doneImg} alt="" /></div>
                 <div className="done-icon"><Brain size={22} /></div>
                 <h2 className="done-title">You're all set!</h2>
                 <p className="done-sub">Here's what we've put together for you.</p>
@@ -555,15 +486,16 @@ function App() {
 
       {showNav && (
         <div className="nav-row">
+          {saveError && <p role="alert">{saveError}</p>}
           <button className="btn-back" onClick={goBack}>
             ← Back
           </button>
           <button
             className={`btn-next ${answers[QUESTIONS[step].id] ? "enabled" : ""}`}
-            disabled={!answers[QUESTIONS[step].id]}
+            disabled={saving || !answers[QUESTIONS[step].id]}
             onClick={goNext}
           >
-            {step === TOTAL_STEPS - 1 ? "View my profile" : "Continue"}
+            {saving ? "Saving preferences…" : step === TOTAL_STEPS - 1 ? "Save my preferences" : "Continue"}
           </button>
         </div>
       )}

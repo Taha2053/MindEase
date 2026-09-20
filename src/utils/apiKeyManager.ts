@@ -8,7 +8,7 @@
 import browser from "webextension-polyfill";
 import { STORAGE_KEYS, type UserApiKeys } from "@/types";
 
-export type ApiKeyService = "mistral" | "napkin" | "hf" | "ocr" | "premiumServer";
+export type ApiKeyService = "mistral" | "napkin" | "ocr" | "premiumServer";
 
 const DEFAULT_PREMIUM_SERVER = "http://localhost:8000";
 
@@ -22,7 +22,6 @@ export async function loadApiKeys(): Promise<UserApiKeys> {
     return {
       mistralApiKey: stored.mistralApiKey?.trim() || "",
       napkinApiKey: stored.napkinApiKey?.trim() || "",
-      hfToken: stored.hfToken?.trim() || "",
       ocrSpaceApiKey: stored.ocrSpaceApiKey?.trim() || "",
       premiumServerUrl: stored.premiumServerUrl?.trim() || (import.meta.env.VITE_PREMIUM_API_URL as string) || DEFAULT_PREMIUM_SERVER,
       updatedAt: stored.updatedAt || 0,
@@ -32,7 +31,6 @@ export async function loadApiKeys(): Promise<UserApiKeys> {
     return {
       mistralApiKey: "",
       napkinApiKey: "",
-      hfToken: "",
       ocrSpaceApiKey: "",
       premiumServerUrl: (import.meta.env.VITE_PREMIUM_API_URL as string) || DEFAULT_PREMIUM_SERVER,
       updatedAt: 0,
@@ -70,8 +68,6 @@ export async function getApiKey(service: ApiKeyService): Promise<string | undefi
       return stored.mistralApiKey || (import.meta.env.VITE_MISTRAL_API_KEY as string | undefined);
     case "napkin":
       return stored.napkinApiKey || (import.meta.env.VITE_NAPKIN_API_KEY as string | undefined);
-    case "hf":
-      return stored.hfToken || (import.meta.env.VITE_HF_TOKEN as string | undefined);
     case "ocr":
       return stored.ocrSpaceApiKey || (import.meta.env.VITE_OCR_SPACE_API_KEY as string | undefined);
     case "premiumServer":

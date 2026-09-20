@@ -44,6 +44,11 @@ class FeedbackResponse(BaseModel):
     status: str = "ok"
 
 
+class SpeechRequest(BaseModel):
+    """Short learner-selected text for premium speech synthesis."""
+    text: str = Field(..., min_length=1, max_length=5000)
+
+
 class ProcessRequest(BaseModel):
     """Request body for POST /api/process."""
     arxiv_id: str = Field(

@@ -11,8 +11,10 @@ import re
 import uuid
 from datetime import datetime, timedelta
 
+import httpx
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,7 @@ from db.queries import _utcnow_naive
 from ingestion.text_normalize import normalize_display_text, tex_to_text
 from jobs import process_paper_job
 from rendering import extract_scene_name, get_video_path, get_video_url, process_visualization
+from services.azure_speech import synthesize
 
 from .schemas import (
     FeedbackRequest,
@@ -41,9 +44,11 @@ from .schemas import (
     SectionVideo,
     StatusResponse,
     StepInfo,
+    SpeechRequest,
     VisualizationResponse,
     VisualizationStatus,
 )
+from .auth import current_user
 from .throttle import (
     client_ip,
     daily_cap_verdict,
@@ -101,12 +106,28 @@ def _authorize_render(secret: str | None) -> None:
 
 # === Endpoints ===
 
+@router.post("/speech")
+async def create_speech(
+    request: SpeechRequest,
+    _user: dict | None = Depends(current_user),
+) -> Response:
+    """Synthesize premium narration. Browser speech remains the free fallback."""
+    try:
+        audio = await synthesize(request.text)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (ValueError, httpx.HTTPError) as exc:
+        logger.warning("Azure Speech request failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Speech synthesis failed") from exc
+    return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+
 @router.post("/process", response_model=ProcessResponse)
 async def start_processing(
     request: ProcessRequest,
     http_request: Request,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _user: dict | None = Depends(current_user),
 ):
     """
     Start processing an arXiv paper.
@@ -292,6 +313,7 @@ async def start_processing_document(
     http_request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    _user: dict | None = Depends(current_user),
 ):
     """
     Start processing an arbitrary document, Wikipedia page, PDF, or MindEase DOM sections.

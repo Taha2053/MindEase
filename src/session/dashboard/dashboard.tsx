@@ -4,7 +4,7 @@ import "@/styles/theme.css";
 import "./dashboard.css";
 import browser from "webextension-polyfill";
 import {
-  applyTheme, toggleTheme as themeManagerToggle,
+  applyTheme, loadTheme, toggleTheme as themeManagerToggle,
   getAppliedTheme, type Theme,
 } from "@/utils/themeManager";
 import { STORAGE_KEYS } from "@/types";
@@ -16,6 +16,9 @@ import type {
   CrossSourceConnection, VisualEntry,
 } from "@/types";
 import { loadExplanations } from "@/layer2/explainer";
+import { rankAdaptations } from "@/layer2/recommendations";
+import { SessionFeedbackPanel } from "./SessionFeedback";
+import { DataControls } from "./DataControls";
 import { loadSessionHistory, updateSessionName, deleteSessionEntry } from "@/session/sessionHistory";
 import type { SessionHistoryEntry } from "@/types";
 import {
@@ -213,12 +216,14 @@ function getNavItems(visualFirst: boolean): { id: string; label: string; icon: F
     { id: "focus", label: "Focus", icon: Eye },
     { id: "resources", label: "Resources", icon: FolderOpen },
     { id: "learned", label: "Learned", icon: BookOpen },
+    { id: "feedback", label: "Session feedback", icon: MessageCircle },
     { id: "history", label: "History", icon: Clock },
     { id: "explanations", label: "Explanations", icon: MessageCircle },
     { id: "review", label: "Review", icon: RefreshCw },
     { id: "visuals", label: "Visuals", icon: Image },
     { id: "insights", label: "Insights", icon: Lightbulb },
     { id: "progress", label: "Progress", icon: ChartNoAxesColumn },
+    { id: "data", label: "Your data", icon: Package },
   ];
   if (visualFirst) {
     const visIdx = items.findIndex(i => i.id === "visuals");
@@ -557,7 +562,7 @@ const SectionLearned: FC<{ artifact: PersonalizedArtifact | null }> = ({ artifac
   );
 };
 
-const SectionExplanations: FC = () => {
+const SectionExplanations: FC<{ profile: FullCognitiveProfile | null }> = ({ profile }) => {
   const [explanations, setExplanations] = useState<AdaptationExplanation[]>([]);
 
   useEffect(() => {
@@ -583,6 +588,7 @@ const SectionExplanations: FC = () => {
     captionPacing: "explain-icon-cp",
     readingDensity: "explain-icon-rd",
   };
+  const recommendations = rankAdaptations(profile?.baseline);
 
   return (
     <section className="section-card" id="section-explanations" data-section="explanations">
@@ -591,10 +597,24 @@ const SectionExplanations: FC = () => {
         <h2>Why MindEase Adapted This Content</h2>
       </div>
       <div className="explanations-list">
+        <div className="explain-item">
+          <div className="explain-header">
+            <span className="explain-icon explain-icon-vi"><Eye size={18} /></span>
+            <span className="explain-title">Current recommendation order</span>
+          </div>
+          <div className="explain-body">
+            First: {recommendations[0].label}. {recommendations[0].reason}
+            {' '}This is a preference-based suggestion, not a diagnosis or proof that one format improves comprehension.
+          </div>
+          <div className="feedback-actions">
+            <button type="button" onClick={() => browser.tabs.create({ url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html?edit=1"), active: true })}>Edit my preferences</button>
+          </div>
+        </div>
         {explanations.length === 0 ? (
-          <div className="explain-empty">No content adaptations were made yet. As you study, MindEase will adjust the content to match your needs and explain why.</div>
+          <div className="explain-empty">No experimental adaptation history is stored. Passive browsing signals do not change your settings.</div>
         ) : (
-          explanations.map((e, i) => {
+          <><p className="explain-empty">Experimental Q-learning history from earlier sessions; these records are not evidence of comprehension.</p>
+          {explanations.map((e, i) => {
             const Icon = CATEGORY_ICONS[e.category] || MessageCircle;
             const iconClass = CATEGORY_ICON_CLASSES[e.category] || "";
             return (
@@ -609,7 +629,7 @@ const SectionExplanations: FC = () => {
                 <div className="explain-meta">Adapted at {new Date(e.timestamp).toLocaleString()}</div>
               </div>
             );
-          })
+          })}</>
         )}
       </div>
     </section>
@@ -791,13 +811,8 @@ const SectionVideoStudio: FC<{ defaultTopic?: string }> = ({ defaultTopic }) => 
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<PremiumJobStatus | null>(null);
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
-  const [videos, setVideos] = useState<Array<{ id: string; concept: string; video_url: string }>>([
-    {
-      id: "demo_attention",
-      concept: "MindEase Attention Animation (Local Demo)",
-      video_url: "http://localhost:8000/api/video/DemoAttentionScene",
-    },
-  ]);
+  const [videos, setVideos] = useState<Array<{ id: string; concept: string; video_url: string }>>([]);
+  const [message, setMessage] = useState("");
   const [selectedVideoIdx, setSelectedVideoIdx] = useState(0);
 
   useEffect(() => {
@@ -827,12 +842,14 @@ const SectionVideoStudio: FC<{ defaultTopic?: string }> = ({ defaultTopic }) => 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!topic.trim() && !urlOrId.trim() && !content.trim()) {
-      alert("Please enter a concept, paper ID, URL, or formula to animate.");
+    const needsUrl = sourceType !== "custom";
+    if ((needsUrl && !urlOrId.trim()) || (!needsUrl && !content.trim())) {
+      setMessage(needsUrl ? "Provide the exact source URL or arXiv ID." : "Paste the exact source material to animate.");
       return;
     }
 
     setIsSubmitting(true);
+    setMessage("");
     setJobStatus(null);
     try {
       if (sourceType === "arxiv" && /^\d{4}\.\d{4,5}(v\d+)?$/.test(urlOrId.trim())) {
@@ -850,7 +867,7 @@ const SectionVideoStudio: FC<{ defaultTopic?: string }> = ({ defaultTopic }) => 
         setActiveDocId(res.arxiv_id);
       }
     } catch (err) {
-      alert("Failed to submit animation request: " + String(err));
+      setMessage("Animation request failed: " + String(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -878,7 +895,7 @@ const SectionVideoStudio: FC<{ defaultTopic?: string }> = ({ defaultTopic }) => 
             <h3 style={{ fontSize: "0.9rem", fontWeight: 600 }}>Create Animated Explainer</h3>
           </div>
           <p style={{ fontSize: "0.75rem", color: "var(--text-dim)", lineHeight: 1.4 }}>
-            Transform complex algorithms, math formulas, or research papers into synchronized 3Blue1Brown-style Manim videos.
+            Create a Manim explanation grounded in the source you provide. DeepSeek plans the lesson and Mistral generates the animation.
           </p>
 
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -933,7 +950,7 @@ const SectionVideoStudio: FC<{ defaultTopic?: string }> = ({ defaultTopic }) => 
 
             <div className="video-field-group">
               <label className="video-field-label" htmlFor="video-content">
-                Formula or Core Description <span>(LaTeX or Markdown)</span>
+                {sourceType === "custom" ? "Exact Source Material" : "Relevant Source Extract"} <span>(LaTeX or Markdown)</span>
               </label>
               <textarea
                 id="video-content"
@@ -957,6 +974,7 @@ const SectionVideoStudio: FC<{ defaultTopic?: string }> = ({ defaultTopic }) => 
                 <><Film size={16} /> Render 3B1B Video Animation</>
               )}
             </button>
+            <p role="status" aria-live="polite" style={{ color: "var(--text-dim)", fontSize: "0.75rem" }}>{message}</p>
           </form>
 
           {/* Progress Box */}
@@ -993,7 +1011,7 @@ const SectionVideoStudio: FC<{ defaultTopic?: string }> = ({ defaultTopic }) => 
                 key={currentVideo.video_url}
                 src={currentVideo.video_url}
                 controls
-                autoPlay={false}
+                preload="metadata"
               />
             ) : (
               <div style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>No video loaded</div>
@@ -1084,7 +1102,7 @@ const VideoPromptModal: FC<{
     e.preventDefault();
     const query = inputVal.trim();
     if (!query) {
-      alert("Please enter an arXiv ID, Wikipedia link, or topic name.");
+      setJobStatus({ job_id: "", status: "failed", progress: 0, current_step: "Provide an arXiv ID or source URL.", error: "Videos require identifiable source material." });
       return;
     }
 
@@ -1099,16 +1117,17 @@ const VideoPromptModal: FC<{
         setJobId(res.job_id);
       } else {
         const isUrl = query.startsWith("http://") || query.startsWith("https://");
+        if (!isUrl) throw new Error("Use an arXiv ID or exact source URL. Topic-only generation is disabled to protect source fidelity.");
         const res = await submitDocumentForAnimation({
           title: isUrl ? "Web Animation" : query,
           source_type: query.includes("wikipedia.org") ? "wikipedia" : (isUrl ? "website" : "article"),
           url: isUrl ? query : undefined,
-          content: formula.trim() ? formula.trim() : (!isUrl ? query : undefined),
+          content: formula.trim() || undefined,
         });
         setJobId(res.job_id);
       }
     } catch (err) {
-      alert("Failed to start video generator: " + String(err));
+      setJobStatus({ job_id: "", status: "failed", progress: 0, current_step: "Video request failed", error: String(err) });
     } finally {
       setIsSubmitting(false);
     }
@@ -1159,20 +1178,20 @@ const VideoPromptModal: FC<{
           ) : (
             <>
               <p style={{ fontSize: "0.8rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
-                Transform any research paper, Wikipedia page, or mathematical formula into a synchronized <strong>3Blue1Brown-style Manim animation</strong> with AI voice narration.
+                Turn a specific paper or webpage into a source-grounded Manim animation with optional narration.
               </p>
 
               <form onSubmit={handleGenerate} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 <div className="video-field-group">
                   <label className="video-field-label" htmlFor="v-prompt-input">
                     What would you like to animate?
-                    <span>arXiv ID, URL, or Concept</span>
+                    <span>arXiv ID or exact source URL</span>
                   </label>
                   <input
                     id="v-prompt-input"
                     type="text"
                     className="video-input"
-                    placeholder="e.g. 1706.03762 or Attention Mechanism or https://en.wikipedia.org/..."
+                    placeholder="e.g. 1706.03762 or https://en.wikipedia.org/..."
                     value={inputVal}
                     onChange={(e) => setInputVal(e.target.value)}
                     autoFocus
@@ -1226,20 +1245,6 @@ const VideoPromptModal: FC<{
                 </div>
               )}
 
-              {/* Sample preview button */}
-              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Have a rendered demo?</span>
-                <button
-                  type="button"
-                  style={{ background: "transparent", border: "none", color: "var(--accent)", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}
-                  onClick={() => {
-                    setRenderedVideoUrl("http://localhost:8000/api/video/DemoAttentionScene");
-                    setVideoConcept("MindEase Attention Animation (Local Demo)");
-                  }}
-                >
-                  <Play size={12} /> Watch Attention Demo
-                </button>
-              </div>
             </>
           )}
         </div>
@@ -1563,7 +1568,7 @@ const Dashboard: FC = () => {
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    applyTheme("light");
+    void loadTheme().then(saved => { applyTheme(saved); setTheme(saved); });
     loadData().then(d => {
       setData(d);
       setVisuals(d.visuals);
@@ -1638,11 +1643,10 @@ const Dashboard: FC = () => {
     if (!data?.artifact?.keyConcepts?.length) return;
     setGenerating(true);
     const concepts = data.artifact.keyConcepts.map(c => c.label);
-    const useFlux = data.profile?.baseline?.formatPreference === "visual";
     try {
       const response = await browser.runtime.sendMessage({
         type: "GENERATE_VISUALS",
-        payload: { concepts, useFlux },
+        payload: { concepts },
       }) as { type: string; visuals: VisualEntry[] };
       setVisuals(response.visuals ?? []);
     } catch (err) {
@@ -1715,6 +1719,7 @@ const Dashboard: FC = () => {
 
         <main className="dash-content" ref={contentRef}>
           <SectionOverview artifact={data.artifact} session={data.session} />
+          <SessionFeedbackPanel key={data.artifact?.sessionId} sessionId={data.artifact?.sessionId} />
           <SectionVideoStudio defaultTopic={conceptLabels[0] || ""} />
           {visualFirst && (
             <SectionVisuals
@@ -1729,7 +1734,7 @@ const Dashboard: FC = () => {
           <SectionResources artifact={data.artifact} session={data.session} />
           <SectionLearned artifact={data.artifact} />
           <SectionHistory />
-          <SectionExplanations />
+          <SectionExplanations profile={data.profile} />
           <SectionReview artifact={data.artifact} />
           {!visualFirst && (
             <SectionVisuals
@@ -1742,6 +1747,7 @@ const Dashboard: FC = () => {
           )}
           <SectionInsights artifact={data.artifact} />
           <SectionProgress artifact={data.artifact} session={data.session} profile={data.profile} />
+          <DataControls />
         </main>
 
         <footer className="dash-footer">

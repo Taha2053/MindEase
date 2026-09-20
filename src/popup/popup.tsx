@@ -409,6 +409,11 @@ function TtsSettingsPanel() {
     setSettings(updated);
   };
 
+  const handleProviderChange = async (provider: TtsSettings["provider"]) => {
+    const updated = await saveTtsSettings({ provider });
+    setSettings(updated);
+  };
+
   const handleVoiceChange = async (voiceURI: string) => {
     const chosen = voices.find(v => v.voiceURI === voiceURI);
     const updated = await saveTtsSettings({
@@ -451,6 +456,18 @@ function TtsSettingsPanel() {
         </span>
       </button>
       <div className={`controls-panel ${open ? "open" : ""}`}>
+        <div className="control-row">
+          <span className="control-label">Speech service</span>
+          <div className="control-btns">
+            <button className={`control-btn ${settings.provider === "browser" ? "active" : ""}`} onClick={() => handleProviderChange("browser")}>Browser</button>
+            <button className={`control-btn ${settings.provider === "azure" ? "active" : ""}`} onClick={() => handleProviderChange("azure")}>Azure premium</button>
+          </div>
+          <small style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>
+            {settings.provider === "azure"
+              ? "Selected text is sent to your configured MindEase server for narration. Browser speech is used if it fails."
+              : "Uses a voice installed in your browser and keeps the text on this device."}
+          </small>
+        </div>
         <div className="control-row">
           <span className="control-label">Speed</span>
           <span className="control-value">{settings.rate}x</span>
@@ -792,6 +809,7 @@ function App() {
       [STORAGE_KEYS.WORKSPACE]: null,
       [STORAGE_KEYS.EXCLUDED_TABS]: {},
       [STORAGE_KEYS.NOTES]: null,
+      [STORAGE_KEYS.SESSION_CHUNKS]: [],
     });
     await browser.runtime.sendMessage({ type: "SESSION_STATE_CHANGED", payload: { active: true } }).catch(() => {});
     const tabs = await browser.tabs.query({});

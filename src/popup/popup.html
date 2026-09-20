@@ -11,34 +11,34 @@
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
       [data-theme="dark"] {
-        --bg-base:        #1A1D3A;
-        --bg-surface:     #252A55;
-        --bg-surface-alt: #20254A;
-        --border:         #7286D3;
-        --border-hover:   #8EA7E9;
-        --text-primary:   #E5E0FF;
-        --text-dim:       #B8B8E0;
-        --text-muted:     #8A8AB8;
-        --accent:         #8EA7E9;
-        --accent-gradient:  linear-gradient(135deg, #8EA7E9, #E5E0FF);
+        --bg-base:        #010736;
+        --bg-surface:     #010736;
+        --bg-surface-alt: #0B1241;
+        --border:         #807A77;
+        --border-hover:   #F7E6CA;
+        --text-primary:   #F7E6CA;
+        --text-dim:       #D8CDBA;
+        --text-muted:     #B9B1A7;
+        --accent:         #F7E6CA;
+        --accent-gradient:  linear-gradient(135deg, #F7E6CA, #F7E6CA);
         --danger:         #f87171;
         --success:        #4ade80;
         --warning:        #facc15;
         --font-family:    'Inter', system-ui, -apple-system, sans-serif;
-        --shadow-glow:    0 8px 32px rgba(142,167,233,0.25);
+        --shadow-glow:    0 8px 32px rgba(247, 230, 202,0.25);
       }
 
       [data-theme="light"] {
-        --bg-base:        #FFF2C6;
-        --bg-surface:     #FFF8DE;
+        --bg-base:        #F7E6CA;
+        --bg-surface:     #F7E6CA;
         --bg-surface-alt: #FFFBE8;
         --border:         #AAC4F5;
-        --border-hover:   #8CA9FF;
+        --border-hover:   #0F52BA;
         --text-primary:   #2D2B55;
         --text-dim:       #6E7FA8;
         --text-muted:     #94A8CC;
-        --accent:         #8CA9FF;
-        --accent-gradient:  linear-gradient(135deg, #8CA9FF, #AAC4F5);
+        --accent:         #0F52BA;
+        --accent-gradient:  linear-gradient(135deg, #0F52BA, #AAC4F5);
         --danger:         #dc2626;
         --success:        #16a34a;
         --warning:        #ca8a04;
@@ -86,7 +86,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #1A1D3A;
+        color: #010736;
         flex-shrink: 0;
       }
       .header-text { flex: 1; }
@@ -250,7 +250,7 @@
         transition: all 0.15s; font-family: var(--font-family);
       }
       .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-      .btn-primary { background: var(--accent-gradient); color: #1A1D3A; font-weight: 600; }
+      .btn-primary { background: var(--accent-gradient); color: #010736; font-weight: 600; }
       .btn-primary:hover { opacity: 0.9; }
       .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
       .btn-ghost:hover { color: var(--text-primary); border-color: var(--border-hover); }
@@ -303,7 +303,7 @@
         white-space: nowrap;
       }
       .control-btn:hover { border-color: var(--border-hover); color: var(--text-primary); }
-      .control-btn.active { background: var(--accent); color: #1A1D3A; border-color: var(--accent); }
+      .control-btn.active { background: var(--accent); color: #010736; border-color: var(--accent); }
       .control-btn.active-override { background: var(--warning); color: #000; border-color: var(--warning); }
 
       .controls-footer { display: flex; gap: 6px; margin-top: 8px; }
@@ -526,7 +526,7 @@
       }
       .api-input:focus {
         border-color: var(--accent);
-        box-shadow: 0 0 0 2px rgba(142,167,233,0.2);
+        box-shadow: 0 0 0 2px rgba(247, 230, 202,0.2);
       }
       .api-input.font-mono { font-family: monospace; font-size: 0.7rem; }
       .api-eye-btn {
@@ -584,7 +584,7 @@
       .api-cancel-btn:hover { background: var(--bg-surface-alt); color: var(--text-primary); }
       .api-save-btn {
         background: var(--accent-gradient);
-        border: none; color: #1A1D3A; font-size: 0.75rem; font-weight: 600;
+        border: none; color: #010736; font-size: 0.75rem; font-weight: 600;
         padding: 7px 16px; border-radius: 8px; cursor: pointer;
         display: flex; align-items: center; gap: 6px;
         transition: transform 0.1s, opacity 0.15s;

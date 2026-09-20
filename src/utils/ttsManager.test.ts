@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   splitIntoSentences,
+  groupSpeechText,
   loadTtsSettings,
   saveTtsSettings,
   DEFAULT_TTS_SETTINGS,
@@ -44,6 +45,12 @@ describe("TTS Manager", () => {
         expect(s.length).toBeLessThan(200);
       }
     });
+  });
+
+  it("groups premium speech below the provider character limit", () => {
+    const groups = groupSpeechText(["A".repeat(3000), "B".repeat(3000)]);
+    expect(groups).toHaveLength(2);
+    expect(groups.every((group) => group.length <= 4500)).toBe(true);
   });
 
   describe("Settings & State", () => {

@@ -103,7 +103,6 @@ VITE_MISTRAL_API_KEY=your_mistral_api_key_here
 VITE_NAPKIN_API_KEY=your_napkin_api_key_here
 
 # HuggingFace Token (optional — for FLUX illustrative image generation)
-VITE_HF_TOKEN=your_huggingface_token_here
 
 # OCR.space API Key (optional — for image text extraction)
 VITE_OCR_SPACE_API_KEY=your_ocr_space_api_key_here

@@ -1,6 +1,6 @@
 /* ============================================================
    layer1/visualOrchestrator.ts - Visual Generation Orchestrator
-   Decides per concept: Napkin (diagram) vs Flux (illustration).
+   Generates source-grounded Napkin diagrams for selected content.
    Caches results in storage. Fires async after content transform.
    ============================================================ */
 
@@ -9,7 +9,6 @@ import browser from "webextension-polyfill";
 import type { VisualEntry, VisualsCache, TransformationParams, ContentChunk } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { generateNapkinVisuals, generateNapkinVisualFromContent, type NapkinOptions } from "./napkinClient";
-import { generateFluxImages, type FluxResult } from "./fluxClient";
 
 /* ── Cache helpers ──────────────────────────────────────────────── */
 
@@ -52,16 +51,12 @@ async function saveVisualsCache(cache: VisualsCache): Promise<void> {
  * Generate visuals for a set of concepts.
  * Called after content transformation when useVisualAnchors is true.
  *
- * Napkin: generates diagrams/infographics for ALL concepts
- * Flux: generates illustrative images (only if useFlux is true)
- *
  * Returns VisualEntry[] ready to be sent to the content script.
  */
 export async function generateVisualsForConcepts(
   concepts: string[],
   params: TransformationParams,
   force = false,
-  useFlux = false,
 ): Promise<VisualEntry[]> {
   if (concepts.length === 0) return [];
   if (!params.useVisualAnchors && !force) return [];
@@ -91,28 +86,6 @@ export async function generateVisualsForConcepts(
     });
   }
 
-  // 2. Flux illustrative images (optional)
-  if (useFlux) {
-    try {
-      const fluxResults = await generateFluxImages(uniqueConcepts.slice(0, 3));
-      for (const [concept, result] of fluxResults) {
-        entries.push({
-          id: uuidv4(),
-          concept,
-          source: "flux",
-          format: "png",
-          dataUrl: result.dataUrl,
-          width: result.width,
-          height: result.height,
-          generatedAt: now,
-          expiresAt: now + 25 * 60 * 1000,
-        });
-      }
-    } catch (err) {
-      console.warn("[VisualOrchestrator] Flux generation failed:", err);
-    }
-  }
-
   // Cache results
   const cache = await loadVisualsCache();
   cache.entries.push(...entries);
@@ -130,7 +103,6 @@ export async function generateVisualsFromChunks(
   chunks: ContentChunk[],
   params: TransformationParams,
   force = false,
-  useFlux = false,
 ): Promise<VisualEntry[]> {
   if (chunks.length === 0) return [];
   if (!params.useVisualAnchors && !force) return [];
@@ -164,29 +136,6 @@ export async function generateVisualsFromChunks(
       });
     } else {
       console.warn("[VisualOrchestrator] Skipped chunk visual:", r.reason?.message || r.reason);
-    }
-  }
-
-  // Flux illustrative images for chunks (optional)
-  if (useFlux) {
-    const concepts = chunks.slice(0, 3).map(c => c.conceptTags[0] ?? `Section ${c.position + 1}`).filter(Boolean);
-    try {
-      const fluxResults = await generateFluxImages(concepts);
-      for (const [concept, result] of fluxResults) {
-        entries.push({
-          id: uuidv4(),
-          concept,
-          source: "flux",
-          format: "png",
-          dataUrl: result.dataUrl,
-          width: result.width,
-          height: result.height,
-          generatedAt: now,
-          expiresAt: now + 25 * 60 * 1000,
-        });
-      }
-    } catch (err) {
-      console.warn("[VisualOrchestrator] Flux chunk generation failed:", err);
     }
   }
 
@@ -235,5 +184,4 @@ export async function getCachedVisuals(concepts: string[]): Promise<VisualEntry[
     (e) => concepts.includes(e.concept) && e.expiresAt > now,
   );
 }
-
 

@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
-import { transformWebContent, transformPDF, transformLecture, transformVideoTranscript } from "./llmClient";
+import { annotateSourceBlocks } from "./llmClient";
 import type { TransformationParams, BaselineProfile, ContentChunk } from "@/types";
+import { createSourceBlocks, attachAnnotations } from "./sourceBlocks";
 
 export interface TransformInput {
   transformationParams: TransformationParams;
@@ -12,29 +13,22 @@ export async function transformContent(
   pageType: "website" | "pdf" | "video" | "lecture",
   params: TransformInput,
   sourceUrl?: string,
+  onBatch?: (chunks: ContentChunk[], append: boolean, done: boolean) => Promise<void> | void,
 ): Promise<ContentChunk[]> {
   const sourceId = sourceUrl ?? "unknown";
-  const sourceType = pageType;
-
-  let transformed: string;
-
-  switch (pageType) {
-    case "pdf":
-      transformed = await transformPDF(pageText, params);
-      break;
-    case "lecture":
-      transformed = await transformLecture(pageText, params);
-      break;
-    case "video":
-      transformed = await transformVideoTranscript(pageText, params);
-      break;
-    case "website":
-    default:
-      transformed = await transformWebContent(pageText, params);
-      break;
+  const blocks = createSourceBlocks(pageText, sourceId);
+  if (pageText.length > 120_000 || blocks.some(block => block.text.length > 20_000)) {
+    throw new Error("This material is too large for one adaptation. Select a shorter section; the original has not been changed.");
   }
-
-  return parseAnnotatedContent(transformed, sourceId, sourceType);
+  const chunks: ContentChunk[] = [];
+  for (let i = 0; i < blocks.length; i += 6) {
+    const batch = blocks.slice(i, i + 6);
+    const response = await annotateSourceBlocks(batch, params);
+    const transformed = attachAnnotations(batch, response, sourceId, pageType);
+    chunks.push(...transformed);
+    await onBatch?.(transformed, i > 0, i + 6 >= blocks.length);
+  }
+  return chunks;
 }
 
 export async function transformVideoContent(
@@ -42,9 +36,7 @@ export async function transformVideoContent(
   params: TransformInput,
   sourceUrl?: string,
 ): Promise<ContentChunk[]> {
-  const sourceId = sourceUrl ?? "unknown";
-  const transformed = await transformVideoTranscript(transcript, params);
-  return parseAnnotatedContent(transformed, sourceId, "video");
+  return transformContent(transcript, "video", params, sourceUrl);
 }
 
 export function parseAnnotatedContent(

@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { parseAnnotatedContent } from "./index";
+import { recoverSourceText, validateSourceIntegrity } from "./sourceIntegrity";
 
 describe("Layer 1 - Content Transformation Parser", () => {
   it("parses annotated content into structured chunks", () => {
@@ -54,5 +55,34 @@ The learning rate determines step size at each iteration.
     expect(chunks[0].text).toBe(raw);
     expect(chunks[0].conceptTags).toEqual([]);
     expect(chunks[0].position).toBe(0);
+  });
+});
+
+describe("Layer 1 - Source Integrity", () => {
+  const source = "Entropy measures uncertainty [1]. E = mc^2 is a formula.";
+
+  it("accepts structural annotations without changing source content", () => {
+    const annotated = `[CHUNK 1]\n[CONCEPT: Entropy]\n[DEF: Entropy]Entropy measures uncertainty [1]. [FORMULA]E = mc^2[/FORMULA] is a formula.\n[SUMMARY: Introduces entropy and a formula]`;
+
+    expect(recoverSourceText(annotated)).toBe(source);
+    expect(validateSourceIntegrity(source, annotated)).toEqual({ valid: true });
+  });
+
+  it("rejects omitted source text", () => {
+    const annotated = "[CHUNK 1] Entropy measures uncertainty [1].";
+    expect(validateSourceIntegrity(source, annotated)).toEqual({
+      valid: false,
+      reason: "source-mismatch",
+    });
+  });
+
+  it("rejects duplicated and rewritten source text", () => {
+    expect(validateSourceIntegrity(source, `${source} ${source}`).valid).toBe(false);
+    expect(validateSourceIntegrity(source, "Entropy describes uncertainty [1]. E = mc^2 is a formula.").valid).toBe(false);
+  });
+
+  it("preserves numeric citations as source content", () => {
+    expect(validateSourceIntegrity(source, `[CHUNK 1] ${source}`).valid).toBe(true);
+    expect(validateSourceIntegrity(source.replace(" [1]", ""), `[CHUNK 1] ${source}`).valid).toBe(false);
   });
 });

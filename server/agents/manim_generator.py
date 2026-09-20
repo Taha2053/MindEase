@@ -83,7 +83,7 @@ class ManimGenerator(BaseAgent):
     }
 
     def __init__(self, model: str | None = None):
-        super().__init__("manim_generator.md", model=model, max_tokens=8192)
+        super().__init__("manim_generator.md", model=model, max_tokens=8192, providers=("mistral",))
         self.examples = self._load_examples(self.EXAMPLE_FILES, self.DEFAULT_EXAMPLE)
         self.voiceover_examples = self._load_examples(
             self.VOICEOVER_EXAMPLE_FILES,

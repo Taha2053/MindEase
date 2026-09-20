@@ -1,4 +1,4 @@
-"""Base agent class with provider-switchable LLM support (Azure OpenAI / Dedalus)."""
+"""Base agent class with role-aware, provider-switchable LLM support."""
 
 import json
 import logging
@@ -10,12 +10,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Load .env file if it exists
+# Load .env file if it exists (checks both server/.env and root MindEase/.env)
 try:
     from dotenv import load_dotenv
     env_path = Path(__file__).parent.parent / ".env"
     if env_path.exists():
         load_dotenv(env_path)
+    root_env = Path(__file__).parent.parent.parent / ".env"
+    if root_env.exists():
+        load_dotenv(root_env)
 except ImportError:
     pass  # python-dotenv not installed, use system env vars
 
@@ -23,10 +26,34 @@ except ImportError:
 # Default model per provider. For Azure this is the *deployment name* you
 # created in Azure AI Foundry (defaults to the model name, e.g. "gpt-5").
 DEFAULT_DEDALUS_MODEL = "claude-sonnet-4-5"
+DEFAULT_NVIDIA_MODEL = "moonshotai/kimi-k3"
 
 
 def _azure_deployment() -> str:
     return os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-5")
+
+
+def _get_nvidia_api_key() -> str:
+    """Extract NVIDIA API key from NVIDIA_API_KEY, NVD_API_KEY, or VITE_NVD_API_KEY."""
+    return (
+        os.environ.get("NVIDIA_API_KEY")
+        or os.environ.get("NVD_API_KEY")
+        or os.environ.get("VITE_NVD_API_KEY")
+        or ""
+    ).strip()
+
+
+def _get_mistral_api_key() -> str:
+    """Extract Mistral API key from MISTRAL_API_KEY or VITE_MISTRAL_API_KEY."""
+    return (
+        os.environ.get("MISTRAL_API_KEY")
+        or os.environ.get("VITE_MISTRAL_API_KEY")
+        or ""
+    ).strip()
+
+
+def _get_deepseek_api_key() -> str:
+    return os.environ.get("DEEPSEEK_API_KEY", "").strip()
 
 
 # GPT-5 reasoning tokens count against max_completion_tokens. Agents size
@@ -35,54 +62,30 @@ def _azure_deployment() -> str:
 _AZURE_REASONING_HEADROOM = 4096
 
 
-def _detect_provider() -> str:
-    """Resolve the LLM provider from env: LLM_PROVIDER wins, else auto-detect."""
-    explicit = os.environ.get("LLM_PROVIDER", "").strip().lower()
-    if explicit in ("openai", "azure", "mistral", "dedalus"):
-        if explicit == "openai":
-            _require_openai_env()
-        elif explicit == "azure":
-            _require_azure_env()
-        elif explicit == "mistral":
-            _require_mistral_env()
-        elif explicit == "dedalus":
-            _require_dedalus_env()
-        return explicit
-    if explicit:
-        raise RuntimeError(
-            f"Unknown LLM_PROVIDER={explicit!r}. Use 'openai', 'azure', 'mistral', or 'dedalus'."
-        )
-
-    # 1. Primary: Direct OpenAI (OPENAI_API_KEY)
-    if os.environ.get("OPENAI_API_KEY"):
-        return "openai"
-
-    # 2. Azure OpenAI (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT)
-    if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
-        return "azure"
-
-    # 3. Backup: Mistral AI (MISTRAL_API_KEY)
-    if os.environ.get("MISTRAL_API_KEY"):
-        return "mistral"
-
-    # 4. Legacy fallback: Dedalus
-    if os.environ.get("DEDALUS_API_KEY"):
-        return "dedalus"
-
-    raise RuntimeError(
-        "No LLM provider configured. Please set OPENAI_API_KEY (primary), "
-        "AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT, or MISTRAL_API_KEY (backup)."
-    )
-
-
 def _require_openai_env() -> None:
     if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError("LLM_PROVIDER=openai but OPENAI_API_KEY is not set.")
 
 
+def _require_nvidia_env() -> None:
+    if not _get_nvidia_api_key():
+        raise RuntimeError(
+            "LLM_PROVIDER=nvidia but NVIDIA API key is not set. "
+            "Please set NVIDIA_API_KEY or VITE_NVD_API_KEY in .env."
+        )
+
+
 def _require_mistral_env() -> None:
-    if not os.environ.get("MISTRAL_API_KEY"):
-        raise RuntimeError("LLM_PROVIDER=mistral but MISTRAL_API_KEY is not set.")
+    if not _get_mistral_api_key():
+        raise RuntimeError(
+            "LLM_PROVIDER=mistral but Mistral API key is not set. "
+            "Please set MISTRAL_API_KEY or VITE_MISTRAL_API_KEY in .env."
+        )
+
+
+def _require_deepseek_env() -> None:
+    if not _get_deepseek_api_key():
+        raise RuntimeError("LLM_PROVIDER=deepseek but DEEPSEEK_API_KEY is not set.")
 
 
 def _require_azure_env() -> None:
@@ -97,6 +100,61 @@ def _require_azure_env() -> None:
 def _require_dedalus_env() -> None:
     if not os.environ.get("DEDALUS_API_KEY"):
         raise RuntimeError("LLM_PROVIDER=dedalus but DEDALUS_API_KEY is not set.")
+
+
+def _detect_provider() -> str:
+    """Resolve the LLM provider from env: LLM_PROVIDER wins, else auto-detect.
+    Priority order: OpenAI -> Azure -> NVIDIA (Kimi-k3) -> Mistral -> Dedalus.
+    """
+    explicit = os.environ.get("LLM_PROVIDER", "").strip().lower()
+    if explicit in ("openai", "azure", "nvidia", "nvd", "deepseek", "mistral", "dedalus"):
+        if explicit == "openai":
+            _require_openai_env()
+        elif explicit == "azure":
+            _require_azure_env()
+        elif explicit in ("nvidia", "nvd"):
+            _require_nvidia_env()
+            return "nvidia"
+        elif explicit == "mistral":
+            _require_mistral_env()
+        elif explicit == "deepseek":
+            _require_deepseek_env()
+        elif explicit == "dedalus":
+            _require_dedalus_env()
+        return explicit
+    if explicit:
+        raise RuntimeError(
+            f"Unknown LLM_PROVIDER={explicit!r}. Use 'openai', 'azure', 'nvidia', 'deepseek', 'mistral', or 'dedalus'."
+        )
+
+    # 1. Primary: Direct OpenAI (OPENAI_API_KEY)
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+
+    # 2. Azure OpenAI (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT)
+    if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
+        return "azure"
+
+    # 3. Backup 1: NVIDIA (NVIDIA_API_KEY / NVD_API_KEY / VITE_NVD_API_KEY)
+    if _get_nvidia_api_key():
+        return "nvidia"
+
+    # 4. Backup 2: Mistral AI (MISTRAL_API_KEY / VITE_MISTRAL_API_KEY)
+    if _get_mistral_api_key():
+        return "mistral"
+
+    # 5. Legacy fallback: Dedalus
+    if os.environ.get("DEDALUS_API_KEY"):
+        return "dedalus"
+
+    raise RuntimeError(
+        "No LLM provider configured. Please set OPENAI_API_KEY (primary), "
+        "AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT, "
+        "VITE_NVD_API_KEY / NVIDIA_API_KEY (backup 1), or "
+        "VITE_MISTRAL_API_KEY / MISTRAL_API_KEY (backup 2)."
+    )
+
+
 def get_provider() -> str:
     """Get the current provider name (validates env on every call)."""
     return _detect_provider()
@@ -204,7 +262,7 @@ _openai_sync_client = None
 
 
 def _get_openai_client():
-    global _openai_async_client
+    global _openai_async_client  # noqa: PLW0603 — lazy singleton cache
     if _openai_async_client is None:
         _, AsyncOpenAI = _openai_classes()
         _openai_async_client = AsyncOpenAI(
@@ -216,7 +274,7 @@ def _get_openai_client():
 
 
 def _get_openai_sync_client():
-    global _openai_sync_client
+    global _openai_sync_client  # noqa: PLW0603 — lazy singleton cache
     if _openai_sync_client is None:
         OpenAI, _ = _openai_classes()
         _openai_sync_client = OpenAI(
@@ -234,29 +292,112 @@ def _get_openai_sync_client():
 _mistral_async_client = None
 _mistral_sync_client = None
 
+_deepseek_async_client = None
+_deepseek_sync_client = None
+
+
+def _get_deepseek_client():
+    global _deepseek_async_client
+    if _deepseek_async_client is None:
+        _, AsyncOpenAI = _openai_classes()
+        _deepseek_async_client = AsyncOpenAI(
+            base_url=os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
+            api_key=_get_deepseek_api_key(),
+            timeout=300.0,
+        )
+    return _deepseek_async_client
+
+
+def _get_deepseek_sync_client():
+    global _deepseek_sync_client
+    if _deepseek_sync_client is None:
+        OpenAI, _ = _openai_classes()
+        _deepseek_sync_client = OpenAI(
+            base_url=os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
+            api_key=_get_deepseek_api_key(),
+            timeout=300.0,
+        )
+    return _deepseek_sync_client
+
 
 def _get_mistral_client():
-    global _mistral_async_client
+    global _mistral_async_client  # noqa: PLW0603 — lazy singleton cache
     if _mistral_async_client is None:
+        key = _get_mistral_api_key()
+        if not key:
+            raise RuntimeError("Mistral API key not set (checked MISTRAL_API_KEY, VITE_MISTRAL_API_KEY)")
         _, AsyncOpenAI = _openai_classes()
         _mistral_async_client = AsyncOpenAI(
             base_url=os.environ.get("MISTRAL_API_BASE", "https://api.mistral.ai/v1"),
-            api_key=os.environ["MISTRAL_API_KEY"],
+            api_key=key,
             timeout=300.0,
         )
     return _mistral_async_client
 
 
 def _get_mistral_sync_client():
-    global _mistral_sync_client
+    global _mistral_sync_client  # noqa: PLW0603 — lazy singleton cache
     if _mistral_sync_client is None:
+        key = _get_mistral_api_key()
+        if not key:
+            raise RuntimeError("Mistral API key not set (checked MISTRAL_API_KEY, VITE_MISTRAL_API_KEY)")
         OpenAI, _ = _openai_classes()
         _mistral_sync_client = OpenAI(
             base_url=os.environ.get("MISTRAL_API_BASE", "https://api.mistral.ai/v1"),
-            api_key=os.environ["MISTRAL_API_KEY"],
+            api_key=key,
             timeout=300.0,
         )
     return _mistral_sync_client
+
+
+# ---------------------------------------------------------------------------
+# NVIDIA NIM (Kimi-k3 / OpenAI-compatible endpoint)
+# ---------------------------------------------------------------------------
+
+_nvidia_async_client = None
+_nvidia_sync_client = None
+
+
+def _get_nvidia_client():
+    global _nvidia_async_client  # noqa: PLW0603 — lazy singleton cache
+    if _nvidia_async_client is None:
+        key = _get_nvidia_api_key()
+        if not key:
+            raise RuntimeError("NVIDIA API key not set (checked NVIDIA_API_KEY, NVD_API_KEY, VITE_NVD_API_KEY)")
+        _, AsyncOpenAI = _openai_classes()
+        base_url = (
+            os.environ.get("NVIDIA_BASE_URL")
+            or os.environ.get("NVIDIA_API_BASE")
+            or "https://integrate.api.nvidia.com/v1"
+        ).rstrip("/")
+        timeout = float(os.environ.get("NVIDIA_TIMEOUT", "180.0"))
+        _nvidia_async_client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=key,
+            timeout=timeout,
+        )
+    return _nvidia_async_client
+
+
+def _get_nvidia_sync_client():
+    global _nvidia_sync_client  # noqa: PLW0603 — lazy singleton cache
+    if _nvidia_sync_client is None:
+        key = _get_nvidia_api_key()
+        if not key:
+            raise RuntimeError("NVIDIA API key not set (checked NVIDIA_API_KEY, NVD_API_KEY, VITE_NVD_API_KEY)")
+        OpenAI, _ = _openai_classes()
+        base_url = (
+            os.environ.get("NVIDIA_BASE_URL")
+            or os.environ.get("NVIDIA_API_BASE")
+            or "https://integrate.api.nvidia.com/v1"
+        ).rstrip("/")
+        timeout = float(os.environ.get("NVIDIA_TIMEOUT", "180.0"))
+        _nvidia_sync_client = OpenAI(
+            base_url=base_url,
+            api_key=key,
+            timeout=timeout,
+        )
+    return _nvidia_sync_client
 
 
 # ---------------------------------------------------------------------------
@@ -290,18 +431,73 @@ def _get_client() -> None:
     return None
 
 
+def _resolve_model_for_provider(provider: str, requested_model: str | None) -> str:
+    """Map a model request to the appropriate model/deployment for the provider."""
+    if provider == "azure":
+        return _azure_model(requested_model)
+    if provider == "openai":
+        if requested_model and not requested_model.startswith(("claude", "moonshot", "mistral", "codestral", "anthropic")):
+            return requested_model
+        return os.environ.get("OPENAI_MODEL", "gpt-4o")
+    if provider == "nvidia":
+        if requested_model and requested_model.startswith("moonshotai/"):
+            return requested_model
+        return os.environ.get("NVIDIA_MODEL", DEFAULT_NVIDIA_MODEL)
+    if provider == "mistral":
+        if requested_model and (requested_model.startswith("mistral") or requested_model.startswith("codestral")):
+            return requested_model
+        return os.environ.get("MISTRAL_MODEL", "codestral-latest")
+    if provider == "deepseek":
+        return os.environ.get("DEEPSEEK_MODEL", "deepseek-reasoner")
+    if provider == "dedalus":
+        return _dedalus_model(requested_model or DEFAULT_DEDALUS_MODEL)
+    return requested_model or "gpt-4o"
+
+
 def get_model_name(model: str | None = None) -> str:
     """Get the model name for the active provider."""
-    if model:
-        return model
     provider = get_provider()
-    if provider == "azure":
-        return _azure_deployment()
+    return _resolve_model_for_provider(provider, model)
+
+
+def _is_provider_configured(provider: str) -> bool:
     if provider == "openai":
-        return os.environ.get("OPENAI_MODEL", "gpt-4o")
+        return bool(os.environ.get("OPENAI_API_KEY"))
+    if provider == "azure":
+        return bool(os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"))
+    if provider == "nvidia":
+        return bool(_get_nvidia_api_key())
     if provider == "mistral":
-        return os.environ.get("MISTRAL_MODEL", "codestral-latest")
-    return DEFAULT_DEDALUS_MODEL
+        return bool(_get_mistral_api_key())
+    if provider == "deepseek":
+        return bool(_get_deepseek_api_key())
+    if provider == "dedalus":
+        return bool(os.environ.get("DEDALUS_API_KEY"))
+    return False
+
+
+def _get_fallback_chain(primary_provider: str) -> list[str]:
+    """
+    Build ordered provider chain: primary -> backups in priority order.
+    Fallback contract: OpenAI -> NVIDIA (Kimi-k3) -> Mistral -> Dedalus.
+    """
+    priority_order = ["openai", "azure", "nvidia", "mistral", "dedalus"]
+
+    chain = [primary_provider]
+    for p in priority_order:
+        if p not in chain and _is_provider_configured(p):
+            chain.append(p)
+
+    return chain
+
+
+def _configured_role_chain(preferred: tuple[str, ...]) -> list[str]:
+    """Return only configured providers, preserving a role's declared order."""
+    chain = [provider for provider in preferred if _is_provider_configured(provider)]
+    if not chain:
+        raise RuntimeError(f"None of the required providers are configured: {', '.join(preferred)}")
+    return chain
+
 
 # ---------------------------------------------------------------------------
 # Standalone LLM call helpers (usable outside BaseAgent, e.g. validators)
@@ -315,77 +511,82 @@ def _with_trace_name(kwargs: dict, name: str | None) -> dict:
     return kwargs
 
 
-async def call_llm(
+async def _execute_provider_call(
+    provider: str,
+    resolved_model: str,
     prompt: str,
-    model: str | None = None,
-    system_prompt: str = "",
-    max_tokens: int = 4096,
-    name: str | None = None,
-    json_mode: bool = False,
+    system_prompt: str,
+    max_tokens: int,
+    name: str | None,
+    json_mode: bool,
 ) -> str:
-    """Async LLM call routed through the configured provider."""
-    provider = get_provider()
-    input_words = len(prompt.split())
-    t0 = time.monotonic()
-
-    if provider in ("openai", "mistral"):
+    if provider in ("openai", "deepseek", "mistral", "nvidia"):
         if provider == "openai":
-            resolved = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
             client = _get_openai_client()
+        elif provider == "nvidia":
+            client = _get_nvidia_client()
+        elif provider == "deepseek":
+            client = _get_deepseek_client()
         else:
-            resolved = model or os.environ.get("MISTRAL_MODEL", "codestral-latest")
             client = _get_mistral_client()
 
-        logger.info(f"[LLM] Calling {provider}/{resolved} ({input_words} input words, max_tokens={max_tokens})")
-        try:
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": prompt})
-            kwargs = {
-                "model": resolved,
-                "messages": messages,
-                "max_tokens": max_tokens,
-            }
-            if json_mode:
-                kwargs["response_format"] = {"type": "json_object"}
-            resp = await client.chat.completions.create(
-                **_with_trace_name(kwargs, name)
-            )
-            output = resp.choices[0].message.content or ""
-            elapsed = time.monotonic() - t0
-            logger.info(f"[LLM] {provider}/{resolved} responded in {elapsed:.1f}s ({len(output.split())} output words)")
-            return output
-        except Exception as e:
-            elapsed = time.monotonic() - t0
-            logger.error(f"[LLM] {provider}/{resolved} FAILED after {elapsed:.1f}s: {type(e).__name__}: {e}")
-            raise
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        token_cap = max_tokens
+        if provider == "nvidia":
+            nvidia_max = int(os.environ.get("NVIDIA_MAX_TOKENS", "16384"))
+            token_cap = min(max(max_tokens, nvidia_max), 16384)
+
+        kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": messages,
+            "max_tokens": token_cap,
+        }
+        if json_mode and provider not in ("nvidia", "deepseek"):
+            kwargs["response_format"] = {"type": "json_object"}
+
+        if provider == "nvidia":
+            if os.environ.get("NVIDIA_SEED") is not None:
+                kwargs["seed"] = int(os.environ["NVIDIA_SEED"])
+            if os.environ.get("NVIDIA_TEMPERATURE") is not None:
+                kwargs["temperature"] = float(os.environ["NVIDIA_TEMPERATURE"])
+            if os.environ.get("NVIDIA_REASONING_EFFORT"):
+                kwargs["reasoning_effort"] = os.environ["NVIDIA_REASONING_EFFORT"]
+
+        stream_mode = (
+            provider == "nvidia"
+            and os.environ.get("NVIDIA_STREAM", "false").lower() in ("true", "1", "yes")
+        )
+
+        if stream_mode:
+            kwargs["stream"] = True
+            stream = await client.chat.completions.create(**_with_trace_name(kwargs, name))
+            chunks = []
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    chunks.append(chunk.choices[0].delta.content)
+            return "".join(chunks)
+        else:
+            resp = await client.chat.completions.create(**_with_trace_name(kwargs, name))
+            return resp.choices[0].message.content or ""
 
     if provider == "azure":
-        resolved = _azure_model(model)
-        logger.info(f"[LLM] Calling azure/{resolved} ({input_words} input words, max_tokens={max_tokens})")
-        try:
-            client = _get_azure_client()
-            resp = await client.chat.completions.create(
-                **_with_trace_name(
-                    _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens, json_mode),
-                    name,
-                )
+        client = _get_azure_client()
+        resp = await client.chat.completions.create(
+            **_with_trace_name(
+                _azure_request_kwargs(resolved_model, prompt, system_prompt, max_tokens, json_mode),
+                name,
             )
-            output = resp.choices[0].message.content or ""
-            elapsed = time.monotonic() - t0
-            logger.info(f"[LLM] azure/{resolved} responded in {elapsed:.1f}s ({len(output.split())} output words)")
-            return output
-        except Exception as e:
-            elapsed = time.monotonic() - t0
-            logger.error(f"[LLM] azure/{resolved} FAILED after {elapsed:.1f}s: {type(e).__name__}: {e}")
-            raise
+        )
+        return resp.choices[0].message.content or ""
 
-    dedalus_model = _dedalus_model(model or DEFAULT_DEDALUS_MODEL)
-    if json_mode:
-        logger.warning("[LLM] json_mode requested but the Dedalus provider cannot enforce it; relying on the prompt")
-    logger.info(f"[LLM] Calling {dedalus_model} ({input_words} input words, max_tokens={max_tokens})")
-    try:
+    if provider == "dedalus":
+        dedalus_model = _dedalus_model(resolved_model or DEFAULT_DEDALUS_MODEL)
+        if json_mode:
+            logger.warning("[LLM] json_mode requested but the Dedalus provider cannot enforce it; relying on the prompt")
         runner = _get_dedalus_runner()
         result = await runner.run(
             input=prompt,
@@ -393,14 +594,157 @@ async def call_llm(
             instructions=system_prompt,
             max_tokens=max_tokens,
         )
-        elapsed = time.monotonic() - t0
-        output = result.final_output or ""
-        logger.info(f"[LLM] {dedalus_model} responded in {elapsed:.1f}s ({len(output.split())} output words)")
-        return output
-    except Exception as e:
-        elapsed = time.monotonic() - t0
-        logger.error(f"[LLM] {dedalus_model} FAILED after {elapsed:.1f}s: {type(e).__name__}: {e}")
-        raise
+        return result.final_output or ""
+
+    raise RuntimeError(f"Unsupported provider: {provider}")
+
+
+def _execute_provider_call_sync(
+    provider: str,
+    resolved_model: str,
+    prompt: str,
+    system_prompt: str,
+    max_tokens: int,
+    name: str | None,
+    json_mode: bool,
+) -> str:
+    if provider in ("openai", "deepseek", "mistral", "nvidia"):
+        if provider == "openai":
+            client = _get_openai_sync_client()
+        elif provider == "nvidia":
+            client = _get_nvidia_sync_client()
+        elif provider == "deepseek":
+            client = _get_deepseek_sync_client()
+        else:
+            client = _get_mistral_sync_client()
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        token_cap = max_tokens
+        if provider == "nvidia":
+            nvidia_max = int(os.environ.get("NVIDIA_MAX_TOKENS", "16384"))
+            token_cap = min(max(max_tokens, nvidia_max), 16384)
+
+        kwargs: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": messages,
+            "max_tokens": token_cap,
+        }
+        if json_mode and provider not in ("nvidia", "deepseek"):
+            kwargs["response_format"] = {"type": "json_object"}
+
+        if provider == "nvidia":
+            if os.environ.get("NVIDIA_SEED") is not None:
+                kwargs["seed"] = int(os.environ["NVIDIA_SEED"])
+            if os.environ.get("NVIDIA_TEMPERATURE") is not None:
+                kwargs["temperature"] = float(os.environ["NVIDIA_TEMPERATURE"])
+            if os.environ.get("NVIDIA_REASONING_EFFORT"):
+                kwargs["reasoning_effort"] = os.environ["NVIDIA_REASONING_EFFORT"]
+
+        stream_mode = (
+            provider == "nvidia"
+            and os.environ.get("NVIDIA_STREAM", "false").lower() in ("true", "1", "yes")
+        )
+
+        if stream_mode:
+            kwargs["stream"] = True
+            stream = client.chat.completions.create(**_with_trace_name(kwargs, name))
+            chunks = []
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                    chunks.append(chunk.choices[0].delta.content)
+            return "".join(chunks)
+        else:
+            resp = client.chat.completions.create(**_with_trace_name(kwargs, name))
+            return resp.choices[0].message.content or ""
+
+    if provider == "azure":
+        client = _get_azure_sync_client()
+        resp = client.chat.completions.create(
+            **_with_trace_name(
+                _azure_request_kwargs(resolved_model, prompt, system_prompt, max_tokens, json_mode),
+                name,
+            )
+        )
+        return resp.choices[0].message.content or ""
+
+    if provider == "dedalus":
+        import asyncio
+        if json_mode:
+            logger.warning("[LLM] json_mode requested but the Dedalus provider cannot enforce it; relying on the prompt")
+        runner = _get_dedalus_runner()
+        result = asyncio.run(runner.run(
+            input=prompt,
+            model=_dedalus_model(resolved_model or DEFAULT_DEDALUS_MODEL),
+            instructions=system_prompt,
+            max_tokens=max_tokens,
+        ))
+        return result.final_output or ""
+
+    raise RuntimeError(f"Unsupported provider: {provider}")
+
+
+async def call_llm(
+    prompt: str,
+    model: str | None = None,
+    system_prompt: str = "",
+    max_tokens: int = 4096,
+    name: str | None = None,
+    json_mode: bool = False,
+    providers: tuple[str, ...] | None = None,
+) -> str:
+    """Async LLM call routed through the configured provider with automatic fallback:
+    OpenAI -> NVIDIA (Kimi-k3) -> Mistral -> Dedalus.
+    """
+    primary_provider = get_provider() if providers is None else None
+    chain = _get_fallback_chain(primary_provider) if primary_provider else _configured_role_chain(providers)
+    input_words = len(prompt.split())
+    last_error: Exception | None = None
+
+    for i, provider in enumerate(chain):
+        t0 = time.monotonic()
+        resolved = _resolve_model_for_provider(provider, model)
+        logger.info(
+            f"[LLM] Attempt {i+1}/{len(chain)}: Calling {provider}/{resolved} "
+            f"({input_words} input words, max_tokens={max_tokens})"
+        )
+        try:
+            output = await _execute_provider_call(
+                provider=provider,
+                resolved_model=resolved,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                max_tokens=max_tokens,
+                name=name,
+                json_mode=json_mode,
+            )
+            elapsed = time.monotonic() - t0
+            logger.info(
+                f"[LLM] {provider}/{resolved} responded in {elapsed:.1f}s "
+                f"({len(output.split())} output words)"
+            )
+            return output
+        except Exception as e:
+            elapsed = time.monotonic() - t0
+            last_error = e
+            next_provider = chain[i + 1] if i + 1 < len(chain) else None
+            if next_provider:
+                logger.warning(
+                    f"[LLM] {provider}/{resolved} FAILED after {elapsed:.1f}s: "
+                    f"{type(e).__name__}: {e}. Falling back to {next_provider}..."
+                )
+            else:
+                logger.error(
+                    f"[LLM] {provider}/{resolved} FAILED after {elapsed:.1f}s: "
+                    f"{type(e).__name__}: {e}. No more fallback providers available."
+                )
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("No LLM provider available to execute call.")
 
 
 def call_llm_sync(
@@ -410,57 +754,57 @@ def call_llm_sync(
     max_tokens: int = 4096,
     name: str | None = None,
     json_mode: bool = False,
+    providers: tuple[str, ...] | None = None,
 ) -> str:
-    """Synchronous LLM call routed through the configured provider."""
-    provider = get_provider()
+    """Sync LLM call routed through the configured provider with automatic fallback:
+    OpenAI -> NVIDIA (Kimi-k3) -> Mistral -> Dedalus.
+    """
+    primary_provider = get_provider() if providers is None else None
+    chain = _get_fallback_chain(primary_provider) if primary_provider else _configured_role_chain(providers)
+    input_words = len(prompt.split())
+    last_error: Exception | None = None
 
-    if provider in ("openai", "mistral"):
-        if provider == "openai":
-            resolved = model or os.environ.get("OPENAI_MODEL", "gpt-4o")
-            client = _get_openai_sync_client()
-        else:
-            resolved = model or os.environ.get("MISTRAL_MODEL", "codestral-latest")
-            client = _get_mistral_sync_client()
-
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        kwargs = {
-            "model": resolved,
-            "messages": messages,
-            "max_tokens": max_tokens,
-        }
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
-        resp = client.chat.completions.create(
-            **_with_trace_name(kwargs, name)
+    for i, provider in enumerate(chain):
+        t0 = time.monotonic()
+        resolved = _resolve_model_for_provider(provider, model)
+        logger.info(
+            f"[LLM] Attempt {i+1}/{len(chain)}: Calling {provider}/{resolved} "
+            f"({input_words} input words, max_tokens={max_tokens})"
         )
-        return resp.choices[0].message.content or ""
-
-    if provider == "azure":
-        resolved = _azure_model(model)
-        client = _get_azure_sync_client()
-        resp = client.chat.completions.create(
-            **_with_trace_name(
-                _azure_request_kwargs(resolved, prompt, system_prompt, max_tokens, json_mode),
-                name,
+        try:
+            output = _execute_provider_call_sync(
+                provider=provider,
+                resolved_model=resolved,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                max_tokens=max_tokens,
+                name=name,
+                json_mode=json_mode,
             )
-        )
-        return resp.choices[0].message.content or ""
-    if json_mode:
-        logger.warning("[LLM] json_mode requested but the Dedalus provider cannot enforce it; relying on the prompt")
+            elapsed = time.monotonic() - t0
+            logger.info(
+                f"[LLM] {provider}/{resolved} responded in {elapsed:.1f}s "
+                f"({len(output.split())} output words)"
+            )
+            return output
+        except Exception as e:
+            elapsed = time.monotonic() - t0
+            last_error = e
+            next_provider = chain[i + 1] if i + 1 < len(chain) else None
+            if next_provider:
+                logger.warning(
+                    f"[LLM] {provider}/{resolved} FAILED after {elapsed:.1f}s: "
+                    f"{type(e).__name__}: {e}. Falling back to {next_provider}..."
+                )
+            else:
+                logger.error(
+                    f"[LLM] {provider}/{resolved} FAILED after {elapsed:.1f}s: "
+                    f"{type(e).__name__}: {e}. No more fallback providers available."
+                )
 
-    import asyncio
-
-    runner = _get_dedalus_runner()
-    result = asyncio.run(runner.run(
-        input=prompt,
-        model=_dedalus_model(model or DEFAULT_DEDALUS_MODEL),
-        instructions=system_prompt,
-        max_tokens=max_tokens,
-    ))
-    return result.final_output or ""
+    if last_error:
+        raise last_error
+    raise RuntimeError("No LLM provider available to execute call.")
 
 
 # An escaped pair is consumed whole (first alternative) so its second
@@ -515,18 +859,19 @@ async def call_llm_json(
     system_prompt: str = "",
     max_tokens: int = 4096,
     name: str | None = None,
+    providers: tuple[str, ...] | None = None,
 ) -> dict:
     """JSON-mode call with one repair retry — the single implementation the
     agents and the ingestion organizer share (two copies had already drifted:
     one retry suffix forgot the double-quote rule)."""
     text = await call_llm(prompt, model=model, system_prompt=system_prompt,
-                          max_tokens=max_tokens, name=name, json_mode=True)
+                          max_tokens=max_tokens, name=name, json_mode=True, providers=providers)
     try:
         return parse_json_response(text)
     except ValueError as first:
         logger.warning("%s returned unparseable JSON; retrying once", name or "llm")
         text = await call_llm(prompt + _JSON_RETRY_SUFFIX, model=model, system_prompt=system_prompt,
-                              max_tokens=max_tokens, name=name, json_mode=True)
+                              max_tokens=max_tokens, name=name, json_mode=True, providers=providers)
         try:
             return parse_json_response(text)
         except ValueError as second:
@@ -547,9 +892,11 @@ class BaseAgent:
         model: str | None = None,
         max_tokens: int = 4096,
         system_prompt_file: str = "system/manim_reference.md",
+        providers: tuple[str, ...] | None = None,
     ):
-        self._provider = get_provider()
-        self.model = get_model_name(model)
+        self.providers = providers
+        self._provider = providers[0] if providers else get_provider()
+        self.model = _resolve_model_for_provider(self._provider, model)
         self.max_tokens = max_tokens
         # Only the code generator needs the 17KB Manim reference; the JSON
         # agents (analyzer, planner) get a short analyst persona instead.
@@ -564,6 +911,12 @@ class BaseAgent:
         # Log active provider
         if self._provider == "azure":
             print(f"☁️  Azure OpenAI → {_azure_model(self.model)}")
+        elif self._provider == "nvidia":
+            print(f"⚡ NVIDIA NIM → {self.model}")
+        elif self._provider == "mistral":
+            print(f"🌪️ Mistral AI → {self.model}")
+        elif self._provider == "openai":
+            print(f"🟢 Direct OpenAI → {self.model}")
         else:
             print(f"🔮 Dedalus SDK → anthropic/{self.model}")
 
@@ -618,6 +971,7 @@ class BaseAgent:
             system_prompt=kwargs.get("system_prompt") or self.system_prompt,
             max_tokens=kwargs.get("max_tokens", self.max_tokens),
             name=self._trace_name,
+            providers=getattr(self, "providers", None),
         )
 
     def _extract_code_block(self, content: str, language: str = "python") -> str:
@@ -665,6 +1019,7 @@ class BaseAgent:
             max_tokens=max_tokens or self.max_tokens,
             name=self._trace_name,
             json_mode=json_mode,
+            providers=getattr(self, "providers", None),
         )
 
     def _call_llm_sync(
@@ -680,6 +1035,7 @@ class BaseAgent:
             system_prompt=system_prompt or self.system_prompt,
             max_tokens=max_tokens or self.max_tokens,
             name=self._trace_name,
+            providers=getattr(self, "providers", None),
         )
 
     # ------------------------------------------------------------------

@@ -86,9 +86,9 @@ export async function handleBehaviorSignal(
   const profile = await getProfile();
   if (!profile) return;
 
-  /* Update RL agent */
-  const rlAgent = await ensureAgent();
-  const { reward, updatedProfile, actionTaken } = await rlAgent.processSignal(profile, signal);
+  // Passive interactions are ambiguous. Keep them as session observations;
+  // do not reward Q-learning or silently change the learner's preferences.
+  const updatedProfile = { ...profile, transformationParams: { ...profile.transformationParams } };
 
   /* Apply user overrides on top of RL params (user always wins) */
   const overrides = await loadOverrides();
@@ -99,9 +99,7 @@ export async function handleBehaviorSignal(
     );
   }
 
-  /* Generate and store human-readable explanation for this adaptation */
-  const explanation = generateExplanation(actionTaken, updatedProfile.rlState, updatedProfile.baseline, updatedProfile.transformationParams);
-  await recordExplanation(explanation);
+  // Recommendations explain declared preferences at the point of acceptance.
 
   /* Update session stats */
   const stats = await getSessionStats();

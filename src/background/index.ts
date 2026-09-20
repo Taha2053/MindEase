@@ -16,8 +16,10 @@ import type {
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { setupLayer2Listeners, endSession as endLayer2Session, getCurrentProfile } from "@/layer2";
-import { startSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
+import { startSession, restoreSession, endSession as endLayer3Session, recordEvent } from "@/layer3/index";
 import { transformContent } from "@/layer1/index";
+import { isTransformRequest } from "@/layer1/transformRequest";
+import { isExcludedPage } from "@/utils/pagePrivacy";
 import { classifyContent, explainSelection } from "@/layer1/llmClient";
 import { generateVisualsForConcepts, generateVisualsFromChunks } from "@/layer1/visualOrchestrator";
 import { ocrImageUrl, ocrImageBase64 } from "@/layer1/ocrClient";
@@ -158,8 +160,7 @@ sessionManager.onLayer2EndSession = async () => {
   return endLayer2Session();
 };
 
-// Initialize - try to restore workspace from storage
-sessionManager.init();
+const sessionReady = Promise.all([sessionManager.init(), restoreSession()]);
 
 /* ── Context Menus ─────────────────────────────────────────────────────────── */
 
@@ -288,13 +289,22 @@ browser.tabs.onRemoved.addListener(async (tabId) => {
 
 browser.runtime.onMessage.addListener(
   (message: unknown, sender, sendResponse) => {
+    if (!message || typeof message !== "object") {
+      sendResponse({ received: false });
+      return true;
+    }
     const msg = message as ExtensionMessage;
 
     if (msg.type === "TRANSFORM_CONTENT") {
-      const { text, pageType } = msg.payload as {
-        text: string;
-        pageType: "website" | "pdf" | "lecture";
-      };
+      if (!sender.tab?.url || isExcludedPage(sender.tab.url, sender.tab.incognito)) {
+        sendResponse({ received: false, error: "Adaptation is unavailable on this page." });
+        return true;
+      }
+      if (!isTransformRequest(msg.payload)) {
+        sendResponse({ received: false, error: "Choose an adaptation before sending valid source content." });
+        return true;
+      }
+      const { text, pageType, adaptation } = msg.payload;
       const tabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
 
       if (!tabId) {
@@ -303,6 +313,7 @@ browser.runtime.onMessage.addListener(
       }
 
       (async () => {
+        await sessionReady;
         // Register tab in workspace if not already
         const sourceType = pageType === "lecture" ? "website" : pageType;
         const url = (sender as { tab?: { url?: string } } | undefined)?.tab?.url ?? "";
@@ -336,6 +347,17 @@ browser.runtime.onMessage.addListener(
               transformationParams: fullProfile.transformationParams,
               baseline: fullProfile.baseline,
             },
+            url,
+            async (batch, append, done) => {
+              await browser.tabs.sendMessage(tabId, {
+                type: "TRANSFORMED_CONTENT",
+                chunks: batch,
+                baseline: fullProfile.baseline,
+                transformationParams: fullProfile.transformationParams,
+                append,
+                done,
+              }).catch(() => {});
+            },
           );
           console.log("[Background] Transform complete, chunks:", chunks.length);
 
@@ -347,25 +369,9 @@ browser.runtime.onMessage.addListener(
           await browser.storage.local.set({
             [STORAGE_KEYS.SESSION_CHUNKS]: [...existingChunks, ...uniqueNew],
           });
-          // Send chunks in progressive batches: first batch immediately, then append
-          const batchSize = 3;
-          for (let i = 0; i < chunks.length; i += batchSize) {
-            const batch = chunks.slice(i, i + batchSize);
-            await browser.tabs.sendMessage(tabId, {
-              type: "TRANSFORMED_CONTENT",
-              chunks: batch,
-              baseline: fullProfile.baseline,
-              transformationParams: fullProfile.transformationParams,
-              append: i > 0,
-              done: i + batchSize >= chunks.length,
-            }).catch(() => {});
-            if (i + batchSize < chunks.length) {
-              await new Promise(resolve => setTimeout(resolve, 150));
-            }
-          }
-
           // Auto-generate visuals from chunk content in the background
-          generateVisualsFromChunks(chunks, fullProfile.transformationParams, true, fullProfile.baseline?.formatPreference === "visual")
+          const wantsVisuals = adaptation === "visual" || adaptation === "all";
+          if (wantsVisuals) generateVisualsFromChunks(chunks, fullProfile.transformationParams, true)
             .then((visuals) => {
               return browser.tabs.sendMessage(tabId, {
                 type: "VISUALS_READY",
@@ -402,7 +408,7 @@ browser.runtime.onMessage.addListener(
         const title = String(payload?.title ?? (sender as { tab?: { title?: string } } | undefined)?.tab?.title ?? "");
         const userId = String(payload?.userId ?? "guest");
 
-        browser.storage.local.get(STORAGE_KEYS.PROFILE).then((res) => {
+        sessionReady.then(() => browser.storage.local.get(STORAGE_KEYS.PROFILE)).then((res) => {
           const stored = res[STORAGE_KEYS.PROFILE] as Record<string, unknown> | undefined;
           const profile: CognitiveProfile = (stored?.transformationParams
             ? stored
@@ -415,6 +421,7 @@ browser.runtime.onMessage.addListener(
         // Register tab in workspace (creates workspace session if none exists)
         if (tabId) {
           (async () => {
+            await sessionReady;
             await sessionManager.registerTab(tabId, url, sourceType === "lecture" ? "website" : sourceType, title);
           })();
         }
@@ -423,7 +430,9 @@ browser.runtime.onMessage.addListener(
 
       case "SESSION_END": {
         console.log("[Background] Session ended via user action.");
-        sessionManager.endSession();
+        sessionReady.then(() => sessionManager.endSession()).catch((err) => {
+          console.warn("[Background] Session end failed:", err);
+        });
         break;
       }
 
@@ -505,18 +514,17 @@ browser.runtime.onMessage.addListener(
       }
 
       case "GENERATE_VISUALS": {
-        const payload = msg.payload as { concepts?: string[]; chunks?: ContentChunk[]; useFlux?: boolean };
+        const payload = msg.payload as { concepts?: string[]; chunks?: ContentChunk[] };
         (async () => {
           try {
             const result = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
             const stored = result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined;
             const params = stored?.transformationParams ?? DEFAULT_FULL_PROFILE.transformationParams;
-            const useFlux = payload.useFlux ?? (stored?.baseline?.formatPreference === "visual");
             let visuals: VisualEntry[] | undefined;
             if (payload.chunks?.length) {
-              visuals = await generateVisualsFromChunks(payload.chunks, params, true, useFlux);
+              visuals = await generateVisualsFromChunks(payload.chunks, params, true);
             } else if (payload.concepts?.length) {
-              visuals = await generateVisualsForConcepts(payload.concepts, params, true, useFlux);
+              visuals = await generateVisualsForConcepts(payload.concepts, params, true);
             }
             sendResponse({ type: "VISUALS_READY", visuals: visuals ?? [] });
           } catch (err) {

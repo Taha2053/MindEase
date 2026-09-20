@@ -36,7 +36,7 @@ class VisualizationPlanner(BaseAgent):
     """
     
     def __init__(self, model: str | None = None):
-        super().__init__("visualization_planner.md", model=model, system_prompt_file="system/json_analyst.md")
+        super().__init__("visualization_planner.md", model=model, system_prompt_file="system/json_analyst.md", providers=("deepseek", "mistral"))
     
     async def run(
         self,

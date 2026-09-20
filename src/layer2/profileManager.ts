@@ -17,8 +17,8 @@ import type {
 } from "@/types";
 import {
   STORAGE_KEYS,
-
 } from "@/types";
+import { syncNow } from "@/utils/supabase";
 
 /* ─── Default RL State ─── */
 function defaultRLState(): RLState {
@@ -122,6 +122,7 @@ export async function createProfile(
 
   try {
     await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
+    await syncNow().catch(() => {});
   } catch (err) {
     console.warn("[MindEase] Profile create failed:", err);
   }
@@ -137,6 +138,7 @@ export async function updateProfile(profile: FullCognitiveProfile): Promise<void
   profile.updatedAt = Date.now();
   try {
     await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
+    await syncNow().catch(() => {});
   } catch (err) {
     console.warn("[MindEase] Profile save failed:", err);
   }

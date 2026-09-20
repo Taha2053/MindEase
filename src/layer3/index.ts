@@ -14,6 +14,7 @@ import type {
 } from "@/types";
 import { SessionTracker }  from "./sessionTracker";
 import { assembleArtifact } from "./knowledgeArtifact";
+import { clearActiveSession } from "./storage";
 
 // ── Active session tracker (singleton per session) ────────────────────────────
 let tracker: SessionTracker | null = null;
@@ -25,12 +26,21 @@ let tracker: SessionTracker | null = null;
  * Called by the background worker when a SESSION_START message arrives or tab opens.
  */
 export function startSession(userId: string, profile: CognitiveProfile, sessionId?: string): void {
+  if (tracker && tracker.getLog().endTime === null
+    && tracker.getLog().userId === userId
+    && (!sessionId || tracker.getLog().sessionId === sessionId)) return;
   tracker = new SessionTracker(userId, profile, sessionId);
   console.log("[Layer 3] Session started:", tracker.getLog().sessionId);
 }
 
 /** Check if Layer 3 currently has an active tracker */
 export function hasActiveSession(): boolean {
+  return tracker !== null;
+}
+
+export async function restoreSession(): Promise<boolean> {
+  if (tracker) return true;
+  tracker = await SessionTracker.restore();
   return tracker !== null;
 }
 
@@ -56,6 +66,7 @@ export async function endSession(
 
   // Close the session log
   const log     = tracker.endSession();
+  await clearActiveSession();
   const profile = log.profile;
 
   // Run the full synthesis pipeline with workspace data
