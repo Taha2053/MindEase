@@ -22,3 +22,5 @@ server/zed_AIAYN/
 server/**/*.mp4
 server/**/*.wav
 server/**/*.mp3
+
+server/data/diagrams.sqlite3*

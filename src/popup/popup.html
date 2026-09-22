@@ -11,37 +11,37 @@
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
       [data-theme="dark"] {
-        --bg-base:        #010736;
-        --bg-surface:     #010736;
-        --bg-surface-alt: #0B1241;
-        --border:         #807A77;
-        --border-hover:   #F7E6CA;
-        --text-primary:   #F7E6CA;
-        --text-dim:       #D8CDBA;
-        --text-muted:     #B9B1A7;
-        --accent:         #F7E6CA;
-        --accent-gradient:  linear-gradient(135deg, #F7E6CA, #F7E6CA);
-        --danger:         #f87171;
-        --success:        #4ade80;
-        --warning:        #facc15;
+        --bg-base:        #171717;
+        --bg-surface:     #171717;
+        --bg-surface-alt: #171717;
+        --border:         #d4d4d4;
+        --border-hover:   #d4d4d4;
+        --text-primary:   #d4d4d4;
+        --text-dim:       #d4d4d4;
+        --text-muted:     #d4d4d4;
+        --accent:         #d4d4d4;
+        --accent-gradient:  linear-gradient(135deg, #d4d4d4, #d4d4d4);
+        --danger:         #d4d4d4;
+        --success:        #d4d4d4;
+        --warning:        #d4d4d4;
         --font-family:    'Inter', system-ui, -apple-system, sans-serif;
         --shadow-glow:    0 8px 32px rgba(247, 230, 202,0.25);
       }
 
       [data-theme="light"] {
-        --bg-base:        #F7E6CA;
-        --bg-surface:     #F7E6CA;
-        --bg-surface-alt: #FFFBE8;
-        --border:         #AAC4F5;
-        --border-hover:   #0F52BA;
-        --text-primary:   #2D2B55;
-        --text-dim:       #6E7FA8;
-        --text-muted:     #94A8CC;
-        --accent:         #0F52BA;
-        --accent-gradient:  linear-gradient(135deg, #0F52BA, #AAC4F5);
-        --danger:         #dc2626;
-        --success:        #16a34a;
-        --warning:        #ca8a04;
+        --bg-base:        #d4d4d4;
+        --bg-surface:     #d4d4d4;
+        --bg-surface-alt: #d4d4d4;
+        --border:         #171717;
+        --border-hover:   #171717;
+        --text-primary:   #171717;
+        --text-dim:       #171717;
+        --text-muted:     #171717;
+        --accent:         #171717;
+        --accent-gradient:  linear-gradient(135deg, #171717, #171717);
+        --danger:         #171717;
+        --success:        #171717;
+        --warning:        #171717;
         --font-family:    'Inter', system-ui, -apple-system, sans-serif;
         --shadow-glow:    0 8px 24px rgba(140,169,255,0.20);
       }
@@ -86,7 +86,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #010736;
+        color: #171717;
         flex-shrink: 0;
       }
       .header-text { flex: 1; }
@@ -146,10 +146,10 @@
         white-space: nowrap;
       }
       .session-btn:hover { border-color: var(--border-hover); }
-      .session-btn.start { background: #a8e6cf; color: #2d6a4f; border-color: #a8e6cf; font-weight: 600; }
-      .session-btn.start:hover { background: #95d5b2; }
-      .session-btn.stop { background: #f5b7b1; color: #943126; border-color: #f5b7b1; font-weight: 600; }
-      .session-btn.stop:hover { background: #f1948a; }
+      .session-btn.start,
+      .session-btn.stop { background: var(--accent); color: var(--bg-base); border-color: var(--accent); font-weight: 600; }
+      .session-btn.start:hover,
+      .session-btn.stop:hover { opacity: 0.84; }
       .session-btn.resume { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
       .session-btn.resume:hover { opacity: 0.85; }
 
@@ -250,7 +250,7 @@
         transition: all 0.15s; font-family: var(--font-family);
       }
       .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-      .btn-primary { background: var(--accent-gradient); color: #010736; font-weight: 600; }
+      .btn-primary { background: var(--accent-gradient); color: var(--bg-base); font-weight: 600; }
       .btn-primary:hover { opacity: 0.9; }
       .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
       .btn-ghost:hover { color: var(--text-primary); border-color: var(--border-hover); }
@@ -303,7 +303,7 @@
         white-space: nowrap;
       }
       .control-btn:hover { border-color: var(--border-hover); color: var(--text-primary); }
-      .control-btn.active { background: var(--accent); color: #010736; border-color: var(--accent); }
+      .control-btn.active { background: var(--accent); color: var(--bg-base); border-color: var(--accent); }
       .control-btn.active-override { background: var(--warning); color: #000; border-color: var(--warning); }
 
       .controls-footer { display: flex; gap: 6px; margin-top: 8px; }
@@ -584,7 +584,7 @@
       .api-cancel-btn:hover { background: var(--bg-surface-alt); color: var(--text-primary); }
       .api-save-btn {
         background: var(--accent-gradient);
-        border: none; color: #010736; font-size: 0.75rem; font-weight: 600;
+        border: none; color: var(--bg-base); font-size: 0.75rem; font-weight: 600;
         padding: 7px 16px; border-radius: 8px; cursor: pointer;
         display: flex; align-items: center; gap: 6px;
         transition: transform 0.1s, opacity 0.15s;
@@ -595,7 +595,8 @@
 
       .spin { animation: spin 0.8s linear infinite; }
     </style>
-  </head>
+  <link rel="stylesheet" href="../styles/glass.css" />
+</head>
   <body>
     <div id="app"></div>
     <script type="module" src="./popup.tsx"></script>

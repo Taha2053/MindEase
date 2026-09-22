@@ -200,8 +200,11 @@ export async function createProfileFromOnboarding(
 
 /* ─── Setup all message listeners (called by background) ─── */
 export function setupLayer2Listeners(): void {
-  browser.runtime.onMessage.addListener(async (message: unknown) => {
+  browser.runtime.onMessage.addListener((message: unknown) => {
+    if (!message || typeof message !== "object") return false;
     const msg = message as Record<string, unknown>;
+    if (!["BEHAVIOR_SIGNAL", "GET_PROFILE", "ONBOARDING_COMPLETE", "CONTROLS_CHANGED", "RESET_PROFILE"].includes(String(msg.type))) return false;
+    return (async () => {
 
     switch (msg.type) {
       case "BEHAVIOR_SIGNAL": {
@@ -248,6 +251,7 @@ export function setupLayer2Listeners(): void {
       default:
         return undefined; /* Not our message */
     }
+    })();
   });
 
   console.log("[MindEase Layer2] Message listeners registered.");

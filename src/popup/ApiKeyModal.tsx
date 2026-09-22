@@ -134,7 +134,7 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
             Configure your free or custom API keys. Keys are saved locally in your browser so you never need to rebuild or touch a .env file.
           </p>
 
-          {/* ── Section: Mistral AI (Required for freemium core) ── */}
+          {/* ── Section: Mistral AI ── */}
           <div className="api-input-group">
             <div className="api-label-row">
               <label htmlFor="mistral-key" className="api-label required">
@@ -269,7 +269,7 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
 
           {/* ── Section: Premium Backend Service ── */}
           <div className="api-divider">
-            <span>Premium Video Service (B2B SaaS / Local)</span>
+            <span>MindEase Processing Server</span>
           </div>
 
           <div className="api-input-group">

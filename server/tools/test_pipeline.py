@@ -215,7 +215,7 @@ def test_visualization_models():
     plan = VisualizationPlan(
         concept_name="Test Concept",
         visualization_type=VisualizationType.EQUATION,
-        duration_seconds=30,
+        duration_seconds=90,
         scenes=[
             Scene(order=1, description="Title", duration_seconds=5, transitions="Write", elements=["Text"]),
             Scene(order=2, description="Main", duration_seconds=20, transitions="FadeIn", elements=["MathTex"]),
@@ -308,7 +308,7 @@ async def test_manim_generator():
     plan = VisualizationPlan(
         concept_name="Softmax Function",
         visualization_type=VisualizationType.EQUATION,
-        duration_seconds=25,
+        duration_seconds=90,
         scenes=[
             Scene(order=1, description="Show title 'Softmax Function'", duration_seconds=4, 
                   transitions="Write title, move to top", elements=["Text"]),
@@ -384,7 +384,7 @@ async def test_pipeline_voice_enabled_path_passes_quality_gate():
             return VisualizationPlan(
                 concept_name=candidate.concept_name,
                 visualization_type=candidate.visualization_type,
-                duration_seconds=36,
+                duration_seconds=90,
                 scenes=[
                     Scene(order=1, description="Title", duration_seconds=5, transitions="Write", elements=["Text"]),
                     Scene(order=2, description="Explain scoring", duration_seconds=15, transitions="Create", elements=["Arrow"]),
@@ -514,7 +514,7 @@ async def test_pipeline_drops_visualization_when_voice_quality_fails():
             return VisualizationPlan(
                 concept_name=candidate.concept_name,
                 visualization_type=candidate.visualization_type,
-                duration_seconds=36,
+                duration_seconds=90,
                 scenes=[
                     Scene(order=1, description="Title", duration_seconds=5, transitions="Write", elements=["Text"]),
                     Scene(order=2, description="Content", duration_seconds=15, transitions="Create", elements=["Arrow"]),

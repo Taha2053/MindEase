@@ -30,7 +30,7 @@ export default defineConfig(({ mode }) => ({
           return {
             ...rest,
             permissions: (permissions as string[]).filter(
-              (p) => p !== "sidePanel" && p !== "downloads",
+              (p) => p !== "sidePanel" && p !== "downloads" && p !== "offscreen",
             ),
             browser_specific_settings: {
               gecko: {
@@ -55,6 +55,8 @@ export default defineConfig(({ mode }) => ({
       additionalInputs: [
         "src/layer2/onboarding/onboarding.html",
         "src/session/dashboard/dashboard.html",
+        "src/offscreen/offscreen.html",
+        "src/video/video.html",
       ],
     }),
   ],

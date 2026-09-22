@@ -26,17 +26,19 @@ async def test_voiceover_transformation():
     plan = VisualizationPlan(
         concept_name="Scaled Dot-Product Attention",
         visualization_type=VisualizationType.DATA_FLOW,
-        duration_seconds=36,
+        duration_seconds=90,
         scenes=[
-            Scene(order=1, description="Title beat", duration_seconds=5, transitions="Write", elements=["Text"]),
-            Scene(order=2, description="Show Q,K interaction", duration_seconds=12, transitions="Create arrows", elements=["Arrow"]),
-            Scene(order=3, description="Show weighted aggregation", duration_seconds=14, transitions="Write formula", elements=["MathTex"]),
-            Scene(order=4, description="Final takeaway", duration_seconds=5, transitions="FadeIn", elements=["Text"]),
+            Scene(order=1, description="Title beat", duration_seconds=10, transitions="Write", elements=["Text"]),
+            Scene(order=2, description="Show Q,K interaction", duration_seconds=18, transitions="Create arrows", elements=["Arrow"]),
+            Scene(order=3, description="Show weighted aggregation", duration_seconds=22, transitions="Write formula", elements=["MathTex"]),
+            Scene(order=4, description="Final takeaway", duration_seconds=20, transitions="FadeIn", elements=["Text"]),
+            Scene(order=5, description="Summary reflection", duration_seconds=15, transitions="Write", elements=["Text"]),
         ],
         narration_points=[
             "Queries compare against keys to score relevance.",
             "Softmax normalizes scores into attention probabilities.",
             "Weighted values produce context-aware output embeddings.",
+            "Full-article coverage needs ~90 seconds with expanded beats.",
         ],
     )
 
@@ -49,10 +51,10 @@ async def test_voiceover_transformation():
     after = await generator.run(
         plan=plan,
         voiceover_enabled=True,
-        tts_service="gtts",
+        tts_service="openai",
         voice_name="",
         narration_style="concept_teacher",
-        target_duration_seconds=(30, 45),
+        target_duration_seconds=(40, 120),
     )
 
     print("\n" + "=" * 80)

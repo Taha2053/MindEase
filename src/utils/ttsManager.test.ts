@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
+  playAudioBlobDom,
   splitIntoSentences,
   groupSpeechText,
   loadTtsSettings,
@@ -71,5 +72,29 @@ describe("TTS Manager", () => {
       expect(isSpeaking()).toBe(false);
       expect(isPaused()).toBe(false);
     });
+  });
+});
+
+describe("extension-owned audio playback", () => {
+  it("plays provider audio at the chosen speed and releases its URL", async () => {
+    const audio = {
+      src: "", volume: 0, playbackRate: 1,
+      play: vi.fn().mockResolvedValue(undefined),
+      onended: null as (() => void) | null,
+    };
+    vi.stubGlobal("Audio", function () { return audio; });
+    const revoke = vi.spyOn(URL, "revokeObjectURL");
+    try {
+      const playing = playAudioBlobDom(new Blob(["audio"], { type: "audio/mpeg" }), .7, 1.5);
+      expect(audio.play).toHaveBeenCalledOnce();
+      expect(audio.playbackRate).toBe(1.5);
+      expect(audio.volume).toBe(.7);
+      audio.onended?.();
+      await playing;
+      expect(revoke).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      revoke.mockRestore();
+    }
   });
 });

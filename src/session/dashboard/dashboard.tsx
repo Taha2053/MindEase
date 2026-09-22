@@ -1,7 +1,9 @@
+import katexStyles from "katex/dist/katex.min.css?url";
 import { useEffect, useState, useRef, useCallback, type FC } from "react";
 import { createRoot } from "react-dom/client";
 import "@/styles/theme.css";
 import "./dashboard.css";
+import "@/styles/glass.css";
 import browser from "webextension-polyfill";
 import {
   applyTheme, loadTheme, toggleTheme as themeManagerToggle,
@@ -14,7 +16,9 @@ import type {
   Connection, TabResource, FocusSummary, StateTransition,
   SessionState, AdaptationExplanation,
   CrossSourceConnection, VisualEntry,
+  BaselineProfile, CognitiveNeed,
 } from "@/types";
+import { initialTransformationParams, updateProfile } from "@/layer2/profileManager";
 import { loadExplanations } from "@/layer2/explainer";
 import { rankAdaptations } from "@/layer2/recommendations";
 import { SessionFeedbackPanel } from "./SessionFeedback";
@@ -28,7 +32,7 @@ import {
   AlertTriangle, Link, AlignStartVertical, BookOpenText,
   MessageSquare, Film, Globe, GraduationCap,
   LayoutDashboard, Eye, ChartNoAxesColumn, Sparkles, Clock,
-  Volume2, VolumeX, Play,
+  Volume2, VolumeX, Play, Plus, Puzzle,
 } from "lucide-react";
 import { speak, stop } from "@/utils/ttsManager";
 import {
@@ -106,6 +110,7 @@ interface DashboardData {
   artifact: PersonalizedArtifact | null;
   profile: FullCognitiveProfile | null;
   visuals: VisualEntry[];
+  feedbackSessionId?: string;
 }
 
 async function loadData(): Promise<DashboardData> {
@@ -114,18 +119,23 @@ async function loadData(): Promise<DashboardData> {
     "latestArtifact",
     STORAGE_KEYS.PROFILE,
     STORAGE_KEYS.VISUALS_CACHE,
+    STORAGE_KEYS.SESSION_HISTORY,
   ]);
 
   const session = result[STORAGE_KEYS.WORKSPACE] as WorkspaceSession | null;
   const artifact = result["latestArtifact"] as PersonalizedArtifact | null;
   const profile = result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | null;
   const visualsCache = result[STORAGE_KEYS.VISUALS_CACHE] as { entries: VisualEntry[]; updatedAt: number } | null;
+  const history = (result[STORAGE_KEYS.SESSION_HISTORY] as SessionHistoryEntry[] | undefined) ?? [];
 
   return {
     session,
     artifact,
     profile,
     visuals: visualsCache?.entries ?? [],
+    feedbackSessionId: session
+      ? (session.state === "ended" ? session.sessionId : undefined)
+      : artifact?.sessionId ?? history[0]?.sessionId,
   };
 }
 
@@ -211,27 +221,13 @@ function drawFocusTimeline(
 
 function getNavItems(visualFirst: boolean): { id: string; label: string; icon: FC<{ size?: number }> }[] {
   const items = [
-    { id: "overview", label: "Overview", icon: LayoutDashboard },
-    { id: "video-studio", label: "Video Studio", icon: Film },
-    { id: "focus", label: "Focus", icon: Eye },
-    { id: "resources", label: "Resources", icon: FolderOpen },
-    { id: "learned", label: "Learned", icon: BookOpen },
-    { id: "feedback", label: "Session feedback", icon: MessageCircle },
-    { id: "history", label: "History", icon: Clock },
-    { id: "explanations", label: "Explanations", icon: MessageCircle },
-    { id: "review", label: "Review", icon: RefreshCw },
-    { id: "visuals", label: "Visuals", icon: Image },
-    { id: "insights", label: "Insights", icon: Lightbulb },
-    { id: "progress", label: "Progress", icon: ChartNoAxesColumn },
-    { id: "data", label: "Your data", icon: Package },
+    { id: "overview", label: "Today", icon: LayoutDashboard },
+    { id: "history", label: "Learning history", icon: Clock },
+    { id: "review", label: "Review library", icon: BookOpen },
+    { id: "profile", label: "My learning puzzle", icon: Puzzle },
+    { id: "video-studio", label: "Video studio", icon: Film },
+    { id: "data", label: "Account & data", icon: Package },
   ];
-  if (visualFirst) {
-    const visIdx = items.findIndex(i => i.id === "visuals");
-    if (visIdx > 0) {
-      const [vis] = items.splice(visIdx, 1);
-      items.splice(1, 0, vis);
-    }
-  }
   return items;
 }
 
@@ -341,7 +337,7 @@ const SectionOverview: FC<{ artifact: PersonalizedArtifact | null; session: Work
   const pctVal = Math.round(focusScore * 100);
 
   return (
-    <section className="section-card" id="section-overview" data-section="overview">
+    <section className="section-card overview-panel" id="section-overview" data-section="overview">
       <div className="section-card-header">
         <BarChart3 size={16} />
         <h2>Session Overview</h2>
@@ -371,6 +367,48 @@ const SectionOverview: FC<{ artifact: PersonalizedArtifact | null; session: Work
             {pctVal >= 60 ? "Good" : "Needs attention"}
           </span>
         </div>
+      </div>
+    </section>
+  );
+};
+
+const DashboardHero: FC<{
+  artifact: PersonalizedArtifact | null;
+  session: WorkspaceSession | null;
+  onAnimate: () => void;
+}> = ({ artifact, session, onAnimate }) => {
+  const focusScore = Math.round((artifact?.focusSummary?.focusScore ?? 0) * 100);
+  const primaryConcept = artifact?.keyConcepts?.[0]?.label;
+  const resourceCount = artifact?.resourcesUsed?.length ?? session?.tabs?.length ?? 0;
+  const sessionDate = new Date(session?.startTime ?? Date.now()).toLocaleDateString(undefined, {
+    weekday: "long", month: "long", day: "numeric",
+  });
+
+  return (
+    <section className="dashboard-hero" aria-labelledby="dashboard-hero-title">
+      <div className="dashboard-hero-copy">
+        <div className="dashboard-hero-date">{sessionDate}</div>
+        <h1 id="dashboard-hero-title">
+          {primaryConcept ? `Your work on ${primaryConcept}` : "Your learning session"}
+        </h1>
+        <p>
+          {resourceCount > 0
+            ? `${resourceCount} learning ${resourceCount === 1 ? "resource" : "resources"} brought together into one clear review.`
+            : "Your focus, notes, and learning signals are organized here for review."}
+        </p>
+        <div className="dashboard-hero-actions">
+          <button className="hero-primary-action" onClick={onAnimate}>
+            <Film size={16} /> Animate a concept
+          </button>
+          <button className="hero-secondary-action" onClick={() => document.querySelector('[data-section="review"]')?.scrollIntoView({ behavior: "smooth" })}>
+            <BookOpenText size={16} /> Review session
+          </button>
+        </div>
+      </div>
+      <div className="dashboard-hero-score" aria-label={`Focus score ${focusScore} percent`}>
+        <span className="hero-score-value">{focusScore}%</span>
+        <span className="hero-score-label">Focus score</span>
+        <span className="hero-score-note">Based on this session</span>
       </div>
     </section>
   );
@@ -497,7 +535,7 @@ const SectionResources: FC<{ artifact: PersonalizedArtifact | null; session: Wor
     <section className="section-card" id="section-resources" data-section="resources">
       <div className="section-card-header">
         <FolderOpen size={16} />
-        <h2>Resource Breakdown</h2>
+        <h2>Resources by date</h2>
       </div>
       <div className="resource-chips">
         {Object.entries(cats).map(([type, count]) => (
@@ -510,14 +548,15 @@ const SectionResources: FC<{ artifact: PersonalizedArtifact | null; session: Wor
       <div style={{ overflowX: "auto" }}>
         <table className="resource-table">
           <thead>
-            <tr><th>Resource</th><th>Type</th><th>Time</th><th>Notes</th><th>Concepts</th></tr>
+            <tr><th>Date</th><th>Resource</th><th>Type</th><th>Time</th><th>Notes</th><th>Concepts</th></tr>
           </thead>
           <tbody>
             {resources.length === 0 ? (
-              <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--text-muted)", padding: "var(--space-6)" }}>No resource data available.</td></tr>
+              <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "var(--space-6)" }}>No resource data available.</td></tr>
             ) : (
-              resources.map((r, i) => (
+              [...resources].sort((a, b) => b.joinedAt - a.joinedAt).map((r, i) => (
                 <tr key={i}>
+                  <td>{new Date(r.joinedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</td>
                   <td><span className="resource-title-cell" title={r.title || r.url}>{sourceTypeIcon(r.sourceType)} {trunc(r.title || r.url, 40)}</span></td>
                   <td><span className={`resource-badge resource-badge-${r.sourceType}`}>{r.sourceType}</span></td>
                   <td>{fmtDurationShort(r.timeSpentMs)}</td>
@@ -607,7 +646,7 @@ const SectionExplanations: FC<{ profile: FullCognitiveProfile | null }> = ({ pro
             {' '}This is a preference-based suggestion, not a diagnosis or proof that one format improves comprehension.
           </div>
           <div className="feedback-actions">
-            <button type="button" onClick={() => browser.tabs.create({ url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html?edit=1"), active: true })}>Edit my preferences</button>
+            <button type="button" onClick={() => location.assign("#profile")}>Edit my learning profile</button>
           </div>
         </div>
         {explanations.length === 0 ? (
@@ -634,6 +673,102 @@ const SectionExplanations: FC<{ profile: FullCognitiveProfile | null }> = ({ pro
       </div>
     </section>
   );
+};
+
+type ProfileChoice = {
+  key: keyof BaselineProfile;
+  label: string;
+  options: readonly { value: BaselineProfile[keyof BaselineProfile]; label: string }[];
+};
+
+const PROFILE_CHOICES: readonly ProfileChoice[] = [
+  { key: "formatPreference", label: "Format", options: [{ value: "text", label: "Structured text" }, { value: "visual", label: "Visual explanations" }] },
+  { key: "attentionSpan", label: "Session length", options: [{ value: "short", label: "Short" }, { value: "medium", label: "Medium" }, { value: "long", label: "Long" }] },
+  { key: "readingPace", label: "Reading pace", options: [{ value: "slow", label: "Slower" }, { value: "moderate", label: "Moderate" }, { value: "fast", label: "Faster" }] },
+  { key: "infoDensity", label: "Detail", options: [{ value: "concise", label: "Concise" }, { value: "detailed", label: "Detailed" }] },
+  { key: "learningApproach", label: "Explanation order", options: [{ value: "example-first", label: "Examples first" }, { value: "theory-first", label: "Theory first" }] },
+] as const;
+
+const valueLabel = (choice: ProfileChoice, profile: FullCognitiveProfile): string =>
+  choice.options.find(option => option.value === profile.baseline[choice.key])?.label ?? String(profile.baseline[choice.key]);
+
+const ProfileEditor: FC<{
+  profile: FullCognitiveProfile | null;
+  onChange: (profile: FullCognitiveProfile) => void;
+}> = ({ profile, onChange }) => {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
+
+  if (!profile) return null;
+
+  const save = async (baseline: BaselineProfile, condition: CognitiveNeed = profile.condition) => {
+    if (busy) return;
+    setBusy(true);
+    setStatus("");
+    const normalizedCondition = baseline.secondLanguageLearner && condition === "none" ? "multilingual" : condition;
+    const next: FullCognitiveProfile = {
+      ...profile,
+      learningStyle: baseline.formatPreference,
+      attentionSpan: baseline.attentionSpan,
+      anchorNeed: baseline.needsConceptAnchor,
+      condition: normalizedCondition,
+      baseline,
+      transformationParams: initialTransformationParams(baseline, normalizedCondition),
+      updatedAt: Date.now(),
+    };
+    try {
+      await updateProfile(next);
+      await browser.runtime.sendMessage({ type: "PROFILE_UPDATED", payload: next }).catch(() => {});
+      onChange(next);
+      setStatus("Learning profile updated.");
+    } catch {
+      setStatus("Your profile could not be updated. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setChoice = (key: keyof BaselineProfile, value: BaselineProfile[keyof BaselineProfile]) => {
+    void save({ ...profile.baseline, [key]: value } as BaselineProfile);
+  };
+
+  const optionalPieces = [
+    profile.baseline.needsConceptAnchor && { id: "anchors", label: "Concept anchors", remove: () => void save({ ...profile.baseline, needsConceptAnchor: false }) },
+    profile.baseline.secondLanguageLearner && { id: "language", label: "English language support", remove: () => void save({ ...profile.baseline, secondLanguageLearner: false }, profile.condition === "multilingual" ? "none" : profile.condition) },
+    profile.condition !== "none" && profile.condition !== "multilingual" && { id: "condition", label: `${profile.condition.toUpperCase()} support`, remove: () => void save(profile.baseline, "none") },
+  ].filter(Boolean) as { id: string; label: string; remove: () => void }[];
+
+  return <section className="section-card profile-editor" id="section-profile" data-section="profile">
+    <div className="section-card-header profile-editor-heading">
+      <Puzzle size={17} />
+      <div><h2>Your learning profile</h2><p>These pieces guide recommendations. You control every piece.</p></div>
+    </div>
+    <div className="profile-pieces" aria-label="Current learning profile">
+      {PROFILE_CHOICES.map(choice => <button className="profile-piece" type="button" key={choice.key} onClick={() => setEditing(true)} disabled={busy}>
+        <span>{choice.label}</span><strong>{valueLabel(choice, profile)}</strong><span className="profile-piece-edit">Edit</span>
+      </button>)}
+      {optionalPieces.map(piece => <div className="profile-piece profile-piece-optional" key={piece.id}>
+        <span>Support</span><strong>{piece.label}</strong>
+        <button type="button" aria-label={`Remove ${piece.label}`} title={`Remove ${piece.label}`} onClick={piece.remove} disabled={busy}><X size={14} /></button>
+      </div>)}
+      <button className="profile-piece profile-piece-add" type="button" onClick={() => setEditing(value => !value)} disabled={busy} aria-expanded={editing}>
+        <Plus size={16} /><strong>{editing ? "Close choices" : "Add or replace a piece"}</strong>
+      </button>
+    </div>
+    {editing && <div className="profile-choice-panel">
+      {PROFILE_CHOICES.map(choice => <fieldset key={choice.key}>
+        <legend>{choice.label}</legend>
+        <div>{choice.options.map(option => <button type="button" key={String(option.value)} className={profile.baseline[choice.key] === option.value ? "selected" : ""} onClick={() => setChoice(choice.key, option.value)} disabled={busy}>{option.label}</button>)}</div>
+      </fieldset>)}
+      <fieldset><legend>Optional support</legend><div>
+        <button type="button" className={profile.baseline.needsConceptAnchor ? "selected" : ""} onClick={() => void save({ ...profile.baseline, needsConceptAnchor: true })} disabled={busy}>Concept anchors</button>
+        <button type="button" className={profile.baseline.secondLanguageLearner ? "selected" : ""} onClick={() => void save({ ...profile.baseline, secondLanguageLearner: true }, profile.condition === "none" ? "multilingual" : profile.condition)} disabled={busy}>English language support</button>
+        {(["adhd", "dyslexia", "autism"] as const).map(condition => <button type="button" key={condition} className={profile.condition === condition ? "selected" : ""} onClick={() => void save(profile.baseline, condition)} disabled={busy}>{condition.toUpperCase()} support</button>)}
+      </div></fieldset>
+    </div>}
+    <p className="profile-status" role="status" aria-live="polite">{busy ? "Saving…" : status}</p>
+  </section>;
 };
 
 const SectionReview: FC<{ artifact: PersonalizedArtifact | null }> = ({ artifact }) => {
@@ -802,458 +937,6 @@ const SectionVisuals: FC<{
 
 /* ─── Video Studio (Premium) ───────────────────────────────────────────────── */
 
-const SectionVideoStudio: FC<{ defaultTopic?: string }> = ({ defaultTopic }) => {
-  const [topic, setTopic] = useState(defaultTopic || "");
-  const [sourceType, setSourceType] = useState<"arxiv" | "wikipedia" | "website" | "custom">("custom");
-  const [urlOrId, setUrlOrId] = useState("");
-  const [content, setContent] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [jobStatus, setJobStatus] = useState<PremiumJobStatus | null>(null);
-  const [activeDocId, setActiveDocId] = useState<string | null>(null);
-  const [videos, setVideos] = useState<Array<{ id: string; concept: string; video_url: string }>>([]);
-  const [message, setMessage] = useState("");
-  const [selectedVideoIdx, setSelectedVideoIdx] = useState(0);
-
-  useEffect(() => {
-    if (!jobId) return;
-    const interval = setInterval(async () => {
-      try {
-        const status = await pollJobStatus(jobId);
-        setJobStatus(status);
-        if (status.status === "completed") {
-          clearInterval(interval);
-          const targetId = status.arxiv_id || status.paper_id || activeDocId || status.job_id;
-          const doc = await fetchDocumentVideos(targetId);
-          if (doc && doc.videos.length > 0) {
-            setVideos(prev => [...doc.videos, ...prev]);
-            setSelectedVideoIdx(0);
-          }
-        } else if (status.status === "failed") {
-          clearInterval(interval);
-        }
-      } catch (err) {
-        console.warn("[VideoStudio] Polling status error:", err);
-      }
-    }, 2500);
-
-    return () => clearInterval(interval);
-  }, [jobId, activeDocId]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const needsUrl = sourceType !== "custom";
-    if ((needsUrl && !urlOrId.trim()) || (!needsUrl && !content.trim())) {
-      setMessage(needsUrl ? "Provide the exact source URL or arXiv ID." : "Paste the exact source material to animate.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    setMessage("");
-    setJobStatus(null);
-    try {
-      if (sourceType === "arxiv" && /^\d{4}\.\d{4,5}(v\d+)?$/.test(urlOrId.trim())) {
-        const res = await submitArxivPaperForAnimation(urlOrId.trim());
-        setJobId(res.job_id);
-        setActiveDocId(res.arxiv_id);
-      } else {
-        const res = await submitDocumentForAnimation({
-          title: topic.trim() || "Concept Animation",
-          source_type: sourceType === "wikipedia" ? "wikipedia" : (sourceType === "arxiv" ? "arxiv" : "website"),
-          url: urlOrId.trim() || undefined,
-          content: content.trim() || undefined,
-        });
-        setJobId(res.job_id);
-        setActiveDocId(res.arxiv_id);
-      }
-    } catch (err) {
-      setMessage("Animation request failed: " + String(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const currentVideo = videos[selectedVideoIdx] || videos[0];
-
-  return (
-    <section className="section-card" id="section-video-studio" data-section="video-studio">
-      <div className="section-card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Film size={18} style={{ color: "var(--accent)" }} />
-          <h2>AI Video Animation Studio</h2>
-        </div>
-        <span className="badge" style={{ background: "var(--accent-gradient)", color: "#1A1D3A", fontWeight: 700 }}>
-          3Blue1Brown Manim + Voiceover
-        </span>
-      </div>
-
-      <div className="video-studio-grid">
-        {/* Left: Generator Console */}
-        <div className="video-form-card">
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-            <Sparkles size={16} style={{ color: "var(--accent)" }} />
-            <h3 style={{ fontSize: "0.9rem", fontWeight: 600 }}>Create Animated Explainer</h3>
-          </div>
-          <p style={{ fontSize: "0.75rem", color: "var(--text-dim)", lineHeight: 1.4 }}>
-            Create a Manim explanation grounded in the source you provide. DeepSeek plans the lesson and Mistral generates the animation.
-          </p>
-
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div className="video-field-group">
-              <label className="video-field-label">
-                Content Source
-              </label>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {(["custom", "arxiv", "wikipedia", "website"] as const).map(type => (
-                  <button
-                    key={type}
-                    type="button"
-                    className={`video-chip ${sourceType === type ? "active" : ""}`}
-                    onClick={() => setSourceType(type)}
-                  >
-                    {type === "arxiv" ? "arXiv Paper" : type === "wikipedia" ? "Wikipedia" : type === "website" ? "Web Article" : "Custom Topic"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="video-field-group">
-              <label className="video-field-label" htmlFor="video-topic">
-                Concept Title / Name
-              </label>
-              <input
-                id="video-topic"
-                type="text"
-                className="video-input"
-                placeholder="e.g. Scaled Dot-Product Attention or Eigenvalues"
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-              />
-            </div>
-
-            {(sourceType === "arxiv" || sourceType === "wikipedia" || sourceType === "website") && (
-              <div className="video-field-group">
-                <label className="video-field-label" htmlFor="video-url">
-                  {sourceType === "arxiv" ? "arXiv Paper ID" : "Source URL"}
-                  <span>{sourceType === "arxiv" ? "e.g. 1706.03762" : "e.g. https://en.wikipedia.org/..."}</span>
-                </label>
-                <input
-                  id="video-url"
-                  type="text"
-                  className="video-input"
-                  placeholder={sourceType === "arxiv" ? "1706.03762" : "https://..."}
-                  value={urlOrId}
-                  onChange={(e) => setUrlOrId(e.target.value)}
-                />
-              </div>
-            )}
-
-            <div className="video-field-group">
-              <label className="video-field-label" htmlFor="video-content">
-                {sourceType === "custom" ? "Exact Source Material" : "Relevant Source Extract"} <span>(LaTeX or Markdown)</span>
-              </label>
-              <textarea
-                id="video-content"
-                className="video-textarea"
-                placeholder="e.g. Attention(Q, K, V) = softmax(QK^T / sqrt(d))V"
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="video-submit-btn"
-              disabled={isSubmitting || !!(jobStatus && jobStatus.status === "processing")}
-            >
-              {isSubmitting ? (
-                <>Submitting request...</>
-              ) : jobStatus && jobStatus.status === "processing" ? (
-                <><div className="loading-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Generating Animation...</>
-              ) : (
-                <><Film size={16} /> Render 3B1B Video Animation</>
-              )}
-            </button>
-            <p role="status" aria-live="polite" style={{ color: "var(--text-dim)", fontSize: "0.75rem" }}>{message}</p>
-          </form>
-
-          {/* Progress Box */}
-          {jobStatus && (
-            <div className="video-progress-box">
-              <div className="video-progress-header">
-                <span>{jobStatus.current_step || "Processing..."}</span>
-                <span style={{ color: jobStatus.status === "failed" ? "var(--danger)" : "var(--accent)" }}>
-                  {jobStatus.status === "completed" ? "✓ Done" : jobStatus.status === "failed" ? "✗ Failed" : `${Math.round(jobStatus.progress * 100)}%`}
-                </span>
-              </div>
-              <div className="video-progress-bar">
-                <div className="video-progress-fill" style={{ width: `${Math.max(8, Math.round(jobStatus.progress * 100))}%` }} />
-              </div>
-              {jobStatus.error && (
-                <p style={{ color: "var(--danger)", fontSize: "0.72rem" }}>{jobStatus.error}</p>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Right: Cinema Video Player */}
-        <div className="video-player-card">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ fontSize: "0.9rem", fontWeight: 600 }}>Video Cinema</h3>
-            <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-              {videos.length} Animation{videos.length !== 1 ? "s" : ""} Available
-            </span>
-          </div>
-
-          <div className="video-screen-wrap">
-            {currentVideo ? (
-              <video
-                key={currentVideo.video_url}
-                src={currentVideo.video_url}
-                controls
-                preload="metadata"
-              />
-            ) : (
-              <div style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>No video loaded</div>
-            )}
-          </div>
-
-          {currentVideo && (
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--text-primary)" }}>
-                  {currentVideo.concept}
-                </span>
-                <a
-                  href={currentVideo.video_url}
-                  download
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ color: "var(--accent)", textDecoration: "none", fontSize: "0.72rem", display: "flex", alignItems: "center", gap: 4 }}
-                >
-                  <FileDown size={14} /> Download MP4
-                </a>
-              </div>
-
-              {videos.length > 1 && (
-                <div className="video-list-chips">
-                  {videos.map((v, idx) => (
-                    <button
-                      key={v.id + idx}
-                      type="button"
-                      className={`video-chip ${selectedVideoIdx === idx ? "active" : ""}`}
-                      onClick={() => setSelectedVideoIdx(idx)}
-                    >
-                      <Play size={10} /> {trunc(v.concept, 24)}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-};
-
-/* ─── Video Prompt Modal (One-Click Launcher) ──────────────────────────────── */
-
-const VideoPromptModal: FC<{
-  isOpen: boolean;
-  onClose: () => void;
-  defaultTopic?: string;
-}> = ({ isOpen, onClose, defaultTopic }) => {
-  const [inputVal, setInputVal] = useState(defaultTopic || "");
-  const [formula, setFormula] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [jobStatus, setJobStatus] = useState<PremiumJobStatus | null>(null);
-  const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
-  const [videoConcept, setVideoConcept] = useState("");
-
-  useEffect(() => {
-    if (!jobId) return;
-    const interval = setInterval(async () => {
-      try {
-        const status = await pollJobStatus(jobId);
-        setJobStatus(status);
-        if (status.status === "completed") {
-          clearInterval(interval);
-          const targetId = status.arxiv_id || status.paper_id || status.job_id;
-          const doc = await fetchDocumentVideos(targetId);
-          if (doc && doc.videos.length > 0) {
-            setRenderedVideoUrl(doc.videos[0].video_url);
-            setVideoConcept(doc.videos[0].concept);
-          }
-        } else if (status.status === "failed") {
-          clearInterval(interval);
-        }
-      } catch (err) {
-        console.warn("[VideoPromptModal] Polling error:", err);
-      }
-    }, 2500);
-    return () => clearInterval(interval);
-  }, [jobId]);
-
-  if (!isOpen) return null;
-
-  const handleGenerate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const query = inputVal.trim();
-    if (!query) {
-      setJobStatus({ job_id: "", status: "failed", progress: 0, current_step: "Provide an arXiv ID or source URL.", error: "Videos require identifiable source material." });
-      return;
-    }
-
-    setIsSubmitting(true);
-    setJobStatus(null);
-    setRenderedVideoUrl(null);
-
-    try {
-      const isArxiv = /^\d{4}\.\d{4,5}(v\d+)?$/.test(query);
-      if (isArxiv) {
-        const res = await submitArxivPaperForAnimation(query);
-        setJobId(res.job_id);
-      } else {
-        const isUrl = query.startsWith("http://") || query.startsWith("https://");
-        if (!isUrl) throw new Error("Use an arXiv ID or exact source URL. Topic-only generation is disabled to protect source fidelity.");
-        const res = await submitDocumentForAnimation({
-          title: isUrl ? "Web Animation" : query,
-          source_type: query.includes("wikipedia.org") ? "wikipedia" : (isUrl ? "website" : "article"),
-          url: isUrl ? query : undefined,
-          content: formula.trim() || undefined,
-        });
-        setJobId(res.job_id);
-      }
-    } catch (err) {
-      setJobStatus({ job_id: "", status: "failed", progress: 0, current_step: "Video request failed", error: String(err) });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="v-modal-overlay" onClick={onClose}>
-      <div className="v-modal-card" onClick={(e) => e.stopPropagation()}>
-        <div className="v-modal-header">
-          <div className="v-modal-title">
-            <Film size={20} style={{ color: "var(--accent)" }} />
-            <span>AI Video Animation Studio</span>
-          </div>
-          <button className="v-modal-close" onClick={onClose} aria-label="Close">
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="v-modal-body">
-          {renderedVideoUrl ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div className="video-screen-wrap">
-                <video src={renderedVideoUrl} controls autoPlay />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{videoConcept || inputVal}</span>
-                <a
-                  href={renderedVideoUrl}
-                  download
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ color: "var(--accent)", textDecoration: "none", fontSize: "0.75rem", display: "flex", alignItems: "center", gap: 4 }}
-                >
-                  <FileDown size={14} /> Download MP4
-                </a>
-              </div>
-              <button
-                type="button"
-                className="video-submit-btn"
-                onClick={() => {
-                  setRenderedVideoUrl(null);
-                  setJobStatus(null);
-                }}
-              >
-                <Sparkles size={14} /> Animate Another Concept
-              </button>
-            </div>
-          ) : (
-            <>
-              <p style={{ fontSize: "0.8rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
-                Turn a specific paper or webpage into a source-grounded Manim animation with optional narration.
-              </p>
-
-              <form onSubmit={handleGenerate} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <div className="video-field-group">
-                  <label className="video-field-label" htmlFor="v-prompt-input">
-                    What would you like to animate?
-                    <span>arXiv ID or exact source URL</span>
-                  </label>
-                  <input
-                    id="v-prompt-input"
-                    type="text"
-                    className="video-input"
-                    placeholder="e.g. 1706.03762 or https://en.wikipedia.org/..."
-                    value={inputVal}
-                    onChange={(e) => setInputVal(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-
-                <div className="video-field-group">
-                  <label className="video-field-label" htmlFor="v-formula-input">
-                    Key Formula or Description <span>(Optional)</span>
-                  </label>
-                  <textarea
-                    id="v-formula-input"
-                    className="video-textarea"
-                    placeholder="e.g. Attention(Q, K, V) = softmax(QK^T / sqrt(d))V"
-                    value={formula}
-                    onChange={(e) => setFormula(e.target.value)}
-                    rows={2}
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="video-submit-btn"
-                  disabled={isSubmitting || !!(jobStatus && jobStatus.status === "processing")}
-                >
-                  {isSubmitting ? (
-                    "Submitting request..."
-                  ) : jobStatus && jobStatus.status === "processing" ? (
-                    <><div className="loading-spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Generating Animation...</>
-                  ) : (
-                    <><Film size={16} /> Generate 3B1B Video Animation</>
-                  )}
-                </button>
-              </form>
-
-              {/* Live Progress Box */}
-              {jobStatus && (
-                <div className="video-progress-box">
-                  <div className="video-progress-header">
-                    <span>{jobStatus.current_step || "Processing..."}</span>
-                    <span style={{ color: jobStatus.status === "failed" ? "var(--danger)" : "var(--accent)" }}>
-                      {jobStatus.status === "completed" ? "✓ Done" : jobStatus.status === "failed" ? "✗ Failed" : `${Math.round(jobStatus.progress * 100)}%`}
-                    </span>
-                  </div>
-                  <div className="video-progress-bar">
-                    <div className="video-progress-fill" style={{ width: `${Math.max(8, Math.round(jobStatus.progress * 100))}%` }} />
-                  </div>
-                  {jobStatus.error && (
-                    <p style={{ color: "var(--danger)", fontSize: "0.72rem" }}>{jobStatus.error}</p>
-                  )}
-                </div>
-              )}
-
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-
 const SectionHistory: FC = () => {
   const [history, setHistory] = useState<SessionHistoryEntry[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1303,8 +986,9 @@ const SectionHistory: FC = () => {
         <h2>Session History</h2>
       </div>
       <div className="history-list">
-        {history.map(entry => (
+        {[...history].sort((a, b) => b.endTime - a.endTime).map(entry => (
           <div className="history-item" key={entry.sessionId}>
+            <time dateTime={new Date(entry.endTime).toISOString()}>{new Date(entry.endTime).toLocaleDateString(undefined, { weekday: "short", month: "long", day: "numeric", year: "numeric" })}</time>
             <div className="history-item-top">
               {editingId === entry.sessionId ? (
                 <input
@@ -1560,7 +1244,7 @@ const Dashboard: FC = () => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState(false);
-  const [activeSection, setActiveSection] = useState("overview");
+  const [activeSection, setActiveSection] = useState(location.hash.slice(1) || "overview");
   const [generating, setGenerating] = useState(false);
   const [visuals, setVisuals] = useState<VisualEntry[]>([]);
   const [videoModalOpen, setVideoModalOpen] = useState(false);
@@ -1582,48 +1266,22 @@ const Dashboard: FC = () => {
       const link = document.createElement("link");
       link.id = "mindease-katex-css";
       link.rel = "stylesheet";
-      link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+      link.href = browser.runtime.getURL(katexStyles.replace(/^\//, ""));
       document.head.appendChild(link);
     }
   }, []);
 
   useEffect(() => {
-    if (loading || !data) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const section = entry.target.getAttribute("data-section");
-          if (section) {
-            sectionRefs.current.set(section, entry);
-          }
-        }
-
-        // find the topmost visible section
-        let bestSection = "overview";
-        let bestTop = Infinity;
-        for (const [id, entry] of sectionRefs.current.entries()) {
-          if (entry.isIntersecting && entry.boundingClientRect.top < bestTop) {
-            bestTop = entry.boundingClientRect.top;
-            bestSection = id;
-          }
-        }
-        setActiveSection(bestSection);
-      },
-      { rootMargin: "-80px 0px -40% 0px", threshold: 0 },
-    );
-
-    const sections = document.querySelectorAll("[data-section]");
-    sections.forEach(s => observer.observe(s));
-
-    return () => observer.disconnect();
-  }, [loading, data]);
-
+    const navigate = () => setActiveSection(location.hash.slice(1) || "overview");
+    window.addEventListener("hashchange", navigate);
+    return () => window.removeEventListener("hashchange", navigate);
+  }, []);
   const handleNavigate = useCallback((id: string) => {
-    const el = document.querySelector(`[data-section="${id}"]`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (id === "video-studio") {
+      void browser.tabs.create({ url: browser.runtime.getURL("src/video/video.html") });
+      return;
     }
+    location.hash = id; setActiveSection(id); window.scrollTo(0, 0);
   }, []);
 
   const handleThemeToggle = async () => {
@@ -1695,19 +1353,11 @@ const Dashboard: FC = () => {
         <header className="dash-header">
           <div className="dash-header-left">
             <div>
-              <div className="page-title">Dashboard</div>
-              <div className="page-title-sub">Session Reflection</div>
+              <div className="page-title">Learning workspace</div>
+              <div className="page-title-sub">Review, understand, continue</div>
             </div>
           </div>
           <div className="dash-header-right">
-            <button
-              className="dash-animate-btn"
-              onClick={() => setVideoModalOpen(true)}
-              title="Generate 3B1B Video Animation"
-            >
-              <Film size={16} />
-              <span>Animate Concept</span>
-            </button>
             <button className="header-btn" onClick={handleExport} aria-label="Export PDF" title="Export as PDF">
               <FileDown size={16} />
             </button>
@@ -1718,36 +1368,31 @@ const Dashboard: FC = () => {
         </header>
 
         <main className="dash-content" ref={contentRef}>
-          <SectionOverview artifact={data.artifact} session={data.session} />
-          <SessionFeedbackPanel key={data.artifact?.sessionId} sessionId={data.artifact?.sessionId} />
-          <SectionVideoStudio defaultTopic={conceptLabels[0] || ""} />
-          {visualFirst && (
-            <SectionVisuals
-              visuals={visuals}
-              formatPreference="visual"
-              concepts={conceptLabels}
-              onGenerateVisuals={handleGenerateVisuals}
-              generating={generating}
-            />
-          )}
-          <SectionFocus session={data.session} artifact={data.artifact} />
-          <SectionResources artifact={data.artifact} session={data.session} />
-          <SectionLearned artifact={data.artifact} />
-          <SectionHistory />
-          <SectionExplanations profile={data.profile} />
-          <SectionReview artifact={data.artifact} />
-          {!visualFirst && (
-            <SectionVisuals
-              visuals={visuals}
-              formatPreference="text"
-              concepts={conceptLabels}
-              onGenerateVisuals={handleGenerateVisuals}
-              generating={generating}
-            />
-          )}
-          <SectionInsights artifact={data.artifact} />
-          <SectionProgress artifact={data.artifact} session={data.session} profile={data.profile} />
-          <DataControls />
+          {activeSection === "overview" && <DashboardHero
+            artifact={data.artifact}
+            session={data.session}
+            onAnimate={() => void browser.tabs.create({ url: browser.runtime.getURL("src/video/video.html") })}
+          />}
+          {activeSection === "overview" && <>
+            <SectionOverview artifact={data.artifact} session={data.session} />
+            <SectionFocus session={data.session} artifact={data.artifact} />
+            <SessionFeedbackPanel key={data.feedbackSessionId} sessionId={data.feedbackSessionId} />
+          </>}
+          {activeSection === "history" && <>
+            <SectionHistory />
+            <SectionResources artifact={data.artifact} session={data.session} />
+          </>}
+          {activeSection === "review" && <>
+            <SectionLearned artifact={data.artifact} />
+            <SectionReview artifact={data.artifact} />
+            <SectionVisuals visuals={visuals} formatPreference={visualFirst ? "visual" : "text"} concepts={conceptLabels} onGenerateVisuals={handleGenerateVisuals} generating={generating} />
+            <SectionInsights artifact={data.artifact} />
+          </>}
+          {activeSection === "profile" && <>
+            <ProfileEditor profile={data.profile} onChange={profile => setData(current => current ? { ...current, profile } : current)} />
+            <SectionExplanations profile={data.profile} />
+          </>}
+          {activeSection === "data" && <DataControls />}
         </main>
 
         <footer className="dash-footer">
@@ -1755,11 +1400,7 @@ const Dashboard: FC = () => {
           {data.session && <span>Session: {data.session.sessionId.slice(0, 8)}...</span>}
         </footer>
       </div>
-      <VideoPromptModal
-        isOpen={videoModalOpen}
-        onClose={() => setVideoModalOpen(false)}
-        defaultTopic={conceptLabels[0] || ""}
-      />
+
     </div>
   );
 };

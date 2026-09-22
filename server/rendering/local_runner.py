@@ -39,7 +39,7 @@ def _extract_render_error(stderr: str, stdout: str) -> str:
         return "Unknown error"
     idx = text.rfind("Traceback (most recent call last)")
     if idx != -1:
-        return text[idx:][:_ERROR_MSG_LIMIT]
+        return text[idx:][-_ERROR_MSG_LIMIT:]
     lines = [
         line for line in text.splitlines()
         if not any(marker in line for marker in _WARNING_NOISE)
@@ -58,6 +58,8 @@ def _tts_subprocess_env() -> dict[str, str]:
     A pre-existing ``OPENAI_API_KEY`` (e.g. a real OpenAI key) is respected.
     """
     env = dict(os.environ)
+    server_root = str(Path(__file__).resolve().parent.parent)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [server_root, env.get("PYTHONPATH", "")]))
     if not env.get("OPENAI_API_KEY"):
         endpoint = env.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
         key = env.get("AZURE_OPENAI_API_KEY", "")

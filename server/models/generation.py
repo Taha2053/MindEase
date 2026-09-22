@@ -60,7 +60,7 @@ class VisualizationPlan(BaseModel):
     
     concept_name: str = Field(..., description="Name of the concept being visualized")
     visualization_type: VisualizationType = Field(..., description="Type of visualization")
-    duration_seconds: int = Field(..., ge=15, le=60, description="Target video length")
+    duration_seconds: int = Field(..., ge=40, le=120, description="Target video length (40s min, 120s max, ~90s ideal for full-article coverage)")
     scenes: list[Scene] = Field(default_factory=list, description="Ordered list of scenes")
     narration_points: list[str] = Field(default_factory=list, description="Key points to convey")
 

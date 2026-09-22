@@ -3,9 +3,10 @@
 frontend Container App's own FQDN, a staging host) can be admitted by config
 instead of a code change and redeploy."""
 
+import re
 import pytest
 
-from api.cors import DEFAULT_ORIGINS, allowed_origins, canonical_origin
+from api.cors import EXTENSION_ORIGIN_REGEX, DEFAULT_ORIGINS, allowed_origins, canonical_origin
 
 
 def test_defaults_when_env_unset(monkeypatch):
@@ -14,6 +15,21 @@ def test_defaults_when_env_unset(monkeypatch):
     assert "https://arxivisual.org" in DEFAULT_ORIGINS
     assert "https://www.arxivisual.org" in DEFAULT_ORIGINS
     assert "http://localhost:3000" in DEFAULT_ORIGINS
+
+
+@pytest.mark.parametrize("origin", [
+    "moz-extension://7f23c758-9ad7-4d54-a284-93e6f42e8f91",
+    "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef",
+])
+def test_browser_extension_origins_are_allowed(origin):
+    assert re.fullmatch(EXTENSION_ORIGIN_REGEX, origin)
+
+
+@pytest.mark.parametrize("origin", [
+    "https://example.com", "moz-extension://", "chrome-extension://bad/path",
+])
+def test_extension_origin_pattern_rejects_other_origins(origin):
+    assert not re.fullmatch(EXTENSION_ORIGIN_REGEX, origin)
 
 
 def test_extra_origins_appended_trimmed_and_deduped(monkeypatch):

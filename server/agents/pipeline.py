@@ -83,10 +83,10 @@ ENABLE_RENDER_TESTING = RENDER_MODE != "modal"
 # TTS defaults to Azure OpenAI (gpt-4o-mini-tts, routed via the OpenAI-compatible
 # endpoint at render time); set VOICEOVER_TTS_SERVICE=gtts for the free fallback.
 ENABLE_VOICEOVER = True
-VOICEOVER_TTS_SERVICE = os.getenv("VOICEOVER_TTS_SERVICE", "openai")
+VOICEOVER_TTS_SERVICE = os.getenv("VOICEOVER_TTS_SERVICE", "azure")
 VOICEOVER_VOICE_NAME = os.getenv("VOICEOVER_VOICE_NAME", "nova")
 VOICEOVER_NARRATION_STYLE = "friendly_tutor"
-VOICEOVER_TARGET_DURATION_SECONDS = (30, 45)
+VOICEOVER_TARGET_DURATION_SECONDS = (40, 120)
 
 # Voice quality policy. Narration is produced by the unified (voice-aware)
 # ManimGenerator; there is no separate post-transform voice step.
@@ -550,18 +550,6 @@ async def generate_single_visualization(
             logger.error("  ✗ FAILED after %s attempts", max_attempts)
             if VOICE_FAIL_BEHAVIOR == "hard_error":
                 raise RuntimeError(f"Strict quality checks failed for {candidate.concept_name}")
-            if VOICE_FAIL_BEHAVIOR == "return_silent":
-                logger.warning("  Returning silent visualization based on fallback policy.")
-                if code_result:
-                    return Visualization(
-                        id=viz_id,
-                        section_id=candidate.section_id,
-                        concept=candidate.concept_name,
-                        storyboard=plan.model_dump_json(),
-                        manim_code=code_result.code,
-                        video_url=None,
-                        status=VisualizationStatus.PENDING,
-                    )
             # drop_viz default
             return None
 

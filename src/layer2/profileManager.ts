@@ -33,7 +33,7 @@ function defaultRLState(): RLState {
 }
 
 /* ─── Baseline → Initial Transformation Params ─── */
-function initialTransformationParams(
+export function initialTransformationParams(
   baseline: BaselineProfile,
   condition?: CognitiveNeed,
 ): TransformationParams {
@@ -141,6 +141,7 @@ export async function updateProfile(profile: FullCognitiveProfile): Promise<void
     await syncNow().catch(() => {});
   } catch (err) {
     console.warn("[MindEase] Profile save failed:", err);
+    throw err;
   }
 }
 

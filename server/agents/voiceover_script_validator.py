@@ -46,7 +46,7 @@ class VoiceoverScriptValidator:
         self.alignment_threshold = alignment_threshold
         self.educational_threshold = educational_threshold
         self.use_llm_judge = use_llm_judge
-        self.model = get_model_name(model)
+        self.model = model
 
     def validate(
         self,
@@ -232,6 +232,7 @@ class VoiceoverScriptValidator:
                 prompt=prompt,
                 model=self.model,
                 max_tokens=512,
+                providers=("deepseek",),
             ).strip()
             match = re.search(r"```json\s*([\s\S]*?)\s*```", text)
             payload = match.group(1).strip() if match else text

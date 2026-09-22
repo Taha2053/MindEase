@@ -4,7 +4,7 @@ import { STORAGE_KEYS } from "@/types";
 import { synthesizePremiumSpeech } from "@/layer1/premiumClient";
 
 export const DEFAULT_TTS_SETTINGS: TtsSettings = {
-  provider: "browser",
+  provider: "azure",
   rate: 1.0,
   pitch: 1.0,
   volume: 1.0,
@@ -25,6 +25,35 @@ let _activeAudioUrl: string | null = null;
 let _keepAliveTimer: number | null = null;
 let _activeResolve: (() => void) | null = null;
 let _activeReject: ((err: Error) => void) | null = null;
+let _usingOffscreen = false;
+
+function isPageContext(): boolean {
+  return typeof window !== "undefined" &&
+    typeof document !== "undefined" &&
+    (globalThis.location?.protocol === "http:" || globalThis.location?.protocol === "https:");
+}
+
+function canUseOffscreen(): boolean {
+  const api = (globalThis as unknown as { chrome?: any })?.chrome?.offscreen;
+  return !!api && typeof api.hasDocument === "function" && typeof api.createDocument === "function";
+}
+
+function shouldDelegateToOffscreen(): boolean {
+  return isPageContext();
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(",")[1] ?? "";
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
 const getSynth = (): SpeechSynthesis | null => {
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     return window.speechSynthesis;
@@ -83,7 +112,7 @@ export async function loadTtsSettings(): Promise<TtsSettings> {
   try {
     const res = await browser.storage.local.get(STORAGE_KEYS.TTS_SETTINGS);
     const saved = res[STORAGE_KEYS.TTS_SETTINGS] as Partial<TtsSettings> | undefined;
-    _cachedSettings = { ...DEFAULT_TTS_SETTINGS, ...saved };
+    _cachedSettings = { ...DEFAULT_TTS_SETTINGS, ...saved, provider: "azure" };
   } catch {
     _cachedSettings = { ...DEFAULT_TTS_SETTINGS };
   }
@@ -180,22 +209,97 @@ export function groupSpeechText(sentences: string[], maxChars = 4500): string[] 
   return groups;
 }
 
-function playAudioBlob(blob: Blob, volume: number): Promise<void> {
+function playAudioBlob(blob: Blob, volume: number, rate = 1): Promise<void> {
+  // Content scripts on http/https with offscreen available → delegate to offscreen document
+  // to bypass autoplay/CSP restrictions. Popup/dashboard (chrome-extension://) use DOM audio directly.
+  if (shouldDelegateToOffscreen()) {
+    return (async () => {
+      try {
+        const base64 = await blobToBase64(blob);
+        console.log("[TTS] Delegating Azure playback to offscreen", { size: blob.size, type: blob.type });
+        _usingOffscreen = true;
+        const raw = await browser.runtime.sendMessage({
+          type: "PLAY_TTS_AUDIO",
+          payload: { audioBase64: base64, contentType: blob.type || "audio/mpeg", volume, rate },
+        } as unknown as never);
+        const resp = raw as { success?: boolean; error?: string } | undefined;
+        if (resp?.error) throw new Error(resp.error);
+        if (resp?.success !== true) throw new Error("Extension audio player returned no playback confirmation.");
+        console.log("[TTS] Offscreen playback finished", { size: blob.size });
+      } catch (err) {
+        _usingOffscreen = false;
+        const msg = err instanceof Error ? err.message : String(err);
+        // If offscreen not supported, fallback to DOM audio
+        if (msg.includes("Offscreen not supported") || msg.includes("chrome.runtime unavailable")) {
+          console.warn("[TTS] Offscreen unavailable, falling back to DOM audio", msg);
+        } else {
+          throw err;
+        }
+        // Fall through to DOM fallback below — re-enter with same blob via DOM path
+        return playAudioBlobDom(blob, volume, rate);
+      } finally {
+        _usingOffscreen = false;
+      }
+    })();
+  }
+  return playAudioBlobDom(blob, volume, rate);
+}
+
+export function playAudioBlobDom(blob: Blob, volume: number, rate = 1): Promise<void> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    _activeAudio = audio;
+    const audioEl = (typeof document !== "undefined" && document.createElement)
+      ? document.createElement("audio")
+      : new Audio(url);
+    if (audioEl.src !== url) audioEl.src = url;
+    // Attach to DOM when possible — helps with autoplay & CSP in content scripts
+    let attached = false;
+    if (typeof document !== "undefined" && document.body && audioEl.parentNode !== document.body) {
+      try {
+        audioEl.style.display = "none";
+        audioEl.setAttribute("data-mindease-tts", "true");
+        document.body.appendChild(audioEl);
+        attached = true;
+      } catch {
+        // ignore append failure (e.g. no body yet)
+      }
+    }
+    _activeAudio = audioEl as HTMLAudioElement;
     _activeAudioUrl = url;
-    audio.volume = volume;
-    const finish = (error?: Error) => {
+    const cleanup = (): void => {
+      _activeResolve = null;
       URL.revokeObjectURL(url);
-      if (_activeAudio === audio) _activeAudio = null;
+      if (attached && audioEl.parentNode) {
+        try { audioEl.remove(); } catch {}
+      }
+      if (_activeAudio === audioEl) _activeAudio = null;
       if (_activeAudioUrl === url) _activeAudioUrl = null;
+    };
+    const finish = (error?: Error): void => {
+      cleanup();
       error ? reject(error) : resolve();
     };
-    audio.onended = () => finish();
-    audio.onerror = () => finish(new Error("Premium speech audio could not be played"));
-    audio.play().catch((error) => finish(error instanceof Error ? error : new Error(String(error))));
+    _activeResolve = () => finish();
+    audioEl.volume = volume;
+    audioEl.playbackRate = rate;
+    audioEl.onended = () => {
+      console.log("[TTS] Azure audio playback ended (DOM)", { size: blob.size, type: blob.type });
+      finish();
+    };
+    audioEl.onerror = () => {
+      const mediaErr = (audioEl as HTMLAudioElement).error;
+      console.warn("[TTS] Audio element error", mediaErr);
+      finish(new Error("Premium speech audio could not be played"));
+    };
+    console.log("[TTS] Attempting Azure audio playback (DOM)", { size: blob.size, type: blob.type });
+    const playPromise = (audioEl as HTMLAudioElement).play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch((error: unknown) => {
+        const err = error instanceof Error ? error : new Error(String(error));
+        console.warn("[TTS] audio.play() rejected", { name: (err as { name?: string }).name, message: err.message });
+        finish(err);
+      });
+    }
   });
 }
 
@@ -330,18 +434,29 @@ export async function speak(
   if (settings.provider === "azure") {
     try {
       const groups = groupSpeechText(sentences);
+      console.log("[TTS] Attempting Azure premium speech", { groups: groups.length, chars: groups.join("").length });
       for (const [index, group] of groups.entries()) {
         if (_cancelRequested || !_isPlaying) break;
         options?.onProgress?.(index, groups.length, group);
-        await playAudioBlob(await synthesizePremiumSpeech(group), options?.volume ?? settings.volume);
+        const blob = await synthesizePremiumSpeech(group);
+        console.log("[TTS] Azure blob received", { size: blob.size, type: blob.type });
+        if (_cancelRequested || !_isPlaying) break;
+        await playAudioBlob(blob, options?.volume ?? settings.volume, options?.rate ?? settings.rate);
       }
+      console.log("[TTS] Azure speech completed");
       _isPlaying = false;
       _isPaused = false;
       options?.onEnd?.();
       return;
     } catch (error) {
-      console.warn("[TTS] Premium speech failed; using the browser voice.", error);
+      const failure = error instanceof Error ? error : new Error(String(error));
+      _isPlaying = false;
+      _isPaused = false;
+      options?.onError?.(failure);
+      throw failure;
     }
+  } else {
+    console.log("[TTS] Provider is not azure, using browser voice directly", settings.provider);
   }
 
   if (!synth) {
@@ -389,6 +504,11 @@ export async function speak(
  * Pause current speech playback
  */
 export function pause(): void {
+  if (shouldDelegateToOffscreen() && (_usingOffscreen || _isPlaying)) {
+    browser.runtime.sendMessage({ type: "PAUSE_TTS_AUDIO" } as unknown as never).catch(() => {});
+    _isPaused = true;
+    return;
+  }
   if (_activeAudio && !_activeAudio.paused) {
     _activeAudio.pause();
     _isPaused = true;
@@ -405,6 +525,11 @@ export function pause(): void {
  * Resume paused speech playback
  */
 export function resume(): void {
+  if (shouldDelegateToOffscreen() && (_usingOffscreen || _isPaused)) {
+    browser.runtime.sendMessage({ type: "RESUME_TTS_AUDIO" } as unknown as never).catch(() => {});
+    _isPaused = false;
+    return;
+  }
   if (_activeAudio && _activeAudio.paused) {
     void _activeAudio.play();
     _isPaused = false;
@@ -421,6 +546,7 @@ export function resume(): void {
  * Stop speech playback immediately and reset state.
  */
 export function stop(): void {
+  const wasOffscreen = _usingOffscreen || (shouldDelegateToOffscreen() && _isPlaying);
   const synth = getSynth();
   _cancelRequested = true;
   _isPlaying = false;
@@ -431,7 +557,9 @@ export function stop(): void {
     _activeReject = null;
   }
   if (_activeResolve) {
+    const resolve = _activeResolve;
     _activeResolve = null;
+    resolve();
   }
   _activeUtterance = null;
   if (_activeAudio) {
@@ -446,6 +574,11 @@ export function stop(): void {
 
   if (synth) {
     synth.cancel();
+  }
+
+  if (wasOffscreen || shouldDelegateToOffscreen()) {
+    browser.runtime.sendMessage({ type: "STOP_TTS_AUDIO" } as unknown as never).catch(() => {});
+    _usingOffscreen = false;
   }
 }
 

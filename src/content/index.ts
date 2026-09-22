@@ -1,3 +1,5 @@
+import katexStyles from "katex/dist/katex.min.css?url";
+import { renderMarkdown } from "@/utils/markdown";
 /* ============================================================
    content/index.ts - Content Script
    Runs inside every webpage the student visits.
@@ -23,6 +25,7 @@ import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
 import { iconHTML } from "@/utils/icons";
 import { renderLatex } from "@/utils/latex";
 import katex from "katex";
+import "katex/dist/katex.min.css";
 import {
   saveSidebarState,
   loadSidebarState,
@@ -418,6 +421,7 @@ function destroyBehaviorTracking(): void {
 let _theme: Theme = "dark";
 let _extensionActive = false;
 let _cleanupYouTube: (() => void) | null = null;
+let _adaptationFlow: Promise<boolean> | null = null;
 
 const defaultBaseline: BaselineProfile = {
   formatPreference: "text",
@@ -539,12 +543,12 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
     await initPDFMode();
   } else {
     if (document.visibilityState === "visible") {
-      setTimeout(() => initContentTransformation(sourceType), 2000);
+      initContentTransformation(sourceType);
     } else {
       const onVisible = () => {
         if (document.visibilityState === "visible") {
           document.removeEventListener("visibilitychange", onVisible);
-          setTimeout(() => initContentTransformation(sourceType), 2000);
+          initContentTransformation(sourceType);
         }
       };
       document.addEventListener("visibilitychange", onVisible);
@@ -596,6 +600,17 @@ async function requestAndSendTransformation(
   text: string,
   pageType: "website" | "pdf" | "video" | "lecture",
 ): Promise<boolean> {
+  if (_adaptationFlow) return _adaptationFlow;
+  _adaptationFlow = performTransformationRequest(text, pageType).finally(() => {
+    _adaptationFlow = null;
+  });
+  return _adaptationFlow;
+}
+
+async function performTransformationRequest(
+  text: string,
+  pageType: "website" | "pdf" | "video" | "lecture",
+): Promise<boolean> {
   if (isExcludedPage(window.location.href, browser.extension.inIncognitoContext)
     || document.querySelector('input[type="password"], input[autocomplete="cc-number"]')) return false;
   const stored = await browser.storage.local.get(STORAGE_KEYS.PROFILE).catch(() => ({}));
@@ -603,12 +618,21 @@ async function requestAndSendTransformation(
   const adaptation = await requestAdaptationChoice(_theme, profile?.baseline);
   if (!adaptation) return false;
   showAdaptationStatus("MindEase is preparing the first adapted section…", false);
-  const response = await browser.runtime.sendMessage({
-    type: "TRANSFORM_CONTENT",
-    payload: { text, pageType, adaptation },
-  }).catch(() => null) as { received?: boolean } | null;
-  if (response?.received !== true) {
-    showAdaptationStatus("MindEase could not start this adaptation. Open Settings and check the Mistral configuration.", true);
+  let response: { received?: boolean; error?: string } | null = null;
+  try {
+    response = await browser.runtime.sendMessage({
+      type: "TRANSFORM_CONTENT",
+      payload: { text, pageType, adaptation },
+    }) as { received?: boolean; error?: string } | null;
+  } catch (error) {
+    showAdaptationStatus(`MindEase background connection failed: ${error instanceof Error ? error.message : String(error)}. Reload the extension and refresh this tab.`, true);
+    return false;
+  }
+  // Firefox may resolve callback-style background messages without carrying
+  // the acknowledgement. Only an explicit rejection should stop the flow;
+  // async provider failures arrive through TRANSFORM_ERROR.
+  if (response?.received === false) {
+    showAdaptationStatus(response?.error || "MindEase could not start this adaptation. Reload the extension and refresh this tab.", true);
     return false;
   }
   return true;
@@ -630,9 +654,9 @@ function showAdaptationStatus(message: string, error: boolean): void {
     document.body.appendChild(status);
   }
   status.setAttribute("role", error ? "alert" : "status");
-  status.style.background = error ? "#7F1D1D" : (_theme === "dark" ? "#010736" : "#F7E6CA");
-  status.style.color = error ? "#FFFFFF" : (_theme === "dark" ? "#F7E6CA" : "#24224A");
-  status.style.border = `2px solid ${error ? "#FCA5A5" : (_theme === "dark" ? "#F7E6CA" : "#0F52BA")}`;
+  status.style.background = _theme === "dark" ? "#171717" : "#d4d4d4";
+  status.style.color = _theme === "dark" ? "#d4d4d4" : "#171717";
+  status.style.border = `2px solid ${_theme === "dark" ? "#d4d4d4" : "#171717"}`;
   status.textContent = message;
   if (error) setTimeout(() => status?.remove(), 12_000);
 }
@@ -640,11 +664,15 @@ function showAdaptationStatus(message: string, error: boolean): void {
 function initContentTransformation(pageType: string): void {
   void (async () => {
     try {
-    const text = extractReadingText();
-    if (text.trim().length < 50) return;
-    await requestAndSendTransformation(text, pageType as "website" | "pdf" | "video" | "lecture");
+      const text = extractReadingText();
+      if (text.trim().length < 50) {
+        showAdaptationStatus("MindEase could not find enough readable material on this page.", true);
+        return;
+      }
+      await requestAndSendTransformation(text, pageType as "website" | "pdf" | "video" | "lecture");
     } catch (err) {
       console.error("[MindEase] Transform send error:", err);
+      showAdaptationStatus(`MindEase could not open adaptation: ${err instanceof Error ? err.message : String(err)}`, true);
     }
   })();
 }
@@ -710,7 +738,8 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     }
   }
   if (msg.type === "VISUALS_READY" && msg.visuals) {
-    renderVisuals(msg.visuals);
+    if (msg.visuals.length) renderVisuals(msg.visuals);
+    else if (msg.error) showAdaptationStatus(`Visual generation failed: ${msg.error}`, true);
   }
   if (msg.type === "TRANSFORM_ERROR") {
     console.error("[MindEase Content] Transform error:", msg.error);
@@ -731,7 +760,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     const capturePopup = document.getElementById("mindease-capture-result");
     const capPlaceholder = capturePopup?.querySelector(".cap-ocr-text");
     if (capPlaceholder) {
-      capPlaceholder.innerHTML = `<strong>Explanation:</strong><div style="margin:6px 0 0;line-height:1.6">${renderLatex(_escHtml(p.explanation))}</div>`;
+      capPlaceholder.innerHTML = `<strong>Explanation:</strong><div style="margin:6px 0 0;line-height:1.6">${renderMarkdown(p.explanation)}</div>`;
     } else {
       const popup = document.getElementById("mindease-explain-popup");
       const body = document.getElementById("mindease-explain-body");
@@ -823,51 +852,51 @@ window.addEventListener("message", (event: MessageEvent) => {
 const OVERLAY_CSS = `
       /* ── Theme variables (scoped to overlay) ── */
       #mindease-overlay[data-theme="dark"] {
-        --bg-base:        #010736;
-        --bg-surface:     #010736;
-        --bg-surface-alt: #0B1241;
-        --bg-elevated:    #141B49;
-        --bg-overlay:     rgba(1, 7, 54, 0.95);
-        --border:         #807A77;
-        --border-hover:   #F7E6CA;
-        --border-focus:   #F7E6CA;
-        --text-primary:   #F7E6CA;
-        --text-dim:       #D8CDBA;
-        --text-muted:     #B9B1A7;
-        --accent:         #F7E6CA;
-        --accent-secondary: #F7E6CA;
-        --accent-gradient:  linear-gradient(135deg, #F7E6CA, #F7E6CA);
+        --bg-base:        #171717;
+        --bg-surface:     color-mix(in srgb, #171717 92%, #d4d4d4);
+        --bg-surface-alt: color-mix(in srgb, #171717 84%, #d4d4d4);
+        --bg-elevated:    color-mix(in srgb, #171717 76%, #d4d4d4);
+        --bg-overlay:     #171717;
+        --border:         rgba(212, 212, 212, .20);
+        --border-hover:   #d4d4d4;
+        --border-focus:   #d4d4d4;
+        --text-primary:   #d4d4d4;
+        --text-dim:       rgba(212, 212, 212, .80);
+        --text-muted:     rgba(212, 212, 212, .62);
+        --accent:         #d4d4d4;
+        --accent-secondary: #d4d4d4;
+        --accent-gradient:  linear-gradient(135deg, #d4d4d4, #d4d4d4);
         --accent-glow:      rgba(247, 230, 202,0.25);
-        --danger:         #f87171;
-        --success:        #4ade80;
-        --warning:        #facc15;
-        --shadow:         -8px 0 48px rgba(0,0,0,0.6);
-        --shadow-right:   8px 0 48px rgba(0,0,0,0.6);
-        --font-family:    'Inter', system-ui, -apple-system, sans-serif;
+        --danger:         #d4d4d4;
+        --success:        #d4d4d4;
+        --warning:        #d4d4d4;
+        --shadow:         -12px 0 36px rgba(0,0,0,0.28);
+        --shadow-right:   12px 0 36px rgba(0,0,0,0.28);
+        --font-family:    -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
       }
 
       #mindease-overlay[data-theme="light"] {
-        --bg-base:        #F7E6CA;
-        --bg-surface:     #F7E6CA;
-        --bg-surface-alt: #FFFBE8;
-        --bg-elevated:    #FFFAE8;
-        --bg-overlay:     rgba(255, 242, 198, 0.97);
-        --border:         #AAC4F5;
-        --border-hover:   #0F52BA;
-        --border-focus:   #0F52BA;
-        --text-primary:   #2D2B55;
-        --text-dim:       #6E7FA8;
-        --text-muted:     #94A8CC;
-        --accent:         #0F52BA;
-        --accent-secondary: #AAC4F5;
-        --accent-gradient:  linear-gradient(135deg, #0F52BA, #AAC4F5);
+        --bg-base:        #d4d4d4;
+        --bg-surface:     color-mix(in srgb, #d4d4d4 94%, #171717);
+        --bg-surface-alt: color-mix(in srgb, #d4d4d4 86%, #171717);
+        --bg-elevated:    color-mix(in srgb, #d4d4d4 78%, #171717);
+        --bg-overlay:     #d4d4d4;
+        --border:         rgba(23, 23, 23, .18);
+        --border-hover:   #171717;
+        --border-focus:   #171717;
+        --text-primary:   #171717;
+        --text-dim:       rgba(23, 23, 23, .76);
+        --text-muted:     rgba(23, 23, 23, .60);
+        --accent:         #171717;
+        --accent-secondary: #171717;
+        --accent-gradient:  linear-gradient(135deg, #171717, #171717);
         --accent-glow:      rgba(140,169,255,0.20);
-        --danger:         #dc2626;
-        --success:        #16a34a;
-        --warning:        #ca8a04;
-        --shadow:         -8px 0 48px rgba(0,0,0,0.1);
-        --shadow-right:   8px 0 48px rgba(0,0,0,0.1);
-        --font-family:    'Inter', system-ui, -apple-system, sans-serif;
+        --danger:         #171717;
+        --success:        #171717;
+        --warning:        #171717;
+        --shadow:         -12px 0 32px rgba(29,35,48,0.10);
+        --shadow-right:   12px 0 32px rgba(29,35,48,0.10);
+        --font-family:    -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
       }
 
       /* ── Base overlay ── */
@@ -1125,17 +1154,17 @@ const OVERLAY_CSS = `
       .chunk-speak-btn:hover {
         opacity: 1;
         background: var(--accent);
-        color: #010736;
+        color: var(--bg-base);
         transform: scale(1.06);
       }
       .chunk-speak-btn.speaking {
         opacity: 1;
         background: var(--accent);
-        color: #010736;
+        color: var(--bg-base);
       }
       .mindease-overlay-speed-btn.active {
         background: var(--accent) !important;
-        color: #010736 !important;
+        color: var(--bg-base) !important;
         border-color: var(--accent) !important;
       }
       .chunk-concept-tag {
@@ -1209,6 +1238,14 @@ const OVERLAY_CSS = `
       .chunk-body strong {
         font-weight: 700;
       }
+      .adapted-label {
+        display: inline-flex; align-items: center; gap: 5px; margin-bottom: 8px;
+        color: var(--accent); font-size: 0.68rem; font-weight: 800;
+        letter-spacing: 0.08em; text-transform: uppercase;
+      }
+      .source-disclosure { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+      .source-disclosure summary { cursor: pointer; color: var(--text-muted); font-size: 0.72rem; font-weight: 700; }
+      .source-disclosure-body { margin-top: 8px; color: var(--text-dim); font-size: 0.76rem; line-height: 1.55; }
 
       /* ── Chunk color variants ── */
       .mindease-chunk.color-accent {
@@ -1220,12 +1257,12 @@ const OVERLAY_CSS = `
         --chunk-bg: color-mix(in srgb, var(--accent-secondary) 6%, var(--bg-surface));
       }
       .mindease-chunk.color-tertiary {
-        --chunk-theme: #10b981;
-        --chunk-bg: color-mix(in srgb, #10b981 6%, var(--bg-surface));
+        --chunk-theme: var(--accent);
+        --chunk-bg: color-mix(in srgb, var(--accent) 6%, var(--bg-surface));
       }
       .mindease-chunk.color-quaternary {
-        --chunk-theme: #f59e0b;
-        --chunk-bg: color-mix(in srgb, #f59e0b 6%, var(--bg-surface));
+        --chunk-theme: var(--accent);
+        --chunk-bg: color-mix(in srgb, var(--accent) 6%, var(--bg-surface));
       }
       .mindease-chunk.color-accent,
       .mindease-chunk.color-secondary,
@@ -1241,18 +1278,18 @@ const OVERLAY_CSS = `
 
       .color-accent .chunk-concept-tag { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
       .color-secondary .chunk-concept-tag { color: var(--accent-secondary); background: color-mix(in srgb, var(--accent-secondary) 12%, transparent); }
-      .color-tertiary .chunk-concept-tag { color: #10b981; background: color-mix(in srgb, #10b981 12%, transparent); }
-      .color-quaternary .chunk-concept-tag { color: #f59e0b; background: color-mix(in srgb, #f59e0b 12%, transparent); }
+      .color-tertiary .chunk-concept-tag,
+      .color-quaternary .chunk-concept-tag { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
       .color-accent .chunk-body h4.chunk-subtitle { color: var(--accent); }
       .color-secondary .chunk-body h4.chunk-subtitle { color: var(--accent-secondary); }
-      .color-tertiary .chunk-body h4.chunk-subtitle { color: #10b981; }
-      .color-quaternary .chunk-body h4.chunk-subtitle { color: #f59e0b; }
+      .color-tertiary .chunk-body h4.chunk-subtitle,
+      .color-quaternary .chunk-body h4.chunk-subtitle { color: var(--accent); }
 
       .color-accent .chunk-body blockquote { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
       .color-secondary .chunk-body blockquote { border-left-color: var(--accent-secondary); background: color-mix(in srgb, var(--accent-secondary) 6%, transparent); }
-      .color-tertiary .chunk-body blockquote { border-left-color: #10b981; background: color-mix(in srgb, #10b981 6%, transparent); }
-      .color-quaternary .chunk-body blockquote { border-left-color: #f59e0b; background: color-mix(in srgb, #f59e0b 6%, transparent); }
+      .color-tertiary .chunk-body blockquote,
+      .color-quaternary .chunk-body blockquote { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 
       .chunk-summary {
         margin-top: 12px;
@@ -1546,16 +1583,16 @@ const OVERLAY_CSS = `
       .m-formula {
         display: block;
         padding: 12px 16px;
-        background: #ffffff;
-        border: 1px solid #000000;
+        background: var(--bg-surface);
+        border: 1px solid var(--text-primary);
         border-radius: 6px;
         font-size: 1rem;
         margin: 8px 0;
         overflow-x: auto;
-        color: #000000;
+        color: var(--text-primary);
         text-align: center;
       }
-      .m-formula .katex { color: #000000; }
+      .m-formula .katex { color: var(--text-primary); }
       .m-formula .katex-display { margin: 0; text-align: center; }
 
       /* ── Adaptive: Slow pace - larger text ── */
@@ -1614,6 +1651,71 @@ const OVERLAY_CSS = `
       #mindease-overlay[data-attention="short"] .mindease-page {
         min-height: 120px;
       }
+      #mindease-overlay {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        border-radius: 18px 0 0 18px;
+        border: 0;
+        border-left: 1px solid var(--border);
+        box-shadow: var(--shadow);
+      }
+      #mindease-overlay[data-theme="light"] {
+        --bg-surface: color-mix(in srgb, #d4d4d4 94%, #171717);
+        --bg-surface-alt: color-mix(in srgb, #d4d4d4 86%, #171717);
+        --text-primary: #171717; --text-dim: rgba(23,23,23,.76); --text-muted: rgba(23,23,23,.60);
+        --border: rgba(23,23,23,.18); --accent: #171717;
+      }
+      #mindease-overlay[data-theme="dark"] {
+        --bg-surface: color-mix(in srgb, #171717 92%, #d4d4d4);
+        --bg-surface-alt: color-mix(in srgb, #171717 84%, #d4d4d4);
+        --text-primary: #d4d4d4; --text-dim: rgba(212,212,212,.80); --text-muted: rgba(212,212,212,.62);
+        --border: rgba(212,212,212,.20); --accent: #d4d4d4;
+      }
+      #mindease-overlay #mindease-header { padding: 14px 16px; }
+      #mindease-overlay #mindease-tabs { padding: 7px 12px; gap: 4px; }
+      #mindease-overlay .mindease-tab { min-height: 34px; border-radius: 9px; font-size: 11px; }
+      #mindease-overlay .mindease-tab.active::after { display: none; }
+      #mindease-overlay #mindease-stats-bar { padding: 10px 12px; background: var(--bg-overlay); }
+      #mindease-overlay .mindease-stat { background: var(--bg-surface); border-color: var(--border); }
+      #mindease-overlay .mindease-stat .s-label { text-transform: none; letter-spacing: normal; }
+      #mindease-overlay #mindease-body { padding: 18px; }
+      #mindease-overlay .mindease-chunk {
+        padding: 18px; border-radius: 12px; margin-bottom: 12px;
+        background: var(--bg-surface); border-color: var(--border); animation: none;
+      }
+      #mindease-overlay .mindease-chunk.has-concept,
+      #mindease-overlay .mindease-chunk.color-accent,
+      #mindease-overlay .mindease-chunk.color-secondary,
+      #mindease-overlay .mindease-chunk.color-tertiary,
+      #mindease-overlay .mindease-chunk.color-quaternary { background: var(--bg-surface); border-color: var(--border); }
+      #mindease-overlay .chunk-concept-tag { text-transform: none; letter-spacing: normal; border-radius: 7px; }
+      #mindease-overlay .chunk-body { font-size: 16px; line-height: 1.75; }
+      #mindease-overlay .chunk-body p { margin: 0 0 14px; }
+      #mindease-overlay .adapted-label { text-transform: none; letter-spacing: normal; font-size: 12px; }
+      #mindease-overlay button { min-height: 36px; border-radius: 9px; }
+      #mindease-overlay button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+      #mindease-overlay .m-formula .katex { color: var(--text-primary); }
+      @media (prefers-reduced-motion: reduce) {
+        #mindease-overlay * { animation: none !important; transition: none !important; }
+      }
+
+
+      #mindease-overlay .mindease-chunk {border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;padding:0!important;margin:0 0 20px!important;}
+      #mindease-overlay .mindease-chunk::before {display:none!important;}
+      #mindease-overlay .chunk-body {font-size:16px;line-height:1.8;max-width:72ch;}
+      #mindease-overlay .chunk-body h1,#mindease-overlay .chunk-body h2,#mindease-overlay .chunk-body h3 {line-height:1.3;margin:1.4em 0 .6em;}
+      #mindease-overlay .chunk-body p {margin:0 0 1em;}
+      #mindease-overlay .chunk-body table {border-collapse:collapse;width:100%;}
+      #mindease-overlay .chunk-body td,#mindease-overlay .chunk-body th {border:1px solid var(--border);padding:8px;text-align:left;}
+      #mindease-overlay .chunk-body pre {overflow:auto;padding:12px;background:var(--bg-elevated);}
+      #mindease-overlay .chunk-speak-btn {float:right;position:static;opacity:.6;}
+      #mindease-overlay[data-density="concise"] .is-example .chunk-body {max-height:none;overflow:visible;}
+      #mindease-overlay .source-disclosure {font-size:11px;opacity:.7;margin-top:4px;}
+      #mindease-overlay .mindease-inline-visual {margin:28px 0;}
+      #mindease-overlay .mindease-inline-visual img {width:100%;height:auto;border-radius:8px;}
+      #mindease-overlay .mindease-inline-visual figcaption {font-size:12px;margin-top:8px;color:var(--text-dim);}
+      #mindease-overlay #mindease-reader-actions {display:flex;gap:8px;padding:12px 18px;}
+      #mindease-overlay .logo-icon {background:var(--accent);color:var(--bg-surface);}
+      #mindease-overlay .logo-icon svg {stroke:currentColor;}
 `;
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -1621,48 +1723,7 @@ const OVERLAY_CSS = `
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 function formatChunkText(raw: string): string {
-  const formulas: string[] = [];
-  const tokenized = raw
-    .replace(/\[FORMULA\]([\s\S]*?)\[\/FORMULA\]/gi, (_, formula: string) => {
-      const index = formulas.push(formula) - 1;
-      return `\nMINDEASEFORMULA${index}TOKEN\n`;
-    })
-    // A DEF marker identifies a term but does not contain a definition. Remove
-    // the marker instead of displaying the term twice or inventing a tooltip.
-    .replace(/\[DEF:\s*[^\]]+\]/gi, "");
-  const safeText = _escHtml(tokenized);
-  const lines = safeText.split("\n").filter(l => l.trim());
-  const parts: string[] = [];
-  let inList = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const formulaMatch = trimmed.match(/^MINDEASEFORMULA(\d+)TOKEN$/);
-    if (formulaMatch) {
-      if (inList) { parts.push("</ul>"); inList = false; }
-      const formula = formulas[Number(formulaMatch[1])] ?? "";
-      parts.push(`<span class="m-formula">${katex.renderToString(formula.trim(), { displayMode: true, throwOnError: false })}</span>`);
-    } else if (/^>\s/.test(trimmed)) {
-      if (inList) { parts.push("</ul>"); inList = false; }
-      parts.push(`<blockquote>${trimmed.replace(/^>\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</blockquote>`);
-    } else if (/^[-*]\s/.test(trimmed)) {
-      if (!inList) { parts.push("<ul>"); inList = true; }
-      parts.push(`<li>${trimmed.replace(/^[-*]\s*/, "").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")}</li>`);
-    } else if (/^\*\*(.+?)\*\*:?\s*/.test(trimmed)) {
-      if (inList) { parts.push("</ul>"); inList = false; }
-      parts.push(`<h4 class="chunk-subtitle">${trimmed.replace(/\*\*(.+?)\*\*/g, "$1")}</h4>`);
-    } else if (autoDetectFormula(trimmed)) {
-      if (inList) { parts.push("</ul>"); inList = false; }
-      parts.push(`<span class="m-formula">${katex.renderToString(trimmed, { displayMode: true, throwOnError: false })}</span>`);
-    } else {
-      if (inList) { parts.push("</ul>"); inList = false; }
-      const formatted = trimmed
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/`([^`]+)`/g, "<code>$1</code>");
-      parts.push(`<p>${formatted}</p>`);
-    }
-  }
-  if (inList) parts.push("</ul>");
-  return renderLatex(parts.join("\n")).replace(/<\/?FORMULA>/g, "");
+  return renderMarkdown(raw.replace(/\[DEF:\s*[^\]]+\]/gi, ""));
 }
 
 function autoDetectFormula(text: string): boolean {
@@ -1682,13 +1743,14 @@ function autoDetectFormula(text: string): boolean {
   return mathSignals.some(r => r.test(text));
 }
 
-function stripInlineTags(text: string): string {
+function stripInlineTags(text: string, preserveFormulas = false): string {
   return text
     .replace(/\[CONCEPT:[^\]]+\]/g, "")
     .replace(/\[SUMMARY:[^\]]+\]/g, "")
     .replace(/\[CHUNK\s*\d*\]/gi, "")
     .replace(/^---+$/gm, "")
     .replace(/\[\/?EXAMPLE(?:_END)?\]/gi, "")
+    .replace(/\[\/?FORMULA\]/gi, marker => preserveFormulas ? marker : "")
     .trim();
 }
 
@@ -1700,8 +1762,8 @@ const EXPLAIN_POPUP_CSS = `
 #mindease-explain-popup {
   position: fixed;
   z-index: 2147483646;
-  background: var(--bg-surface, #010736);
-  border: 1px solid var(--border, #807A77);
+  background: var(--bg-surface, #171717);
+  border: 1px solid var(--border, #d4d4d4);
   border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.35);
   max-width: 360px;
@@ -1710,7 +1772,7 @@ const EXPLAIN_POPUP_CSS = `
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.8rem;
   line-height: 1.55;
-  color: var(--text-primary, #F7E6CA);
+  color: var(--text-primary, #d4d4d4);
   display: none;
   animation: mindease-fadeUp 0.15s ease;
   overflow: hidden;
@@ -1720,29 +1782,29 @@ const EXPLAIN_POPUP_CSS = `
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent, #F7E6CA) 10%, transparent);
-  border-bottom: 1px solid var(--border, #807A77);
+  background: color-mix(in srgb, var(--accent, #d4d4d4) 10%, transparent);
+  border-bottom: 1px solid var(--border, #d4d4d4);
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--accent, #F7E6CA);
+  color: var(--accent, #d4d4d4);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 #mindease-explain-close {
   background: none;
   border: none;
-  color: var(--text-muted, #B9B1A7);
+  color: var(--text-muted, #d4d4d4);
   cursor: pointer;
   padding: 2px;
   font-size: 14px;
   line-height: 1;
   border-radius: 4px;
 }
-#mindease-explain-close:hover { color: var(--text-primary, #F7E6CA); }
+#mindease-explain-close:hover { color: var(--text-primary, #d4d4d4); }
 #mindease-explain-loader {
   padding: 16px;
   text-align: center;
-  color: var(--text-muted, #B9B1A7);
+  color: var(--text-muted, #d4d4d4);
   font-size: 0.75rem;
 }
 #mindease-explain-loader::after {
@@ -1750,8 +1812,8 @@ const EXPLAIN_POPUP_CSS = `
   display: inline-block;
   width: 12px; height: 12px;
   margin-left: 6px;
-  border: 2px solid var(--border, #807A77);
-  border-top-color: var(--accent, #F7E6CA);
+  border: 2px solid var(--border, #d4d4d4);
+  border-top-color: var(--accent, #d4d4d4);
   border-radius: 50%;
   animation: mindease-spin 0.6s linear infinite;
   vertical-align: middle;
@@ -1760,15 +1822,15 @@ const EXPLAIN_POPUP_CSS = `
   padding: 10px 12px;
   display: none;
   font-size: 0.8rem;
-  color: var(--text-primary, #F7E6CA);
+  color: var(--text-primary, #d4d4d4);
 }
 #mindease-explain-selected {
   padding: 6px 12px;
   font-size: 0.72rem;
-  color: var(--text-dim, #D8CDBA);
+  color: var(--text-dim, #d4d4d4);
   font-style: italic;
-  border-top: 1px solid var(--border, #807A77);
-  background: color-mix(in srgb, var(--bg-base, #010736) 40%, transparent);
+  border-top: 1px solid var(--border, #d4d4d4);
+  background: color-mix(in srgb, var(--bg-base, #171717) 40%, transparent);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1850,8 +1912,8 @@ const CTX_EXPLAIN_CSS = `
 #mindease-ctx-loading {
   position: fixed;
   z-index: 2147483646;
-  background: color-mix(in srgb, var(--accent, #F7E6CA) 12%, var(--bg-surface, #010736));
-  border: 1px solid var(--border, #807A77);
+  background: color-mix(in srgb, var(--accent, #d4d4d4) 12%, var(--bg-surface, #171717));
+  border: 1px solid var(--border, #d4d4d4);
   border-radius: 8px;
   padding: 6px 12px;
   display: flex;
@@ -1859,7 +1921,7 @@ const CTX_EXPLAIN_CSS = `
   gap: 8px;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.75rem;
-  color: var(--accent, #F7E6CA);
+  color: var(--accent, #d4d4d4);
   box-shadow: 0 4px 16px rgba(0,0,0,0.25);
   animation: mindease-fadeUp 0.12s ease;
   pointer-events: none;
@@ -1889,8 +1951,8 @@ const CTX_EXPLAIN_CSS = `
 #mindease-ctx-popup {
   position: fixed;
   z-index: 2147483646;
-  background: var(--bg-surface, #010736);
-  border: 1px solid var(--border, #807A77);
+  background: var(--bg-surface, #171717);
+  border: 1px solid var(--border, #d4d4d4);
   border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.35);
   max-width: 360px;
@@ -1898,7 +1960,7 @@ const CTX_EXPLAIN_CSS = `
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.8rem;
   line-height: 1.55;
-  color: var(--text-primary, #F7E6CA);
+  color: var(--text-primary, #d4d4d4);
   display: none;
   animation: mindease-fadeUp 0.15s ease;
   overflow: hidden;
@@ -1908,30 +1970,30 @@ const CTX_EXPLAIN_CSS = `
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent, #F7E6CA) 10%, transparent);
-  border-bottom: 1px solid var(--border, #807A77);
+  background: color-mix(in srgb, var(--accent, #d4d4d4) 10%, transparent);
+  border-bottom: 1px solid var(--border, #d4d4d4);
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--accent, #F7E6CA);
+  color: var(--accent, #d4d4d4);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 #mindease-ctx-popup .ctx-popup-close {
   background: none;
   border: none;
-  color: var(--text-muted, #B9B1A7);
+  color: var(--text-muted, #d4d4d4);
   cursor: pointer;
   padding: 2px;
   font-size: 14px;
   line-height: 1;
   border-radius: 4px;
 }
-#mindease-ctx-popup .ctx-popup-close:hover { color: var(--text-primary, #F7E6CA); }
+#mindease-ctx-popup .ctx-popup-close:hover { color: var(--text-primary, #d4d4d4); }
 #mindease-ctx-popup .ctx-popup-body {
   padding: 12px 14px;
   font-size: 0.82rem;
   line-height: 1.6;
-  color: var(--text-primary, #F7E6CA);
+  color: var(--text-primary, #d4d4d4);
   word-wrap: break-word;
   overflow-y: auto;
   flex: 1;
@@ -2007,7 +2069,7 @@ function showContextExplainResult(_text: string, explanation: string): void {
       <div class="ctx-popup-body"></div>
     `;
     const bodyEl = popup.querySelector(".ctx-popup-body");
-    if (bodyEl) bodyEl.innerHTML = renderLatex(_escHtml(explanation));
+    if (bodyEl) bodyEl.innerHTML = renderMarkdown(explanation);
     document.body.appendChild(popup);
 
     popup.querySelector(".ctx-popup-close")?.addEventListener("click", () => popup!.remove());
@@ -2022,7 +2084,7 @@ function showContextExplainResult(_text: string, explanation: string): void {
     });
   } else {
     const body = popup.querySelector(".ctx-popup-body");
-    if (body) body.innerHTML = renderLatex(_escHtml(explanation));
+    if (body) body.innerHTML = renderMarkdown(explanation);
   }
   popup.style.display = "flex";
 }
@@ -2043,7 +2105,7 @@ function showOcrResult(text?: string, error?: string): void {
   const headerText = error ? "OCR Failed" : "Extracted Text";
   const bodyContent = error
     ? `<p style="color:var(--danger);margin:0">${_escHtml(error)}</p>`
-    : `<div style="white-space:pre-wrap;font-size:0.82rem;line-height:1.6;max-height:300px;overflow-y:auto">${_escHtml(text ?? "")}</div>`;
+    : `<div style="white-space:pre-wrap;font-size:0.82rem;line-height:1.6;max-height:300px;overflow-y:auto">${renderMarkdown(text ?? "")}</div>`;
 
   popup.innerHTML = `
     <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);width:400px;max-width:90vw;overflow:hidden">
@@ -2143,20 +2205,20 @@ const CAPTURE_CSS = `
 }
 #mindease-capture-overlay .cap-toolbar button:hover { opacity: 0.85; }
 #mindease-capture-overlay .cap-toolbar .cap-confirm {
-  background: var(--accent, #F7E6CA);
-  color: #010736;
+  background: var(--accent, #d4d4d4);
+  color: #171717;
 }
 #mindease-capture-overlay .cap-toolbar .cap-cancel {
-  background: var(--bg-surface, #010736);
-  color: var(--text-dim, #D8CDBA);
-  border: 1px solid var(--border, #807A77);
+  background: var(--bg-surface, #171717);
+  color: var(--text-dim, #d4d4d4);
+  border: 1px solid var(--border, #d4d4d4);
 }
 
 #mindease-capture-result {
   position: fixed;
   z-index: 2147483647;
-  background: var(--bg-surface, #010736);
-  border: 1px solid var(--border, #807A77);
+  background: var(--bg-surface, #171717);
+  border: 1px solid var(--border, #d4d4d4);
   border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.35);
   max-width: 480px;
@@ -2164,7 +2226,7 @@ const CAPTURE_CSS = `
   overflow: hidden;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   font-size: 0.8rem;
-  color: var(--text-primary, #F7E6CA);
+  color: var(--text-primary, #d4d4d4);
   animation: mindease-fadeUp 0.15s ease;
 }
 #mindease-capture-result .cap-result-header {
@@ -2172,24 +2234,24 @@ const CAPTURE_CSS = `
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent, #F7E6CA) 10%, transparent);
-  border-bottom: 1px solid var(--border, #807A77);
+  background: color-mix(in srgb, var(--accent, #d4d4d4) 10%, transparent);
+  border-bottom: 1px solid var(--border, #d4d4d4);
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--accent, #F7E6CA);
+  color: var(--accent, #d4d4d4);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 #mindease-capture-result .cap-result-close {
   background: none;
   border: none;
-  color: var(--text-muted, #B9B1A7);
+  color: var(--text-muted, #d4d4d4);
   cursor: pointer;
   padding: 2px;
   font-size: 14px;
   line-height: 1;
 }
-#mindease-capture-result .cap-result-close:hover { color: var(--text-primary, #F7E6CA); }
+#mindease-capture-result .cap-result-close:hover { color: var(--text-primary, #d4d4d4); }
 #mindease-capture-result .cap-result-body {
   padding: 12px;
 }
@@ -2197,17 +2259,17 @@ const CAPTURE_CSS = `
   display: block;
   max-width: 100%;
   border-radius: 6px;
-  border: 1px solid var(--border, #807A77);
+  border: 1px solid var(--border, #d4d4d4);
   margin-bottom: 10px;
 }
 #mindease-capture-result .cap-result-body .cap-ocr-placeholder {
   text-align: center;
-  color: var(--text-dim, #D8CDBA);
+  color: var(--text-dim, #d4d4d4);
   font-size: 0.75rem;
   padding: 8px;
-  background: color-mix(in srgb, var(--accent, #F7E6CA) 8%, transparent);
+  background: color-mix(in srgb, var(--accent, #d4d4d4) 8%, transparent);
   border-radius: 6px;
-  border: 1px dashed var(--border, #807A77);
+  border: 1px dashed var(--border, #d4d4d4);
 }
 `;
 
@@ -2325,7 +2387,7 @@ function showCaptureResult(croppedDataUrl: string): void {
     const link = document.createElement("link");
     link.id = "mindease-katex-css";
     link.rel = "stylesheet";
-    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    link.href = browser.runtime.getURL(katexStyles.replace(/^\//, ""));
     document.head.appendChild(link);
   }
 
@@ -2337,8 +2399,8 @@ function showCaptureResult(croppedDataUrl: string): void {
     max-width:min(500px,calc(100vw - 32px));
     max-height:calc(100vh - 32px);
     display:flex;flex-direction:column;
-    background:var(--bg-surface,#010736);
-    border:1px solid var(--border,#807A77);
+    background:var(--bg-surface,#171717);
+    border:1px solid var(--border,#d4d4d4);
     border-radius:14px;
     box-shadow:0 8px 32px rgba(0,0,0,0.35);
     overflow:hidden;
@@ -2349,13 +2411,13 @@ function showCaptureResult(croppedDataUrl: string): void {
   popup.style.transform = "translate(-50%,-50%)";
 
   popup.innerHTML = `
-    <div class="cap-result-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border,#807A77);font-size:0.82rem;font-weight:600;color:var(--accent,#F7E6CA)">
+    <div class="cap-result-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border,#d4d4d4);font-size:0.82rem;font-weight:600;color:var(--accent,#d4d4d4)">
       <span>Captured region</span>
-      <button class="cap-result-close" style="background:none;border:none;cursor:pointer;padding:2px 8px;font-size:16px;color:var(--text-muted,#B9B1A7)">&times;</button>
+      <button class="cap-result-close" style="background:none;border:none;cursor:pointer;padding:2px 8px;font-size:16px;color:var(--text-muted,#d4d4d4)">&times;</button>
     </div>
     <div class="cap-result-body" style="padding:12px 14px;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:10px">
       <img src="${croppedDataUrl}" alt="Captured region" style="max-width:100%;height:auto;border-radius:8px" />
-      <div class="cap-ocr-placeholder" style="font-size:0.82rem;color:var(--text-dim,#B9B1A7)">
+      <div class="cap-ocr-placeholder" style="font-size:0.82rem;color:var(--text-dim,#d4d4d4)">
         OCR in progress...
       </div>
     </div>
@@ -2390,12 +2452,12 @@ const FLOATING_TTS_CSS = `
   z-index: 2147483646;
   width: 330px;
   max-width: calc(100vw - 32px);
-  background: var(--bg-surface, #010736);
-  border: 1px solid var(--border, #807A77);
+  background: var(--bg-surface, #171717);
+  border: 1px solid var(--border, #d4d4d4);
   border-radius: 12px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  color: var(--text-primary, #F7E6CA);
+  color: var(--text-primary, #d4d4d4);
   overflow: hidden;
   animation: mindease-fadeUp 0.18s ease;
 }
@@ -2404,31 +2466,31 @@ const FLOATING_TTS_CSS = `
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
-  background: color-mix(in srgb, var(--accent, #F7E6CA) 12%, var(--bg-surface, #010736));
-  border-bottom: 1px solid var(--border, #807A77);
+  background: color-mix(in srgb, var(--accent, #d4d4d4) 12%, var(--bg-surface, #171717));
+  border-bottom: 1px solid var(--border, #d4d4d4);
   font-size: 0.74rem;
   font-weight: 600;
-  color: var(--accent, #F7E6CA);
+  color: var(--accent, #d4d4d4);
 }
 #mindease-floating-tts-close {
   background: none;
   border: none;
-  color: var(--text-muted, #B9B1A7);
+  color: var(--text-muted, #d4d4d4);
   cursor: pointer;
   padding: 2px 6px;
   font-size: 16px;
   line-height: 1;
 }
-#mindease-floating-tts-close:hover { color: var(--text-primary, #F7E6CA); }
+#mindease-floating-tts-close:hover { color: var(--text-primary, #d4d4d4); }
 #mindease-floating-tts-body {
   padding: 10px 12px;
   font-size: 0.8rem;
   line-height: 1.55;
   max-height: 100px;
   overflow-y: auto;
-  color: var(--text-primary, #F7E6CA);
-  background: color-mix(in srgb, var(--bg-base, #010736) 50%, transparent);
-  border-bottom: 1px solid var(--border, #807A77);
+  color: var(--text-primary, #d4d4d4);
+  background: color-mix(in srgb, var(--bg-base, #171717) 50%, transparent);
+  border-bottom: 1px solid var(--border, #d4d4d4);
 }
 #mindease-floating-tts-controls {
   display: flex;
@@ -2441,8 +2503,8 @@ const FLOATING_TTS_CSS = `
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: var(--accent, #F7E6CA);
-  color: #010736;
+  background: var(--accent, #d4d4d4);
+  color: #171717;
   border: none;
   border-radius: 6px;
   padding: 5px 12px;
@@ -2454,14 +2516,14 @@ const FLOATING_TTS_CSS = `
 .mindease-tts-btn-icon:hover { opacity: 0.9; }
 .mindease-tts-btn-secondary {
   background: transparent;
-  color: var(--text-dim, #D8CDBA);
-  border: 1px solid var(--border, #807A77);
+  color: var(--text-dim, #d4d4d4);
+  border: 1px solid var(--border, #d4d4d4);
   border-radius: 6px;
   padding: 4px 8px;
   font-size: 0.72rem;
   cursor: pointer;
 }
-.mindease-tts-btn-secondary:hover { color: var(--text-primary, #F7E6CA); border-color: var(--accent, #F7E6CA); }
+.mindease-tts-btn-secondary:hover { color: var(--text-primary, #d4d4d4); border-color: var(--accent, #d4d4d4); }
 .mindease-tts-speed-group {
   display: flex;
   gap: 3px;
@@ -2471,16 +2533,16 @@ const FLOATING_TTS_CSS = `
   padding: 2px 6px;
   font-size: 0.68rem;
   border-radius: 4px;
-  border: 1px solid var(--border, #807A77);
+  border: 1px solid var(--border, #d4d4d4);
   background: transparent;
-  color: var(--text-dim, #D8CDBA);
+  color: var(--text-dim, #d4d4d4);
   cursor: pointer;
 }
 .mindease-tts-speed-btn.active {
-  background: var(--accent, #F7E6CA);
-  color: #010736;
+  background: var(--accent, #d4d4d4);
+  color: #171717;
   font-weight: 600;
-  border-color: var(--accent, #F7E6CA);
+  border-color: var(--accent, #d4d4d4);
 }
 `;
 
@@ -2521,7 +2583,7 @@ function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void
         <div style="display:flex;align-items:center;gap:6px">
           ${iconHTML("volume-2")}
           <span>MindEase Reader</span>
-          <span id="mindease-tts-counter" style="font-size:0.68rem;color:var(--text-dim,#D8CDBA)"></span>
+          <span id="mindease-tts-counter" style="font-size:0.68rem;color:var(--text-dim,#d4d4d4)"></span>
         </div>
         <button id="mindease-floating-tts-close" title="Close reader">&times;</button>
       </div>
@@ -2600,7 +2662,7 @@ function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void
         onProgress: (idx, total, sentence) => {
           if (counterEl) counterEl.textContent = `(${idx + 1}/${total})`;
           if (bodyEl) {
-            bodyEl.innerHTML = `<span style="background:color-mix(in srgb,var(--accent,#F7E6CA) 30%,transparent);border-radius:3px;padding:2px 4px">${_escHtml(sentence)}</span>`;
+            bodyEl.innerHTML = `<span style="background:color-mix(in srgb,var(--accent,#d4d4d4) 30%,transparent);border-radius:3px;padding:2px 4px">${_escHtml(sentence)}</span>`;
           }
         },
         onEnd: () => {
@@ -2626,7 +2688,7 @@ function appendToOverlay(chunks: ContentChunk[]): void {
   const marker = document.getElementById("mindease-loading-marker");
   if (!container) return;
   _contentChunks.push(...chunks);
-  _ttsTexts.push(...chunks.map(chunk => chunk.sourceText ?? stripInlineTags(chunk.text)));
+  _ttsTexts.push(...chunks.map(chunk => stripInlineTags(chunk.text)));
   const palette = ["accent", "secondary", "tertiary", "quaternary"];
   const existing = container.querySelectorAll(".mindease-chunk").length;
   const html = chunks.map((chunk, i) => {
@@ -2638,18 +2700,21 @@ function appendToOverlay(chunks: ContentChunk[]): void {
       .replace(/^---+$/gm, "")
       .replace(/\[\/?EXAMPLE(?:_END)?\]/gi, "")
       .trim();
-    const bodyHTML = chunk.sourceText !== undefined
-      ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere">${_escHtml(chunk.sourceText)}</div>`
-      : formatChunkText(cleanText);
+    const isAdapted = chunk.sourceText !== undefined && chunk.text.trim() !== chunk.sourceText.trim();
+    const bodyHTML = formatChunkText(isAdapted ? cleanText : (chunk.sourceText ?? cleanText));
+    const sourceDisclosure = isAdapted
+      ? `<details class="source-disclosure"><summary>View original source section</summary><div class="source-disclosure-body">${formatChunkText(chunk.sourceText!)}</div></details>`
+      : "";
     const colorKey = palette[(existing + i) % palette.length];
     return `
       <div class="mindease-chunk ${concept ? "has-concept" : ""} color-${colorKey}
            ${chunk.isExample ? "is-example" : ""} ${chunk.hasDefinitions ? "has-defs" : ""}"
-           data-chunk-index="${existing + i}">
+           data-chunk-index="${existing + i}" data-source-block="${_escHtml(chunk.id)}">
         <button class="chunk-speak-btn" data-chunk-index="${existing + i}" title="Listen to this section" aria-label="Listen to this section">${iconHTML("volume-2")}</button>
-        ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${_escHtml(concept)}</div>` : ""}
+        
         <div class="chunk-body">${bodyHTML}</div>
-        ${chunk.summary ? `<div class="chunk-summary"><strong>AI explanation</strong> ${_escHtml(chunk.summary)}</div>` : ""}
+        ${sourceDisclosure}
+        
       </div>
     `;
   }).join("");
@@ -2681,21 +2746,24 @@ function injectOverlay(
   function renderChunkHTML(chunk: ContentChunk, i: number): string {
     const concept = chunk.conceptTags[0] ?? "";
     const summary = chunk.summary ?? "";
-    const cleanText = stripInlineTags(chunk.text);
+    const cleanText = stripInlineTags(chunk.text, true);
     const palette = ["accent", "secondary", "tertiary", "quaternary"];
     const colorKey = palette[i % palette.length];
-    const bodyHTML = chunk.sourceText !== undefined
-      ? `<div style="white-space:pre-wrap;overflow-wrap:anywhere">${_escHtml(chunk.sourceText)}</div>`
-      : formatChunkText(cleanText);
+    const isAdapted = chunk.sourceText !== undefined && chunk.text.trim() !== chunk.sourceText.trim();
+    const bodyHTML = formatChunkText(isAdapted ? cleanText : (chunk.sourceText ?? cleanText));
+    const sourceDisclosure = isAdapted
+      ? `<details class="source-disclosure"><summary>View original source section</summary><div class="source-disclosure-body">${formatChunkText(chunk.sourceText!)}</div></details>`
+      : "";
 
     return `
       <div class="mindease-chunk ${concept ? "has-concept" : ""} color-${colorKey}
            ${chunk.isExample ? "is-example" : ""} ${chunk.hasDefinitions ? "has-defs" : ""}"
-           data-chunk-index="${i}">
+           data-chunk-index="${i}" data-source-block="${_escHtml(chunk.id)}">
         <button class="chunk-speak-btn" data-chunk-index="${i}" title="Listen to this section" aria-label="Listen to this section">${iconHTML("volume-2")}</button>
-        ${concept ? `<div class="chunk-concept-tag">${iconHTML("star")} ${_escHtml(concept)}</div>` : ""}
+        
         <div class="chunk-body">${bodyHTML}</div>
-        ${summary ? `<div class="chunk-summary"><strong>AI explanation</strong> ${_escHtml(summary)}</div>` : ""}
+        ${sourceDisclosure}
+        
       </div>
     `;
   }
@@ -2717,14 +2785,14 @@ function injectOverlay(
   _formatPreference = baselineProfile.formatPreference;
   _conceptsFromChunks = [...new Set(orderedChunks.flatMap(c => c.conceptTags).filter(Boolean))];
   _ttsTexts = orderedChunks
-    .map(c => c.sourceText ?? stripInlineTags(c.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
+    .map(c => stripInlineTags(c.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
     .filter(Boolean);
   _contentChunks = orderedChunks;
   console.log(`[Content] Extracted ${_conceptsFromChunks.length} concepts, ${_contentChunks.length} chunks`);
   const totalConcepts = orderedChunks.reduce((acc, c) => acc + c.conceptTags.length, 0);
   const summaryCount = orderedChunks.filter(c => c.summary).length;
 
-  const defaultTab = baselineProfile.formatPreference === "visual" ? "visuals" : "content";
+  const defaultTab = "content";
 
   const infoDensity = baselineProfile.infoDensity;
   const secondLang = baselineProfile.secondLanguageLearner;
@@ -2746,7 +2814,7 @@ function injectOverlay(
     const link = document.createElement("link");
     link.id = "mindease-katex-css";
     link.rel = "stylesheet";
-    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    link.href = browser.runtime.getURL(katexStyles.replace(/^\//, ""));
     document.head.appendChild(link);
   }
 
@@ -2772,35 +2840,7 @@ function injectOverlay(
       </div>
     </div>
 
-    <div id="mindease-tabs" role="tablist" aria-label="Panel sections">
-      <button class="mindease-tab${defaultTab === 'content' ? ' active' : ''}" data-tab="content" role="tab" aria-selected="${defaultTab === 'content'}" aria-controls="tab-content">Content</button>
-      <button class="mindease-tab${defaultTab === 'visuals' ? ' active' : ''}" data-tab="visuals" role="tab" aria-selected="${defaultTab === 'visuals'}" aria-controls="tab-visuals">Visuals <span class="visuals-badge" id="visuals-badge" style="display:none">0</span></button>
-      <button class="mindease-tab" data-tab="profile" role="tab" aria-selected="false" aria-controls="tab-profile">Profile</button>
-      <button class="mindease-tab" data-tab="session" role="tab" aria-selected="false" aria-controls="tab-session">Session</button>
-    </div>
-
-    <div id="mindease-stats-bar">
-      <div class="mindease-stat">
-        <span class="s-icon">${iconHTML("file-text")}</span>
-        <span class="s-num">${orderedChunks.length}</span>
-        <span class="s-label">Chunks</span>
-      </div>
-      <div class="mindease-stat">
-        <span class="s-icon">${iconHTML("star")}</span>
-        <span class="s-num">${totalConcepts}</span>
-        <span class="s-label">Concepts</span>
-      </div>
-      <div class="mindease-stat">
-        <span class="s-icon">${iconHTML("align-start-vertical")}</span>
-        <span class="s-num">${summaryCount}</span>
-        <span class="s-label">Summaries</span>
-      </div>
-      <div class="mindease-stat">
-        <span class="s-icon">${iconHTML("bar-chart-3")}</span>
-        <span class="s-num" id="mindease-engage-count">0</span>
-        <span class="s-label">Engaged</span>
-      </div>
-    </div>
+    <div id="mindease-reader-actions"><button class="mindease-btn" id="mindease-video">Generate video</button><button class="mindease-btn" id="mindease-profile-edit">Edit preferences</button></div>
 
     <div id="mindease-tts-bar" style="display:none;align-items:center;justify-content:space-between;gap:8px;padding:6px 14px;background:color-mix(in srgb,var(--accent) 12%,var(--bg-surface));border-bottom:1px solid var(--border);font-size:0.75rem;color:var(--accent)">
       <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
@@ -2810,7 +2850,7 @@ function injectOverlay(
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <div class="mindease-tts-speed-bar" style="display:flex;gap:2px">
           <button class="mindease-overlay-speed-btn" data-rate="0.75" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer">0.75x</button>
-          <button class="mindease-overlay-speed-btn active" data-rate="1" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--accent);background:var(--accent);color:#010736;font-weight:600;cursor:pointer">1x</button>
+          <button class="mindease-overlay-speed-btn active" data-rate="1" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--accent);background:var(--accent);color:#171717;font-weight:600;cursor:pointer">1x</button>
           <button class="mindease-overlay-speed-btn" data-rate="1.25" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer">1.25x</button>
           <button class="mindease-overlay-speed-btn" data-rate="1.5" style="padding:1px 5px;font-size:0.65rem;border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer">1.5x</button>
         </div>
@@ -2822,7 +2862,7 @@ function injectOverlay(
     <div id="mindease-body">
       <div class="mindease-tab-content${defaultTab === 'content' ? ' active' : ''}" id="tab-content" role="tabpanel" aria-label="Content">
         ${orderedChunks.length === 0
-          ? '<p style="color:var(--text-muted);text-align:center;padding:24px">No content chunks yet.</p>'
+          ? '<p style="color:var(--text-muted);text-align:center;padding:24px">Preparing your reading page…</p>'
           : orderedChunks.map((chunk, ci) => renderChunkHTML(chunk, ci)).join("")
         }
         <div id="mindease-loading-marker" style="display:none;text-align:center;padding:16px;color:var(--text-muted);font-size:0.78rem">
@@ -2830,102 +2870,7 @@ function injectOverlay(
         </div>
       </div>
 
-      <div class="mindease-tab-content${defaultTab === 'visuals' ? ' active' : ''}" id="tab-visuals" role="tabpanel" aria-label="Visuals"${defaultTab === 'visuals' ? '' : ' style="display:none"'}>
-        <div class="mindease-section-title">Generated Visuals</div>
-        <div id="mindease-visuals-grid" class="visuals-grid">
-          <div style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:40px 20px;text-align:center">
-            ${iconHTML("image")}
-            <p style="color:var(--text-muted);font-size:0.78rem;max-width:280px">
-              No visuals generated yet. Generate diagrams and infographics for the concepts you are studying.
-            </p>
-            <button id="mindease-gen-visuals-btn-init" class="mindease-btn mindease-btn-primary" style="display:inline-flex;align-items:center;gap:6px">
-              ${iconHTML("sparkles")} Generate Visuals${_contentChunks.length > 0 ? ` (${_contentChunks.length} chunks)` : ""}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="mindease-tab-content" id="tab-profile" role="tabpanel" aria-label="Profile">
-        <div class="mindease-section-title">Cognitive Baseline</div>
-        <div class="profile-grid" id="mindease-profile-grid">
-          <div class="profile-card">
-            <div class="pc-label">Format</div>
-            <div class="pc-value" id="pc-format">&mdash;</div>
-          </div>
-          <div class="profile-card">
-            <div class="pc-label">Attention</div>
-            <div class="pc-value" id="pc-attention">&mdash;</div>
-          </div>
-          <div class="profile-card">
-            <div class="pc-label">Reading Pace</div>
-            <div class="pc-value" id="pc-pace">&mdash;</div>
-          </div>
-          <div class="profile-card">
-            <div class="pc-label">Sessions</div>
-            <div class="pc-value" id="pc-sessions">&mdash;</div>
-          </div>
-        </div>
-        <div class="mindease-section-title">RL Adaptation</div>
-        <div id="mindease-rl-bars">
-          <div class="rl-bar-container">
-            <div class="rl-bar-label"><span>Chunk Size</span><span id="rl-chunk">&mdash;</span></div>
-            <div class="rl-bar"><div class="rl-bar-fill" id="rl-chunk-bar" style="width:50%;background:var(--accent)"></div></div>
-          </div>
-          <div class="rl-bar-container">
-            <div class="rl-bar-label"><span>Simplification</span><span id="rl-simplify">&mdash;</span></div>
-            <div class="rl-bar"><div class="rl-bar-fill" id="rl-simplify-bar" style="width:50%;background:var(--accent-secondary)"></div></div>
-          </div>
-          <div class="rl-bar-container">
-            <div class="rl-bar-label"><span>Summary Freq</span><span id="rl-summary">&mdash;</span></div>
-            <div class="rl-bar"><div class="rl-bar-fill" id="rl-summary-bar" style="width:50%;background:var(--accent)"></div></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="mindease-tab-content" id="tab-session" role="tabpanel" aria-label="Session">
-        <div class="mindease-section-title">This Session</div>
-        <div class="profile-grid">
-          <div class="profile-card">
-            <div class="pc-label">Highlights</div>
-            <div class="pc-value" id="sess-highlights">0</div>
-          </div>
-          <div class="profile-card">
-            <div class="pc-label">Pauses</div>
-            <div class="pc-value" id="sess-pauses">0</div>
-          </div>
-          <div class="profile-card">
-            <div class="pc-label">Skips</div>
-            <div class="pc-value" id="sess-skips">0</div>
-          </div>
-          <div class="profile-card">
-            <div class="pc-label">Re-reads</div>
-            <div class="pc-value" id="sess-rereads">0</div>
-          </div>
-        </div>
-        <div class="mindease-section-title">Engagement Score</div>
-        <div class="rl-bar-container">
-          <div class="rl-bar-label"><span>Overall</span><span id="sess-score">0.0</span></div>
-          <div class="rl-bar"><div class="rl-bar-fill" id="sess-score-bar" style="width:0%;background:var(--accent-gradient)"></div></div>
-        </div>
-        <div class="mindease-section-title">Focus Metrics</div>
-        <div class="profile-grid">
-          <div class="profile-card"><div class="pc-label">Duration</div><div class="pc-value" id="sess-duration">&mdash;</div></div>
-          <div class="profile-card"><div class="pc-label">Focused</div><div class="pc-value" id="sess-focused">&mdash;</div></div>
-          <div class="profile-card"><div class="pc-label">Interruptions</div><div class="pc-value" id="sess-interruptions">&mdash;</div></div>
-          <div class="profile-card"><div class="pc-label">Longest Break</div><div class="pc-value" id="sess-longest">&mdash;</div></div>
-        </div>
-        <div class="mindease-section-title">Artifact Summary</div>
-        <div class="profile-grid">
-          <div class="profile-card"><div class="pc-label">Resources</div><div class="pc-value" id="sess-resources">0</div></div>
-          <div class="profile-card"><div class="pc-label">Cards</div><div class="pc-value" id="sess-cards">0</div></div>
-          <div class="profile-card"><div class="pc-label">Review</div><div class="pc-value" id="sess-review-cards">0</div></div>
-          <div class="profile-card"><div class="pc-label">Gaps</div><div class="pc-value" id="sess-gaps">0</div></div>
-        </div>
-        <div class="mindease-section-title">Personal Notes</div>
-        <div id="mindease-notes-list">
-          <p style="color:var(--text-muted);font-size:0.78rem;text-align:center;padding:12px">Highlight text on the page to create notes.</p>
-        </div>
-      </div>
+      <div id="mindease-visuals-grid" class="visuals-grid" aria-live="polite"></div>
     </div>
 
     <div id="mindease-footer">
@@ -2957,6 +2902,12 @@ function injectOverlay(
   }, 100);
 
   /* ── Tab switching ── */
+  overlay.querySelector("#mindease-video")?.addEventListener("click", () => {
+    window.open(browser.runtime.getURL("src/video/video.html") + "?url=" + encodeURIComponent(location.href), "_blank", "noopener");
+  });
+  overlay.querySelector("#mindease-profile-edit")?.addEventListener("click", () => {
+    window.open(browser.runtime.getURL("src/session/dashboard/dashboard.html") + "#profile", "_blank", "noopener");
+  });
   overlay.querySelectorAll(".mindease-tab").forEach(tab => {
     tab.addEventListener("click", () => {
       overlay.querySelectorAll(".mindease-tab").forEach(t => {
@@ -3016,14 +2967,14 @@ function injectOverlay(
     const footer = document.getElementById("mindease-footer");
     if (minimized) {
       body!.style.display = "none";
-      tabs!.style.display = "none";
-      stats!.style.display = "none";
+      if (tabs) tabs.style.display = "none";
+      if (stats) stats.style.display = "none";
       footer!.style.display = "none";
       overlay.style.height = "auto";
     } else {
       body!.style.display = "";
-      tabs!.style.display = "";
-      stats!.style.display = "";
+      if (tabs) tabs.style.display = "";
+      if (stats) stats.style.display = "";
       footer!.style.display = "";
       overlay.style.height = "100vh";
     }
@@ -3151,8 +3102,8 @@ function injectOverlay(
       const stats = document.getElementById("mindease-stats-bar");
       const footer = document.getElementById("mindease-footer");
       body!.style.display = "none";
-      tabs!.style.display = "none";
-      stats!.style.display = "none";
+      if (tabs) tabs.style.display = "none";
+      if (stats) stats.style.display = "none";
       footer!.style.display = "none";
       overlay.style.height = "auto";
     }
@@ -3164,17 +3115,7 @@ function injectOverlay(
       overlay.style.borderRight = "1px solid var(--border)";
       overlay.style.boxShadow = "var(--shadow-right)";
     }
-    if (saved.activeTab && saved.activeTab !== "content") {
-      overlay.querySelectorAll(".mindease-tab").forEach(t => {
-        t.classList.remove("active");
-        t.setAttribute("aria-selected", "false");
-      });
-      overlay.querySelectorAll(".mindease-tab-content").forEach(t => t.classList.remove("active"));
-      const tab = overlay.querySelector(`.mindease-tab[data-tab="${saved.activeTab}"]`) as HTMLElement;
-      tab?.classList.add("active");
-      tab?.setAttribute("aria-selected", "true");
-      document.getElementById(`tab-${saved.activeTab}`)?.classList.add("active");
-    }
+
   });
 
   /* ── Load profile + stats ── */
@@ -3350,7 +3291,7 @@ function speakSingleChunk(chunkIdx: number): void {
   const chunk = _contentChunks[chunkIdx];
   if (!chunk) return;
 
-  const cleanText = chunk.sourceText ?? stripInlineTags(chunk.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  const cleanText = stripInlineTags(chunk.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
   if (!cleanText) return;
 
   _ttsSpeaking = true;
@@ -3363,7 +3304,7 @@ function speakSingleChunk(chunkIdx: number): void {
   if (bar) {
     bar.style.display = "flex";
     const label = bar.querySelector(".tts-label");
-    if (label) label.textContent = `Reading chunk ${chunkIdx + 1}...`;
+    if (label) label.textContent = `Reading section ${chunkIdx + 1}...`;
   }
   if (btn) btn.innerHTML = iconHTML("x") + " Stop";
   if (pauseBtn) pauseBtn.textContent = "❚❚";
@@ -3376,8 +3317,9 @@ function speakSingleChunk(chunkIdx: number): void {
     onError: () => {
       stopTTS();
     },
-  }).catch(() => {
+  }).catch((error) => {
     stopTTS();
+    showAdaptationStatus(`Azure narration failed: ${error instanceof Error ? error.message : String(error)}`, true);
   });
 }
 
@@ -3396,7 +3338,7 @@ function speakTexts(texts: string[]): void {
   if (bar) {
     bar.style.display = "flex";
     const label = bar.querySelector(".tts-label");
-    if (label) label.textContent = `Reading chunk 1 of ${texts.length}...`;
+    if (label) label.textContent = `Reading section 1 of ${texts.length}...`;
   }
   if (pauseBtn) pauseBtn.textContent = "❚❚";
 
@@ -3411,16 +3353,16 @@ function speakTexts(texts: string[]): void {
 
     const b = document.getElementById("mindease-tts-bar");
     const l = b?.querySelector(".tts-label");
-    if (l) l.textContent = `Reading chunk ${i + 1} of ${texts.length}...`;
+    if (l) l.textContent = `Reading section ${i + 1} of ${texts.length}...`;
 
     ttsSpeak(texts[i], {
       rate: _ttsOverlayRate,
     }).then(() => {
       i++;
       speakNext();
-    }).catch(() => {
-      i++;
-      speakNext();
+    }).catch((error) => {
+      stopTTS();
+      showAdaptationStatus(`Azure narration failed: ${error instanceof Error ? error.message : String(error)}`, true);
     });
   }
   speakNext();
@@ -3429,55 +3371,21 @@ let _contentChunks: ContentChunk[] = [];
 
 function renderVisuals(visuals: VisualEntry[]): void {
   _visualEntries = visuals;
-
   const grid = document.getElementById("mindease-visuals-grid");
-  const badge = document.getElementById("visuals-badge");
   if (!grid) return;
-
-  if (badge) {
-    badge.textContent = String(visuals.length);
-    badge.style.display = "inline-flex";
-  }
-
-  if (visuals.length === 0) {
-    grid.innerHTML = `
-      <div style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:40px 20px;text-align:center">
-        ${iconHTML("image")}
-        <p style="color:var(--text-muted);font-size:0.78rem;max-width:280px">
-          No visuals generated yet. Generate diagrams and infographics for the concepts you are studying.
-        </p>
-        <button id="mindease-gen-visuals-btn" class="mindease-btn mindease-btn-primary" style="display:inline-flex;align-items:center;gap:6px">
-          ${iconHTML("sparkles")} Generate Visuals${_contentChunks.length > 0 ? ` (${_contentChunks.length} chunks)` : ""}
-        </button>
-      </div>`;
-    return;
-  }
-
-  grid.innerHTML = visuals.map((v) => {
-    const sourceLabel = "Napkin";
-    return `
-      <div class="visual-card">
-        <div class="visual-card-header">
-          <span class="visual-card-concept">${_escHtml(v.concept)}</span>
-          <span class="visual-card-source ${v.source}">${sourceLabel}</span>
-        </div>
-        <img class="visual-card-img"
-             src="${v.dataUrl}"
-             alt="${_escHtml(v.concept)}"
-             loading="lazy"
-             style="aspect-ratio:${v.width}/${v.height}"
-        />
-        <div class="visual-card-desc">
-          ${_escHtml(v.concept)} — visual diagram showing the key relationships and structure of this concept as generated by Napkin AI.
-        </div>
-      </div>
-    `;
-  }).join("");
-
-  // Switch to visuals tab so user sees them immediately
-  const visualsTab = document.querySelector('.mindease-tab[data-tab="visuals"]') as HTMLElement | null;
-  if (visualsTab) {
-    visualsTab.click();
+  for (const visual of visuals) {
+    if (document.getElementById(`mindease-visual-${visual.id}`)) continue;
+    if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(visual.dataUrl)) continue;
+    const figure = document.createElement("figure");
+    figure.id = `mindease-visual-${visual.id}`;
+    figure.className = "mindease-inline-visual";
+    const image = document.createElement("img");
+    image.src = visual.dataUrl; image.alt = visual.concept;
+    const caption = document.createElement("figcaption"); caption.textContent = visual.concept;
+    figure.append(image, caption);
+    const section = Array.from(document.querySelectorAll<HTMLElement>("#tab-content [data-source-block]"))
+      .find(element => element.dataset.sourceBlock === visual.sourceBlockId);
+    if (section) section.after(figure); else if (!visual.sourceBlockId) grid.append(figure);
   }
 }
 
@@ -3493,9 +3401,9 @@ async function initYouTubeMode(): Promise<void> {
   captionOverlay.setAttribute("aria-live", "polite");
   captionOverlay.setAttribute("aria-label", "AI-transformed captions");
 
-  const baseBg = _theme === "light" ? "rgba(245, 247, 250, 0.95)" : "rgba(15, 23, 36, 0.92)";
-  const baseText = _theme === "light" ? "#1a2332" : "#f0f4f8";
-  const accentColor = _theme === "light" ? "#3b82f6" : "#4EB8FF";
+  const baseBg = _theme === "light" ? "rgba(212, 212, 212, 0.95)" : "rgba(23, 23, 23, 0.94)";
+  const baseText = _theme === "light" ? "#171717" : "#d4d4d4";
+  const accentColor = baseText;
 
   captionOverlay.style.cssText = `
     position: fixed;
@@ -3517,7 +3425,7 @@ async function initYouTubeMode(): Promise<void> {
     text-align: center;
     backdrop-filter: blur(8px);
     display: none;
-    box-shadow: 0 4px 24px ${_theme === "light" ? "rgba(59,130,246,0.2)" : "rgba(78,184,255,0.2)"};
+    box-shadow: 0 4px 24px rgba(23, 23, 23, 0.2);
   `;
   document.body.appendChild(captionOverlay);
 
@@ -3571,17 +3479,16 @@ async function initYouTubeMode(): Promise<void> {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 async function initPDFMode(): Promise<void> {
-  const pdfText = document.body?.innerText?.slice(0, 4000)
-    ?? "PDF document \u2014 unable to extract text directly";
+  const pdfText = document.body?.innerText?.trim()
+    || "PDF document \u2014 unable to extract text directly";
 
   const loader = document.createElement("div");
   loader.id = "mindease-pdf-loader";
   loader.setAttribute("role", "status");
   loader.setAttribute("aria-live", "polite");
 
-  const accentColor = _theme === "light" ? "#3b82f6" : "#4EB8FF";
-  const baseBg = _theme === "light" ? "#ffffff" : "#0f1724";
-  const baseText = _theme === "light" ? "#1a2332" : "#e8edf5";
+  const accentColor = _theme === "light" ? "#171717" : "#d4d4d4";
+  const baseBg = _theme === "light" ? "#d4d4d4" : "#171717";
 
   loader.style.cssText = `
     position: fixed;

@@ -545,7 +545,7 @@ async def _execute_provider_call(
             "messages": messages,
             "max_tokens": token_cap,
         }
-        if json_mode and provider not in ("nvidia", "deepseek"):
+        if json_mode and provider != "nvidia":
             kwargs["response_format"] = {"type": "json_object"}
 
         if provider == "nvidia":
@@ -633,7 +633,7 @@ def _execute_provider_call_sync(
             "messages": messages,
             "max_tokens": token_cap,
         }
-        if json_mode and provider not in ("nvidia", "deepseek"):
+        if json_mode and provider != "nvidia":
             kwargs["response_format"] = {"type": "json_object"}
 
         if provider == "nvidia":
@@ -846,7 +846,9 @@ def parse_json_response(content: str) -> dict:
     for cand in candidates:
         for text in (cand, repair_json_text(cand)):
             try:
-                return json.loads(text)
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    return parsed
             except json.JSONDecodeError:
                 continue
     raise ValueError(f"Failed to parse JSON from response: {content[:500]}")

@@ -36,7 +36,7 @@ class VisualizationPlanner(BaseAgent):
     """
     
     def __init__(self, model: str | None = None):
-        super().__init__("visualization_planner.md", model=model, system_prompt_file="system/json_analyst.md", providers=("deepseek", "mistral"))
+        super().__init__("visualization_planner.md", model=model, system_prompt_file="system/json_analyst.md", providers=("deepseek",))
     
     async def run(
         self,
@@ -88,10 +88,9 @@ class VisualizationPlanner(BaseAgent):
         # Sort scenes by order
         scenes.sort(key=lambda s: s.order)
         
-        # Calculate total duration
+        # Calculate total duration — full-article coverage: ~90s (range 40-120s)
         total_duration = sum(s.duration_seconds for s in scenes)
-        # Quality-first pacing target: 30-45 seconds
-        total_duration = min(45, max(30, total_duration))
+        total_duration = min(120, max(40, total_duration))
         
         return VisualizationPlan(
             concept_name=result.get("concept_name", "Visualization"),

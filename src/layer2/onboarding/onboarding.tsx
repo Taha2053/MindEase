@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { createRoot } from "react-dom/client";
 import browser from "webextension-polyfill";
 import type {
   BaselineProfile, FullCognitiveProfile, CognitiveNeed,
@@ -216,42 +215,33 @@ function generateProfileSummary(baseline: BaselineProfile, _condition?: string):
 
 /* ─── App component ─── */
 
-function App() {
+export function Onboarding({ onComplete }: { onComplete?: () => void }) {
   const [step, setStep] = useState(-1); // -1 = welcome, 0..7 = questions, 8 = done
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("light");
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [existingProfile, setExistingProfile] = useState<FullCognitiveProfile | null>(null);
+  const isEditMode = false;
+
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [draftLoaded, setDraftLoaded] = useState(false);
 
   useEffect(() => {
     void loadTheme().then(saved => { applyTheme(saved); setTheme(saved); });
-    const params = new URLSearchParams(window.location.search);
-    const edit = params.get("edit") === "1";
-    setIsEditMode(edit);
 
-    if (edit) {
-      browser.storage.local.get(STORAGE_KEYS.PROFILE).then((result) => {
-        const profile = result[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined;
-        if (!profile) return;
-        setExistingProfile(profile);
-        setAnswers({
-          formatPreference: profile.baseline.formatPreference,
-          attentionSpan: profile.baseline.attentionSpan,
-          readingPace: profile.baseline.readingPace,
-          needsConceptAnchor: profile.baseline.needsConceptAnchor ? "true" : "false",
-          secondLanguageLearner: profile.baseline.secondLanguageLearner ? "true" : "false",
-          infoDensity: profile.baseline.infoDensity ?? "detailed",
-          learningApproach: profile.baseline.learningApproach ?? "theory-first",
-          ...(profile.condition && profile.condition !== "multilingual" && profile.condition !== "none"
-            ? { condition: profile.condition }
-            : {}),
-        });
-      }).catch(() => {});
-    }
   }, []);
+
+  useEffect(() => {
+    void browser.storage.local.get("mindease_onboarding_draft").then(result => {
+      const draft = result.mindease_onboarding_draft as { step?: number; answers?: Record<string, string> } | undefined;
+      if (draft?.answers) setAnswers(draft.answers);
+      if (typeof draft?.step === "number") setStep(Math.max(-1, Math.min(TOTAL_STEPS - 1, draft.step)));
+      setDraftLoaded(true);
+    });
+  }, []);
+  useEffect(() => {
+    if (draftLoaded && step < TOTAL_STEPS) void browser.storage.local.set({ mindease_onboarding_draft: { step, answers } });
+  }, [draftLoaded, step, answers]);
 
   const toggleThemeLocal = useCallback(async () => {
     const next = await themeManagerToggle();
@@ -274,6 +264,7 @@ function App() {
       try {
         await saveProfile();
         setStep(TOTAL_STEPS);
+        onComplete?.();
       } catch {
         setSaveError("Your preferences could not be saved. Try again.");
       } finally {
@@ -309,22 +300,6 @@ function App() {
 
     const params = getTransformationParamsWithCondition(baseline, rawCondition);
 
-    if (isEditMode && existingProfile) {
-      const profile: FullCognitiveProfile = {
-        ...existingProfile,
-        learningStyle: baseline.formatPreference === "visual" ? "visual" : "text",
-        attentionSpan: baseline.attentionSpan,
-        anchorNeed: baseline.needsConceptAnchor,
-        condition: mappedCondition,
-        updatedAt: Date.now(),
-        baseline, transformationParams: params,
-      };
-      await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile });
-      await syncNow().catch(() => {});
-      try { await browser.runtime.sendMessage({ type: "PROFILE_UPDATED", payload: profile }); }
-      catch { /* ok */ }
-      return;
-    }
 
     const profile = {
       userId: uuidv4(),
@@ -339,7 +314,8 @@ function App() {
       transformationParams: params,
     };
 
-    await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile, [STORAGE_KEYS.ONBOARDING_DONE]: true });
+    await browser.storage.local.set({ [STORAGE_KEYS.PROFILE]: profile, [STORAGE_KEYS.ONBOARDING_DONE]: true, mindease_account_prompt: true });
+    await browser.storage.local.remove("mindease_onboarding_draft");
     await syncNow().catch(() => {});
     try { await browser.runtime.sendMessage({ type: "ONBOARDING_COMPLETE" }); }
     catch { /* ok */ }
@@ -475,7 +451,7 @@ function App() {
                     </div>
                   ))}
                 </div>
-                <button className="btn-start" onClick={() => window.close()}>
+                <button className="btn-start" onClick={() => onComplete?.()}>
                   Start Learning →
                 </button>
               </div>
@@ -522,7 +498,3 @@ function Moon({ size }: { size: number }) {
   );
 }
 
-/* ─── Mount ─── */
-
-const rootEl = document.getElementById("root");
-if (rootEl) createRoot(rootEl).render(<App />);

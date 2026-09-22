@@ -23,11 +23,13 @@ def _plan() -> VisualizationPlan:
     return VisualizationPlan(
         concept_name="Scaled Dot-Product Attention",
         visualization_type=VisualizationType.DATA_FLOW,
-        duration_seconds=36,
+        duration_seconds=90,
         scenes=[
-            Scene(order=1, description="Title beat", duration_seconds=5, transitions="Write", elements=["Text"]),
-            Scene(order=2, description="Query key scoring", duration_seconds=12, transitions="Create arrows", elements=["Arrow"]),
-            Scene(order=3, description="Softmax weighting", duration_seconds=12, transitions="Highlight", elements=["MathTex"]),
+            Scene(order=1, description="Title beat", duration_seconds=8, transitions="Write", elements=["Text"]),
+            Scene(order=2, description="Query key scoring", duration_seconds=15, transitions="Create arrows", elements=["Arrow"]),
+            Scene(order=3, description="Softmax weighting", duration_seconds=18, transitions="Highlight", elements=["MathTex"]),
+            Scene(order=4, description="Weighted aggregation takeaway", duration_seconds=20, transitions="FadeIn", elements=["VGroup"]),
+            Scene(order=5, description="Summary and reflection", duration_seconds=15, transitions="Write", elements=["Text"]),
         ],
         narration_points=[],
     )

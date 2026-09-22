@@ -45,8 +45,19 @@ class FeedbackResponse(BaseModel):
 
 
 class SpeechRequest(BaseModel):
-    """Short learner-selected text for premium speech synthesis."""
+    """Short learner-selected text for English speech synthesis."""
     text: str = Field(..., min_length=1, max_length=5000)
+
+
+class AdaptationPlanRequest(BaseModel):
+    title: str = Field(..., max_length=500)
+    source_type: Literal["website", "pdf", "video", "lecture"]
+    source_blocks: list[dict] = Field(..., min_length=1, max_length=2000)
+    learner_profile: dict
+
+
+class AdaptationPlanResponse(BaseModel):
+    plan: dict
 
 
 class ProcessRequest(BaseModel):

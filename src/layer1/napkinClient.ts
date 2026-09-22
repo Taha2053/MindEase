@@ -1,5 +1,5 @@
-/* ── Types ───────────────────────────────────────────────────────── */
 import { getApiKey } from "@/utils/apiKeyManager";
+import { getSession } from "@/utils/supabase";
 
 export type NapkinStyle =
   | "colorful" | "casual" | "hand-drawn" | "formal" | "monochrome";
@@ -16,6 +16,7 @@ export type NapkinSortStrategy =
   | "relevance" | "random";
 
 export interface NapkinOptions {
+  learnerProfile?: object;
   style?: NapkinStyle;
   format?: NapkinFormat;
   visualQuery?: NapkinVisualQuery;
@@ -24,29 +25,6 @@ export interface NapkinOptions {
   styleId?: string;
   contextBefore?: string;
   contextAfter?: string;
-}
-
-interface NapkinCreateResponse {
-  id: string;
-  status: string;
-}
-
-interface NapkinFileInfo {
-  url: string;
-  visual_id: string;
-  visual_query: string;
-  style_id: string;
-  width: number;
-  height: number;
-  color_mode: string;
-}
-
-interface NapkinStatusResponse {
-  status: "pending" | "processing" | "completed" | "failed";
-  request?: Record<string, unknown>;
-  generated_files?: NapkinFileInfo[];
-  error?: { message: string; code: string };
-  credits?: { consumed: number };
 }
 
 export interface NapkinResult {
@@ -58,207 +36,35 @@ export interface NapkinResult {
   fileId: string;
 }
 
-/* ── Config ─────────────────────────────────────────────────────── */
 
-const NAPKIN_API_BASE = import.meta.env.VITE_NAPKIN_API_BASE ?? "https://api.napkin.ai/v1";
-
-/* ── Auth headers ───────────────────────────────────────────────── */
-
-async function authHeaders(): Promise<Record<string, string>> {
-  const key = await getApiKey("napkin");
-  if (!key) {
-    throw new Error("[NapkinClient] Napkin API key is not configured. Add it in MindEase Settings.");
-  }
-  return {
-    Authorization: `Bearer ${key}`,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-}
-
-/* ── Step 1: Create visual request ──────────────────────────────── */
-
-async function createVisualRequest(
-  text: string,
-  options: NapkinOptions = {},
-): Promise<string> {
-  const body: Record<string, unknown> = {
-    content: text,
-    style: options.style ?? "formal",
-    format: options.format ?? "svg",
-  };
-
-  if (options.visualQuery) body.visual_query = options.visualQuery;
-  if (options.orientation) body.orientation = options.orientation;
-  if (options.sortStrategy) body.sort_strategy = options.sortStrategy;
-  if (options.styleId) body.style_id = options.styleId;
-  if (options.contextBefore) body.context_before = options.contextBefore;
-  if (options.contextAfter) body.context_after = options.contextAfter;
-
-  const res = await fetch(`${NAPKIN_API_BASE}/visual`, {
-    method: "POST",
-    headers: await authHeaders(),
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => res.statusText);
-    throw new Error(`[NapkinClient] Create visual failed (${res.status}): ${errText}`);
-  }
-
-  const data = (await res.json()) as NapkinCreateResponse;
-  return data.id;
-}
-
-/* ── Step 2: Poll status ────────────────────────────────────────── */
-
-async function pollStatus(
-  requestId: string,
-  maxRetries = 30,
-  intervalMs = 2000,
-): Promise<NapkinStatusResponse> {
-  for (let i = 0; i < maxRetries; i++) {
-    const res = await fetch(`${NAPKIN_API_BASE}/visual/${requestId}/status`, {
-      headers: await authHeaders(),
-    });
-
-    if (!res.ok) {
-      throw new Error(`[NapkinClient] Status poll failed (${res.status})`);
-    }
-
-    const data = (await res.json()) as NapkinStatusResponse;
-
-    switch (data.status) {
-      case "completed":
-        return data;
-      case "failed":
-        throw new Error(
-          `[NapkinClient] Visual generation failed: ${data.error?.message ?? "Unknown error"}`,
-        );
-      case "pending":
-      case "processing":
-        await sleep(intervalMs * Math.min(2 ** i, 8));
-        continue;
-    }
-  }
-
-  throw new Error("[NapkinClient] Polling timed out");
-}
-
-/* ── Step 3: Download file ──────────────────────────────────────── */
-
-async function downloadFile(fileUrl: string): Promise<Blob> {
-  const isDev = import.meta.env.DEV && import.meta.env.VITE_NAPKIN_PROXY === "true";
-  let fetchUrl = fileUrl;
-
-  if (isDev) {
-    const u = new URL(fileUrl);
-    const path = u.pathname.replace(/^\/v1/, "");
-    fetchUrl = `http://localhost:3001${path}${u.search}`;
-  }
-
-  const napkinKey = await getApiKey("napkin");
-  const res = await fetch(fetchUrl, {
-    headers: isDev && napkinKey ? { Authorization: `Bearer ${napkinKey}` } : {},
-  });
-
-  if (!res.ok) {
-    throw new Error(`[NapkinClient] Download failed (${res.status})`);
-  }
-
-  return res.blob();
-}
-
-/* ── Public API ─────────────────────────────────────────────────── */
-
-/**
- * Generate a Napkin visual from arbitrary text content (not just a concept name).
- * Labels the visual with the provided label for display.
- */
 export async function generateNapkinVisualFromContent(
-  content: string,
-  label: string,
-  options: NapkinOptions = {},
+  content: string, label: string, options: NapkinOptions = {},
 ): Promise<NapkinResult> {
-  const requestId = await createVisualRequest(content, options);
-  const status = await pollStatus(requestId);
-
-  if (!status.generated_files?.length) {
-    throw new Error(`[NapkinClient] No files generated for: ${label}`);
-  }
-
-  const file = status.generated_files[0];
-  const blob = await downloadFile(file.url);
-  const dataUrl = await blobToDataURL(blob);
-
-  return {
-    concept: label,
-    format: options.format ?? "svg",
-    dataUrl,
-    width: file.width,
-    height: file.height,
-    fileId: file.visual_id,
-  };
-}
-
-export async function generateNapkinVisual(
-  concept: string,
-  options: NapkinOptions = {},
-): Promise<NapkinResult> {
-  const text = `Explain the concept: ${concept}`;
-
-  const requestId = await createVisualRequest(text, options);
-  const status = await pollStatus(requestId);
-
-  if (!status.generated_files?.length) {
-    throw new Error(`[NapkinClient] No files generated for concept: ${concept}`);
-  }
-
-  const file = status.generated_files[0];
-  const blob = await downloadFile(file.url);
-  const dataUrl = await blobToDataURL(blob);
-
-  return {
-    concept,
-    format: options.format ?? "svg",
-    dataUrl,
-    width: file.width,
-    height: file.height,
-    fileId: file.visual_id,
-  };
-}
-
-export async function generateNapkinVisuals(
-  concepts: string[],
-  options: NapkinOptions = {},
-): Promise<NapkinResult[]> {
-  const results = await Promise.allSettled(
-    concepts.map((concept) => generateNapkinVisual(concept, options)),
-  );
-
-  const visuals: NapkinResult[] = [];
-  for (const r of results) {
-    if (r.status === "fulfilled") {
-      visuals.push(r.value);
-    } else {
-      console.warn("[NapkinClient] Skipped concept:", r.reason?.message || r.reason);
-    }
-  }
-
-  return visuals;
-}
-
-/* ── Helpers ─────────────────────────────────────────────────────── */
-
-function blobToDataURL(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
+  const base = ((await getApiKey("premiumServer")) || "http://localhost:8000").replace(/\/+$/, "");
+  const session = await getSession();
+  const headers = { "Content-Type": "application/json", ...(session ? { Authorization: "Bearer " + session.accessToken } : {}) };
+  const response = await fetch(base + "/api/visuals/napkin/jobs", {
+    method: "POST", headers,
+    body: JSON.stringify({ content, label, learner_profile: options.learnerProfile ?? {} }),
+    signal: AbortSignal.timeout(20000),
   });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(typeof error.detail === "string" ? error.detail : "Diagram generation could not start.");
+  }
+  const { job_id: jobId } = await response.json() as { job_id: string };
+  const deadline = Date.now() + 620000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const statusResponse = await fetch(`${base}/api/visuals/napkin/jobs/${encodeURIComponent(jobId)}`, { headers, signal: AbortSignal.timeout(20000) });
+    const status = await statusResponse.json() as { status?: string; result?: NapkinResult; error?: string; detail?: string };
+    if (!statusResponse.ok) throw new Error(status.detail || "Could not retrieve diagram status.");
+    if (status.status === "failed") throw new Error(status.error || "Diagram generation failed.");
+    if (status.status === "completed" && status.result) return status.result;
+  }
+  throw new Error("Diagram generation took too long. Try again.");
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export async function generateNapkinVisuals(concepts: string[], options: NapkinOptions = {}): Promise<NapkinResult[]> {
+  return Promise.all(concepts.map(concept => generateNapkinVisualFromContent(concept, concept, options)));
 }

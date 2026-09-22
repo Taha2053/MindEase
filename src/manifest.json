@@ -34,6 +34,7 @@
 
   "permissions": [
     "storage",
+    "offscreen",
     "activeTab",
     "scripting",
     "sidePanel",
@@ -50,7 +51,9 @@
     {
       "resources": [
         "src/layer2/onboarding/onboarding.html",
-        "src/session/dashboard/dashboard.html"
+        "src/session/dashboard/dashboard.html",
+        "src/video/video.html",
+        "assets/*"
       ],
       "matches": ["<all_urls>"]
     }

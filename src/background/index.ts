@@ -1,3 +1,4 @@
+import { extractRemoteSource } from "@/layer1/premiumClient";
 /* ============================================================
    background/index.ts - Service Worker (persistent background logic)
    Manages session lifecycle and routes messages between layers.
@@ -25,6 +26,24 @@ import { generateVisualsForConcepts, generateVisualsFromChunks } from "@/layer1/
 import { ocrImageUrl, ocrImageBase64 } from "@/layer1/ocrClient";
 import { SessionManager } from "@/session/SessionManager";
 import { saveSessionHistory } from "@/session/sessionHistory";
+
+/* ── Offscreen audio helpers (Chrome MV3, bypass content-script autoplay) ─── */
+async function ensureOffscreenDocument(): Promise<boolean> {
+  const offscreenApi = (globalThis as unknown as { chrome?: any }).chrome?.offscreen;
+  if (!offscreenApi || typeof offscreenApi.hasDocument !== "function") return false;
+  try {
+    if (await offscreenApi.hasDocument()) return true;
+    await offscreenApi.createDocument({
+      url: browser.runtime.getURL("src/offscreen/offscreen.html"),
+      reasons: ["AUDIO_PLAYBACK"] as unknown as string[],
+      justification: "Play Azure TTS audio from sidebar without autoplay blocking",
+    });
+    return true;
+  } catch (err) {
+    console.warn("[Background] ensureOffscreenDocument failed:", err);
+    return false;
+  }
+}
 
 /* ── Aggregated notes helpers ────────────────────────────────────────────────── */
 
@@ -269,12 +288,7 @@ browser.runtime.onInstalled.addListener((details) => {
   console.log("[MindEase] Extension installed - background worker ready.", details.reason);
   setupContextMenus();
 
-  if (details.reason === "install") {
-    browser.tabs.create({
-      url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html"),
-      active: true,
-    });
-  }
+
 });
 
 /* ── Initialize Layer 2 ─────────────────────────────────────────────────────── */
@@ -294,6 +308,7 @@ browser.runtime.onMessage.addListener(
       return true;
     }
     const msg = message as ExtensionMessage;
+    if (String(msg.type).startsWith("OFFSCREEN_")) return true;
 
     if (msg.type === "TRANSFORM_CONTENT") {
       if (!sender.tab?.url || isExcludedPage(sender.tab.url, sender.tab.incognito)) {
@@ -340,8 +355,12 @@ browser.runtime.onMessage.addListener(
 
         try {
           console.log("[Background] Starting transform for:", pageType);
+          const wantsVisuals = adaptation === "visual" || adaptation === "all";
+          let visualCount = 0;
+          let visualQueue = Promise.resolve();
+          const completeSource = pageType === "pdf" ? await extractRemoteSource(url, "pdf") : text;
           const chunks = await transformContent(
-            text,
+            completeSource,
             pageType,
             {
               transformationParams: fullProfile.transformationParams,
@@ -357,6 +376,19 @@ browser.runtime.onMessage.addListener(
                 append,
                 done,
               }).catch(() => {});
+              if (wantsVisuals && visualCount < 5) {
+                const candidates = batch.filter(chunk => chunk.visualPrompt || (chunk.sourceText ?? chunk.text).length > 200).slice(0, 5 - visualCount);
+                visualCount += candidates.length;
+                visualQueue = visualQueue.then(async () => {
+                  if (!candidates.length) return;
+                  try {
+                    await generateVisualsFromChunks(candidates, fullProfile.transformationParams, true,
+                      async visuals => { await browser.tabs.sendMessage(tabId, { type: "VISUALS_READY", visuals }).catch(() => {}); }, fullProfile.baseline);
+                  } catch (error) {
+                    await browser.tabs.sendMessage(tabId, { type: "VISUALS_READY", visuals: [], error: String(error) }).catch(() => {});
+                  }
+                });
+              }
             },
           );
           console.log("[Background] Transform complete, chunks:", chunks.length);
@@ -369,22 +401,6 @@ browser.runtime.onMessage.addListener(
           await browser.storage.local.set({
             [STORAGE_KEYS.SESSION_CHUNKS]: [...existingChunks, ...uniqueNew],
           });
-          // Auto-generate visuals from chunk content in the background
-          const wantsVisuals = adaptation === "visual" || adaptation === "all";
-          if (wantsVisuals) generateVisualsFromChunks(chunks, fullProfile.transformationParams, true)
-            .then((visuals) => {
-              return browser.tabs.sendMessage(tabId, {
-                type: "VISUALS_READY",
-                visuals: visuals ?? [],
-              }).catch(() => {});
-            })
-            .catch((err) => {
-              console.warn("[Background] Visual generation error:", err);
-              browser.tabs.sendMessage(tabId, {
-                type: "VISUALS_READY",
-                visuals: [],
-              }).catch(() => {});
-            });
         } catch (err) {
           console.warn("[Background] Transform error:", err);
           browser.tabs.sendMessage(tabId, { type: "TRANSFORM_ERROR", error: String(err) }).catch(() => {});
@@ -595,6 +611,132 @@ browser.runtime.onMessage.addListener(
           browser.tabs.sendMessage(stopTabId, { type: "TTS_STOP", payload: {} }).catch(() => {});
         }
         break;
+      }
+
+      case "PREMIUM_SPEECH": {
+        const payload = msg.payload as { text?: string };
+        const text = typeof payload?.text === "string" ? payload.text : "";
+        if (!text.trim()) {
+          sendResponse({ error: "Premium speech: empty text" });
+          break;
+        }
+        (async () => {
+          try {
+            const [{ getApiKey }, { getSession }] = await Promise.all([
+              import("@/utils/apiKeyManager"),
+              import("@/utils/supabase"),
+            ]);
+            const baseUrl = (await getApiKey("premiumServer") || "http://localhost:8000").replace(/\/+$/, "");
+            const session = await getSession();
+            const headers: Record<string, string> = {
+              "Content-Type": "application/json",
+              Accept: "audio/mpeg",
+              ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}),
+            };
+            const res = await fetch(`${baseUrl}/api/speech`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ text }),
+            });
+            if (!res.ok) {
+              const detail = await res.text().catch(() => res.statusText);
+              throw new Error(`Premium speech is unavailable (${res.status}): ${detail.slice(0, 200)}`);
+            }
+            const blob = await res.blob();
+            const arrayBuffer = await blob.arrayBuffer();
+            const bytes = new Uint8Array(arrayBuffer);
+            let binary = "";
+            const chunkSize = 8192;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              const chunk = bytes.subarray(i, i + chunkSize);
+              binary += String.fromCharCode(...chunk);
+            }
+            const audioBase64 = btoa(binary);
+            sendResponse({ audioBase64, contentType: blob.type || "audio/mpeg" });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.warn("[Background] PREMIUM_SPEECH failed:", message);
+            sendResponse({ error: message });
+          }
+        })();
+        return true;
+      }
+
+      case "PLAY_TTS_AUDIO": {
+        const payload = msg.payload as { audioBase64?: string; contentType?: string; volume?: number; rate?: number };
+        (async () => {
+          try {
+            if (typeof document !== "undefined") {
+              const { playAudioBlobDom } = await import("@/utils/ttsManager");
+              const binary = atob(payload.audioBase64 ?? "");
+              const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+              await playAudioBlobDom(new Blob([bytes], { type: "audio/mpeg" }), payload.volume ?? 1, payload.rate ?? 1);
+              sendResponse({ success: true });
+              return;
+            }
+            const ok = await ensureOffscreenDocument();
+            if (!ok) {
+              sendResponse({ error: "Offscreen not supported, fallback to DOM" });
+              return;
+            }
+            const chromeRuntime = (globalThis as unknown as { chrome?: any }).chrome?.runtime;
+            if (!chromeRuntime) {
+              sendResponse({ error: "chrome.runtime unavailable" });
+              return;
+            }
+            // Forward to offscreen document
+            const resp = await chromeRuntime.sendMessage({
+              type: "OFFSCREEN_PLAY",
+              payload: {
+                audioBase64: payload.audioBase64,
+                contentType: payload.contentType || "audio/mpeg",
+                volume: payload.volume ?? 1.0,
+                rate: payload.rate ?? 1.0,
+              },
+            });
+            const result = resp as { success?: boolean; error?: string } | undefined;
+            if (result?.error) sendResponse({ error: result.error });
+            else sendResponse({ success: true });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.warn("[Background] PLAY_TTS_AUDIO failed:", message);
+            sendResponse({ error: message });
+          }
+        })();
+        return true;
+      }
+
+      case "STOP_TTS_AUDIO":
+      case "PAUSE_TTS_AUDIO":
+      case "RESUME_TTS_AUDIO": {
+        const offscreenType =
+          msg.type === "STOP_TTS_AUDIO" ? "OFFSCREEN_STOP" :
+          msg.type === "PAUSE_TTS_AUDIO" ? "OFFSCREEN_PAUSE" : "OFFSCREEN_RESUME";
+        (async () => {
+          try {
+            if (typeof document !== "undefined") {
+              const playback = await import("@/utils/ttsManager");
+              if (msg.type === "STOP_TTS_AUDIO") playback.stop();
+              else if (msg.type === "PAUSE_TTS_AUDIO") playback.pause();
+              else playback.resume();
+              sendResponse({ success: true });
+              return;
+            }
+            const offscreenApi = (globalThis as unknown as { chrome?: any }).chrome?.offscreen;
+            if (!offscreenApi || !(await offscreenApi.hasDocument())) {
+              sendResponse({ success: true });
+              return;
+            }
+            const chromeRuntime = (globalThis as unknown as { chrome?: any }).chrome?.runtime;
+            if (!chromeRuntime) { sendResponse({ success: true }); return; }
+            await chromeRuntime.sendMessage({ type: offscreenType });
+            sendResponse({ success: true });
+          } catch (err) {
+            // Offscreen may not be ready — not fatal for stop/pause
+            sendResponse({ success: true });
+          }
+        })();
+        return true;
       }
 
       default:

@@ -652,10 +652,11 @@ async def _store_structured_paper(db, job_id: str, structured_paper: StructuredP
     stored_count = 0
     seen_ids = set()
     for i, section in enumerate(structured_paper.sections):
-        sid = section.id
+        sid = section.id if section.id.startswith(f"{meta.arxiv_id}:") else f"{meta.arxiv_id}:{section.id}"
         if sid in seen_ids:
             sid = f"{sid}-{i}"
         seen_ids.add(sid)
+        section.id = sid
 
         try:
             async with db.begin_nested():
@@ -680,6 +681,9 @@ async def _store_structured_paper(db, job_id: str, structured_paper: StructuredP
         except Exception as e:
             logger.warning(f"Failed to store section '{section.title}': {e}")
 
+    if stored_count != len(structured_paper.sections):
+        await db.rollback()
+        raise RuntimeError("Could not persist every document section; generation was stopped.")
     await db.commit()
     logger.info(f"Stored paper/document '{meta.title}' with {stored_count}/{len(structured_paper.sections)} sections")
 

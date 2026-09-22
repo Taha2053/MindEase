@@ -11,8 +11,8 @@ let cancelPendingPrompt: (() => void) | undefined;
 const STYLES = `
 #${PROMPT_ID} { all: initial; position: fixed; right: 24px; bottom: 24px; z-index: 2147483647;
   width: min(360px, calc(100vw - 32px)); font-family: Inter, system-ui, sans-serif; color: var(--ap-text); }
-#${PROMPT_ID}[data-theme="dark"] { --ap-bg:#010736; --ap-text:#F7E6CA; --ap-dim:#D8CDBA; --ap-border:#807A77; --ap-accent:#F7E6CA; }
-#${PROMPT_ID}[data-theme="light"] { --ap-bg:#F7E6CA; --ap-text:#24224A; --ap-dim:#5F6480; --ap-border:#F7E6CA; --ap-accent:#0F52BA; }
+#${PROMPT_ID}[data-theme="dark"] { --ap-bg:#171717; --ap-text:#d4d4d4; --ap-dim:rgba(212,212,212,.78); --ap-border:rgba(212,212,212,.24); --ap-accent:#d4d4d4; }
+#${PROMPT_ID}[data-theme="light"] { --ap-bg:#d4d4d4; --ap-text:#171717; --ap-dim:rgba(23,23,23,.74); --ap-border:rgba(23,23,23,.22); --ap-accent:#171717; }
 #${PROMPT_ID} .ap-card { background:var(--ap-bg); border:2px solid var(--ap-border); border-radius:16px;
   box-shadow:0 12px 40px rgba(0,0,0,.3); padding:18px; }
 #${PROMPT_ID} h2 { all:initial; display:block; color:var(--ap-text); font:700 1rem/1.35 Inter,system-ui,sans-serif; margin-bottom:6px; }

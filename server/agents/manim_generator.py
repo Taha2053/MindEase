@@ -78,12 +78,13 @@ class ManimGenerator(BaseAgent):
     # stable per-scene path). Passing cache_dir="..." here would hand the
     # library a str where it expects a Path and crash the first cache lookup.
     TTS_IMPORTS = {
+        "azure": "from services.manim_azure_speech import MindEaseAzureSpeechService",
         "gtts": "from manim_voiceover.services.gtts import GTTSService",
         "openai": "from manim_voiceover.services.openai import OpenAIService",
     }
 
     def __init__(self, model: str | None = None):
-        super().__init__("manim_generator.md", model=model, max_tokens=8192, providers=("mistral",))
+        super().__init__("manim_generator.md", model=model, max_tokens=8192, providers=("deepseek",))
         self.examples = self._load_examples(self.EXAMPLE_FILES, self.DEFAULT_EXAMPLE)
         self.voiceover_examples = self._load_examples(
             self.VOICEOVER_EXAMPLE_FILES,
@@ -121,6 +122,8 @@ class ManimGenerator(BaseAgent):
 
     def _get_tts_setup_snippet(self, tts_service: str, voice_name: str) -> str:
         """Return concrete set_speech_service(...) snippet for prompt grounding."""
+        if tts_service == "azure":
+            return "self.set_speech_service(MindEaseAzureSpeechService(transcription_model=None))"
         if tts_service == "openai":
             voice = voice_name or self.DEFAULT_OPENAI_VOICE
             return (
@@ -289,10 +292,10 @@ class ManimGenerator(BaseAgent):
         self,
         plan: VisualizationPlan,
         voiceover_enabled: bool = True,
-        tts_service: str = "gtts",
+        tts_service: str = "azure",
         voice_name: str = "",
         narration_style: str = "concept_teacher",
-        target_duration_seconds: tuple[int, int] = (30, 45),
+        target_duration_seconds: tuple[int, int] = (40, 120),
     ) -> GeneratedCode:
         """Generate Manim code from a plan, optionally with built-in voiceovers.
 
@@ -334,10 +337,10 @@ class ManimGenerator(BaseAgent):
         previous_code: str,
         error_message: str,
         voiceover_enabled: bool = True,
-        tts_service: str = "gtts",
+        tts_service: str = "azure",
         voice_name: str = "",
         narration_style: str = "concept_teacher",
-        target_duration_seconds: tuple[int, int] = (30, 45),
+        target_duration_seconds: tuple[int, int] = (40, 120),
     ) -> GeneratedCode:
         """Regenerate code with feedback from previous failures.
 
@@ -396,10 +399,10 @@ The previous code had issues. Fix them and regenerate complete code.
         self,
         plan: VisualizationPlan,
         voiceover_enabled: bool = True,
-        tts_service: str = "gtts",
+        tts_service: str = "azure",
         voice_name: str = "",
         narration_style: str = "concept_teacher",
-        target_duration_seconds: tuple[int, int] = (30, 45),
+        target_duration_seconds: tuple[int, int] = (40, 120),
     ) -> GeneratedCode:
         """Synchronous version for testing."""
         prompt = self._build_prompt(

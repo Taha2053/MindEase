@@ -63,3 +63,8 @@ def test_long_output_keeps_the_tail():
     out = _extract_render_error(text, "")
     assert out.endswith("RuntimeError: the actual error")
     assert len(out) <= 4000
+
+
+def test_long_traceback_retains_the_final_exception():
+    trace = "Traceback (most recent call last):\n" + "stack frame\n" * 1000 + "ConnectionError: speech endpoint unavailable"
+    assert _extract_render_error(trace, "").endswith("ConnectionError: speech endpoint unavailable")

@@ -37,7 +37,7 @@ export function AccountControls() {
 
   if (!session) return <section className="account-panel" aria-labelledby="account-heading">
     <h3 id="account-heading">Optional MindEase account</h3>
-    <p>Local mode works without an account. Sign in only if you want synchronization or hosted premium services.</p>
+    <p>Local mode works without an account. Sign in only if you want synchronization across devices.</p>
     <form className="account-form" onSubmit={submit("signin")}>
       <label>Email<input required type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} /></label>
       <label>Password<input required minLength={8} type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} /></label>

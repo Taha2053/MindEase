@@ -28,7 +28,7 @@ class SectionAnalyzer(BaseAgent):
     """
     
     def __init__(self, model: str | None = None):
-        super().__init__("section_analyzer.md", model=model, system_prompt_file="system/json_analyst.md", providers=("deepseek", "mistral"))
+        super().__init__("section_analyzer.md", model=model, system_prompt_file="system/json_analyst.md", providers=("deepseek",))
     
     def _format_equations(self, section: Section) -> str:
         """Format equations for the prompt."""

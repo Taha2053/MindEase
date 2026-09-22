@@ -25,8 +25,12 @@
     "vitest": "^4.1.7"
   },
   "dependencies": {
+    "dompurify": "^3.4.15",
     "katex": "^0.17.0",
+    "lottie-react": "^2.4.1",
+    "lucide": "^1.47.0",
     "lucide-react": "^1.21.0",
+    "marked": "^18.0.13",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "uuid": "^14.0.0",

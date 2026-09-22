@@ -6,6 +6,7 @@
    for Wikipedia, PDFs, research papers, and web articles.
    ============================================================ */
 
+import browser from "webextension-polyfill";
 import { getApiKey } from "@/utils/apiKeyManager";
 import { getSession } from "@/utils/supabase";
 import type {
@@ -28,8 +29,36 @@ async function premiumHeaders(accept: string): Promise<Record<string, string>> {
   };
 }
 
-/** Request premium narration without exposing Azure credentials to the extension. */
-export async function synthesizePremiumSpeech(text: string): Promise<Blob> {
+export async function createAdaptationPlan(input: {
+  title: string;
+  sourceType: "website" | "pdf" | "video" | "lecture";
+  sourceBlocks: Array<{ id: string; text: string; position: number }>;
+  learnerProfile: object;
+}): Promise<Record<string, unknown>> {
+  const baseUrl = await getServerBaseUrl();
+  const response = await fetch(`${baseUrl}/api/plan/adaptation`, {
+    method: "POST",
+    headers: await premiumHeaders("application/json"),
+    body: JSON.stringify({
+      title: input.title,
+      source_type: input.sourceType,
+      source_blocks: input.sourceBlocks,
+      learner_profile: input.learnerProfile,
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => null) as { detail?: unknown } | null;
+    throw new Error(typeof error?.detail === "string"
+      ? error.detail
+      : `DeepSeek planning is unavailable (${response.status}). Please try again.`);
+  }
+  const result = await response.json() as { plan?: Record<string, unknown> };
+  if (!result.plan) throw new Error("DeepSeek returned no adaptation plan.");
+  return result.plan;
+}
+
+/** Direct fetch to the premium speech endpoint (call from background or extension pages where Origin is allowed). */
+export async function synthesizePremiumSpeechDirect(text: string): Promise<Blob> {
   const baseUrl = await getServerBaseUrl();
   const res = await fetch(`${baseUrl}/api/speech`, {
     method: "POST",
@@ -40,6 +69,48 @@ export async function synthesizePremiumSpeech(text: string): Promise<Blob> {
     throw new Error(`Premium speech is unavailable (${res.status})`);
   }
   return res.blob();
+}
+
+/** Request premium narration without exposing Azure credentials to the extension.
+ *  Content scripts run with the page's Origin (e.g. wikipedia.org) which the
+ *  backend CORS policy rejects → 400 Disallowed CORS origin on OPTIONS.
+ *  To avoid that, page-context callers proxy through the background service
+ *  worker whose Origin is chrome-extension://… (matched by EXTENSION_ORIGIN_REGEX).
+ */
+export async function synthesizePremiumSpeech(text: string): Promise<Blob> {
+  const isPageContext =
+    typeof window !== "undefined" &&
+    typeof document !== "undefined" &&
+    (globalThis.location?.protocol === "http:" || globalThis.location?.protocol === "https:");
+
+  if (isPageContext) {
+    try {
+      const runtime = (browser as unknown as { runtime?: { id?: string; sendMessage?: (msg: unknown) => Promise<unknown> } })?.runtime;
+      if (!runtime?.id || !runtime?.sendMessage) {
+        throw new Error("Premium speech is unavailable (extension runtime not ready)");
+      }
+      const raw = await browser.runtime.sendMessage({
+        type: "PREMIUM_SPEECH",
+        payload: { text },
+      } as unknown as never);
+      const response = raw as { audioBase64?: string; contentType?: string; error?: string } | null | undefined;
+      if (response?.error) throw new Error(response.error);
+      if (response?.audioBase64) {
+        const binary = atob(response.audioBase64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return new Blob([bytes], { type: response.contentType || "audio/mpeg" });
+      }
+      throw new Error("Premium speech is unavailable (empty proxy response)");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("Premium speech") || msg.includes("unavailable") || msg.includes("Speech") || msg.includes("proxy")) {
+        throw err;
+      }
+      throw new Error(`Premium speech is unavailable (proxy failed: ${msg})`);
+    }
+  }
+  return synthesizePremiumSpeechDirect(text);
 }
 
 /**
@@ -152,4 +223,14 @@ export async function fetchDocumentVideos(
     console.warn("[PremiumClient] Failed to fetch document videos:", err);
     return null;
   }
+}
+
+export async function extractRemoteSource(url: string, sourceType: string): Promise<string> {
+  const response = await fetch(`${await getServerBaseUrl()}/api/source/extract`, {
+    method: "POST", headers: await premiumHeaders("application/json"),
+    body: JSON.stringify({ url, source_type: sourceType }),
+  });
+  if (!response.ok) throw new Error("The document could not be retrieved. Check its URL and the MindEase server.");
+  const result = await response.json() as { text: string };
+  return result.text;
 }

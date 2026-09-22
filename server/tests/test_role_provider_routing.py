@@ -41,15 +41,15 @@ def test_planning_falls_back_to_mistral(monkeypatch):
     ]
 
 
-def test_generation_chain_is_mistral_only(monkeypatch):
+def test_generation_chain_is_deepseek_only(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test")
     monkeypatch.setenv("MISTRAL_API_KEY", "mistral-test")
-    assert base._configured_role_chain(("mistral",)) == ["mistral"]
+    assert base._configured_role_chain(("deepseek",)) == ["deepseek"]
 
 
 def test_pipeline_agents_declare_their_provider_roles(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test")
     monkeypatch.setenv("MISTRAL_API_KEY", "mistral-test")
-    assert SectionAnalyzer().providers == ("deepseek", "mistral")
-    assert VisualizationPlanner().providers == ("deepseek", "mistral")
-    assert ManimGenerator().providers == ("mistral",)
+    assert SectionAnalyzer().providers == ("deepseek",)
+    assert VisualizationPlanner().providers == ("deepseek",)
+    assert ManimGenerator().providers == ("deepseek",)

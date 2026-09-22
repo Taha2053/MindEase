@@ -83,8 +83,9 @@ When voiceover is disabled (`{voiceover_enabled}` = false):
 - Do not include voiceover imports or voiceover blocks.
 
 ## Pacing Rules
-- Total flow should land in {target_min_duration}-{target_max_duration} seconds.
-- Allow meaningful pauses with `self.wait(0.3-1.0)` where concept transitions need breathing room.
+- Total flow should land in {target_min_duration}-{target_max_duration} seconds (ideal ~90s for full-article coverage, never <40 or >120).
+- Aim for ~90 seconds by expanding to 6-10 beats and richer narration.
+- Allow meaningful pauses with `self.wait(0.5-1.2)` where concept transitions need breathing room.
 - Avoid extremely rapid cut-like transitions.
 
 ## Output Contract

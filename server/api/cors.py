@@ -12,8 +12,26 @@ from urllib.parse import urlsplit
 DEFAULT_ORIGINS: tuple[str, ...] = (
     "https://arxivisual.org",
     "https://www.arxivisual.org",
-    "http://localhost:3000",  # local frontend dev
+    "http://localhost:3000",  # local frontend dev (legacy Next.js default)
+    "http://localhost:5173",  # vite dev (chrome/firefox)
+    "http://localhost:8000",  # local api / swagger
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
 )
+
+# Browser extension origins cannot be configured as one fixed HTTP origin.
+# Firefox assigns a UUID-shaped moz-extension host at installation time, while
+# Chrome uses its extension ID. API authentication remains responsible for
+# authorizing the caller; CORS only permits the browser to send the request.
+EXTENSION_ORIGIN_REGEX = r"^(?:moz-extension|chrome-extension)://[A-Za-z0-9-]+$"
+
+# Any localhost/127.0.0.1 origin (any port) should be allowed in development.
+# Starlette's CORSMiddleware takes a single allow_origin_regex, so we combine
+# extension + localhost patterns. EXTENSION_ORIGIN_REGEX is kept unchanged for
+# existing tests; this combined regex is what main.py actually uses.
+LOCALHOST_ORIGIN_REGEX = r"^http://(?:localhost|127\.0\.0\.1)(?::\d+)?$"
+CORS_ORIGIN_REGEX = r"^(?:(?:moz-extension|chrome-extension)://[A-Za-z0-9-]+|http://(?:localhost|127\.0\.0\.1)(?::\d+)?)$"
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 

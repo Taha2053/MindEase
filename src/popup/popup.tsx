@@ -1,3 +1,6 @@
+import "./onboarding.css";
+import { Onboarding } from "@/layer2/onboarding/onboarding";
+import { AccountControls } from "@/session/dashboard/AccountControls";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import browser from "webextension-polyfill";
@@ -26,7 +29,7 @@ import { hasRequiredKeys } from "@/utils/apiKeyManager";
 import type { TtsSettings } from "@/types";
 import {
   speak, stop, loadTtsSettings, saveTtsSettings,
-  getVoices, DEFAULT_TTS_SETTINGS,
+  DEFAULT_TTS_SETTINGS,
 } from "@/utils/ttsManager";
 
 /* ── Helpers ── */
@@ -269,7 +272,7 @@ function ProfilePanel({
       </div>
       <div className="btn-group">
         <button className="btn btn-primary" onClick={onEditProfile}>Edit Profile</button>
-        <button className="btn btn-ghost" onClick={onResetProfile}>Reset All</button>
+
       </div>
       <div style={{ marginTop: 10 }}>
         <button className="btn btn-primary" style={{ width: "100%" }} onClick={onDashboard}>
@@ -391,12 +394,10 @@ function ContentControls({ profile }: { profile: FullCognitiveProfile }) {
 function TtsSettingsPanel() {
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState<TtsSettings>(DEFAULT_TTS_SETTINGS);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     loadTtsSettings().then(setSettings);
-    getVoices().then(setVoices);
   }, []);
 
   const handleRateChange = async (rate: number) => {
@@ -404,25 +405,6 @@ function TtsSettingsPanel() {
     setSettings(updated);
   };
 
-  const handlePitchChange = async (pitch: number) => {
-    const updated = await saveTtsSettings({ pitch });
-    setSettings(updated);
-  };
-
-  const handleProviderChange = async (provider: TtsSettings["provider"]) => {
-    const updated = await saveTtsSettings({ provider });
-    setSettings(updated);
-  };
-
-  const handleVoiceChange = async (voiceURI: string) => {
-    const chosen = voices.find(v => v.voiceURI === voiceURI);
-    const updated = await saveTtsSettings({
-      voiceURI,
-      voiceName: chosen?.name,
-      voiceLang: chosen?.lang,
-    });
-    setSettings(updated);
-  };
 
   const handleTestSpeech = async () => {
     if (testing) {
@@ -456,18 +438,7 @@ function TtsSettingsPanel() {
         </span>
       </button>
       <div className={`controls-panel ${open ? "open" : ""}`}>
-        <div className="control-row">
-          <span className="control-label">Speech service</span>
-          <div className="control-btns">
-            <button className={`control-btn ${settings.provider === "browser" ? "active" : ""}`} onClick={() => handleProviderChange("browser")}>Browser</button>
-            <button className={`control-btn ${settings.provider === "azure" ? "active" : ""}`} onClick={() => handleProviderChange("azure")}>Azure premium</button>
-          </div>
-          <small style={{ color: "var(--text-muted)", lineHeight: 1.4 }}>
-            {settings.provider === "azure"
-              ? "Selected text is sent to your configured MindEase server for narration. Browser speech is used if it fails."
-              : "Uses a voice installed in your browser and keeps the text on this device."}
-          </small>
-        </div>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", lineHeight: 1.4 }}>English narration uses Azure Speech.</p>
         <div className="control-row">
           <span className="control-label">Speed</span>
           <span className="control-value">{settings.rate}x</span>
@@ -483,53 +454,6 @@ function TtsSettingsPanel() {
             ))}
           </div>
         </div>
-
-        <div className="control-row">
-          <span className="control-label">Pitch</span>
-          <span className="control-value">{settings.pitch === 0.8 ? "Low" : settings.pitch === 1.2 ? "High" : "Normal"}</span>
-          <div className="control-btns">
-            {[
-              { label: "Low", val: 0.8 },
-              { label: "Normal", val: 1.0 },
-              { label: "High", val: 1.2 },
-            ].map(({ label, val }) => (
-              <button
-                key={val}
-                className={`control-btn ${settings.pitch === val ? "active" : ""}`}
-                onClick={() => handlePitchChange(val)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {voices.length > 0 && (
-          <div className="control-row" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-            <span className="control-label">Voice</span>
-            <select
-              value={settings.voiceURI || ""}
-              onChange={(e) => handleVoiceChange(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "5px 8px",
-                fontSize: "0.72rem",
-                borderRadius: "6px",
-                border: "1px solid var(--border)",
-                background: "var(--bg-surface)",
-                color: "var(--text-primary)",
-                fontFamily: "var(--font-family)",
-              }}
-            >
-              <option value="">Default Browser Voice</option>
-              {voices.map((v) => (
-                <option key={v.voiceURI} value={v.voiceURI}>
-                  {v.name} ({v.lang})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
 
         <div className="controls-footer" style={{ marginTop: 10 }}>
           <button
@@ -548,135 +472,15 @@ function TtsSettingsPanel() {
 
 /* ── RL Agent Panel (live) ── */
 
-const ACTIONS_LABELS = [
-  "chunk+", "chunk-", "simpl+", "simpl-", "pace+", "pace-", "visuals", "summ+", "summ-",
-];
-
 function RLAgentPanel({ profile }: { profile: FullCognitiveProfile }) {
   const [open, setOpen] = useState(false);
-  const [qTable, setQTable] = useState<QTable | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const poll = async () => {
-      const result = await browser.storage.local.get(STORAGE_KEYS.QTABLE);
-      setQTable((result[STORAGE_KEYS.QTABLE] as QTable) ?? null);
-    };
-    poll();
-    pollRef.current = setInterval(poll, 2000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [open]);
-
-  const rl = profile.rlState;
-  const p = profile.transformationParams;
-
-  const rateBars: { label: string; value: number }[] = [
-    { label: "Highlight", value: rl.highlightRate },
-    { label: "Pause",     value: rl.pauseRate },
-    { label: "Re-read",   value: rl.reReadRate },
-    { label: "Skip",      value: rl.skipRate },
-  ];
-
-  return (
-    <>
-      <button className="rl-toggle" onClick={() => setOpen(o => !o)} aria-expanded={open} aria-controls="mindease-rl-panel">
-        <span className="rl-toggle-label">
-          <span className="rl-toggle-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </span>
-          RL Agent
-        </span>
-        <span className={`rl-arrow ${open ? "open" : ""}`}>
-          <ChevronDown size={14} />
-        </span>
-      </button>
-      <div id="mindease-rl-panel" className={`rl-panel ${open ? "open" : ""}`} hidden={!open}>
-        {/* RL State rates */}
-        <div className="rl-section-label">Behavior Signals</div>
-        <div className="rl-rates">
-          {rateBars.map(r => (
-            <div className="rl-rate-row" key={r.label}>
-              <span className="rl-rate-label">{r.label}</span>
-              <div className="rl-rate-bar-track">
-                <div
-                  className="rl-rate-bar-fill"
-                  style={{ width: `${Math.min(r.value * 100, 100)}%` }}
-                />
-              </div>
-              <span className="rl-rate-num">{(r.value * 100).toFixed(0)}%</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="rl-section-label">Current Params (RL-learned)</div>
-        <div className="rl-params">
-          <div className="rl-param">
-            <span className="rl-param-key">Chunk</span>
-            <span className="rl-param-val">{p.chunkSize}</span>
-          </div>
-          <div className="rl-param">
-            <span className="rl-param-key">Simplify</span>
-            <span className="rl-param-val">{p.simplificationLevel}</span>
-          </div>
-          <div className="rl-param">
-            <span className="rl-param-key">Pace</span>
-            <span className="rl-param-val">{p.captionSpeed}</span>
-          </div>
-          <div className="rl-param">
-            <span className="rl-param-key">Visuals</span>
-            <span className="rl-param-val">{p.useVisualAnchors ? "on" : "off"}</span>
-          </div>
-          <div className="rl-param">
-            <span className="rl-param-key">Summaries</span>
-            <span className="rl-param-val">{p.summaryFrequency}</span>
-          </div>
-          <div className="rl-param">
-            <span className="rl-param-key">Sessions</span>
-            <span className="rl-param-val">{rl.sessionCount}</span>
-          </div>
-        </div>
-
-        {/* Q-Table */}
-        {qTable && Object.keys(qTable).length > 0 && (
-          <>
-            <div className="rl-section-label">
-              Q-Table ({Object.keys(qTable).length} states)
-            </div>
-            <div className="qtable-list">
-              {Object.entries(qTable)
-                .map(([key, vals]) => ({ key, maxQ: Math.max(...vals), vals }))
-                .sort((a, b) => b.maxQ - a.maxQ)
-                .slice(0, 5)
-                .map(e => (
-                  <div className="qtable-row" key={e.key}>
-                    <div className="qtable-state">{e.key}</div>
-                    <div className="qtable-vals">
-                      {e.vals.map((v, i) => (
-                        <span
-                          key={i}
-                          className="qtable-val"
-                          data-positive={v > 0}
-                          data-negative={v < 0}
-                        >
-                          {ACTIONS_LABELS[i]}:{v.toFixed(2)}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-            </div>
-            <div className="qtable-max">
-              max Q: {Object.entries(qTable)
-                .map(([, vals]) => Math.max(...vals))
-                .reduce((a, b) => Math.max(a, b), -Infinity)
-                .toFixed(3)}
-            </div>
-          </>
-        )}
-      </div>
-    </>
-  );
+  return <><button className="rl-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>How adaptation works <ChevronDown size={14} /></button>
+    {open && <section className="body-wrap">
+      <p>Your saved preferences guide the reading layout. DeepSeek plans each document using its full source.</p>
+      <dl>{Object.entries(profile.baseline).map(([key, value]) => <div key={key}><dt>{key.replace(/([A-Z])/g, " $1")}</dt><dd>{String(value)}</dd></div>)}</dl>
+      <p>Session feedback records helpfulness, confidence, preferred format and your comments. Reading activity is used for session history.</p>
+      <p>Automatic learning from feedback is not enabled. The experimental Q-table does not change your preferences.</p>
+    </section>}</>;
 }
 
 /* ── No Profile ── */
@@ -731,6 +535,8 @@ function App() {
   const [excludedTabs, setExcludedTabs] = useState<Record<number, boolean>>({});
   const [explanations, setExplanations] = useState<AdaptationExplanation[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [accountStep, setAccountStep] = useState(false);
   const [now, setNow] = useState(Date.now());
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -759,7 +565,7 @@ function App() {
     const results = await browser.storage.local.get([
       STORAGE_KEYS.PROFILE, STORAGE_KEYS.SESSION_STATS, STORAGE_KEYS.NOTES,
       STORAGE_KEYS.EXTENSION_ACTIVE, STORAGE_KEYS.WORKSPACE,
-      STORAGE_KEYS.EXCLUDED_TABS,
+      STORAGE_KEYS.EXCLUDED_TABS, "mindease_account_prompt",
     ]);
 
     setProfile(results[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined);
@@ -777,6 +583,8 @@ function App() {
     const exps = await loadExplanations();
     const active = Object.values(exps).filter((e): e is AdaptationExplanation => e !== null);
     setExplanations(active);
+    setAccountStep(results["mindease_account_prompt"] === true);
+    setLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -800,6 +608,14 @@ function App() {
     return () => {
       browser.runtime.onMessage.removeListener(handler);
     };
+  }, [load]);
+
+  useEffect(() => {
+    const changed = (changes: Record<string, unknown>, area: string) => {
+      if (area === "local" && (STORAGE_KEYS.PROFILE in changes || STORAGE_KEYS.WORKSPACE in changes)) void load();
+    };
+    browser.storage.onChanged.addListener(changed);
+    return () => browser.storage.onChanged.removeListener(changed);
   }, [load]);
 
   const handleStart = useCallback(async () => {
@@ -854,21 +670,24 @@ function App() {
   }, [excludedTabs]);
 
   const handleEditProfile = useCallback(() => {
-    browser.tabs.create({ url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html?edit=1"), active: true });
+    browser.tabs.create({ url: browser.runtime.getURL("src/session/dashboard/dashboard.html#profile"), active: true });
   }, []);
 
-  const handleResetProfile = useCallback(async () => {
-    await browser.runtime.sendMessage({ type: "RESET_PROFILE" }).catch(() => {});
-    browser.tabs.create({ url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html"), active: true });
-  }, []);
-
-  const handleStartOnboarding = useCallback(() => {
-    browser.tabs.create({ url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html"), active: true });
-  }, []);
+  const handleResetProfile = handleEditProfile;
+  const handleStartOnboarding = () => {};
 
   const handleDashboard = useCallback(() => {
     browser.tabs.create({ url: browser.runtime.getURL("src/session/dashboard/dashboard.html"), active: true });
   }, []);
+
+  if (!loaded) return <div className="body-wrap" role="status">Loading preferences…</div>;
+  if (!profile) return <div className="popup-onboarding"><Onboarding onComplete={async () => {
+    await load();
+  }} /></div>;
+  if (accountStep) return <div className="body-wrap account-onboarding"><AccountControls /><button className="account-skip" onClick={async () => {
+    await browser.storage.local.set({ mindease_account_prompt: false });
+    setAccountStep(false);
+  }}>Continue without signing in</button></div>;
 
   return (
     <>
@@ -911,7 +730,7 @@ function App() {
               onResetProfile={handleResetProfile}
               onDashboard={handleDashboard}
             />
-            <ContentControls profile={profile} />
+
             <TtsSettingsPanel />
             <RLAgentPanel profile={profile} />
           </>

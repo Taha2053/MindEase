@@ -41,6 +41,7 @@ export interface CognitiveEvent {
 // ── Content Chunk (produced by Layer 1, tracked by Layer 3) ──────────────────
 
 export interface ContentChunk {
+  visualPrompt?: string;
   sourceText?: string;          // immutable extracted text; never model-authored
   id:          string;
   sourceId:    string;
@@ -241,7 +242,13 @@ export type MessageType =
   | "TTS_SPEAK"              // content → background or background → content (speak text, payload: {text, options?})
   | "TTS_STOP"               // content → background or background → content (stop speaking)
   | "TTS_DONE"               // background → content (speaking finished, payload: {error?})
-  | "CONTEXT_TTS";           // background → content (context menu speak selection, payload: {text})
+  | "CONTEXT_TTS"           // background → content (context menu speak selection, payload: {text})
+  | "PREMIUM_SPEECH"        // content → background (premium TTS proxy to avoid page-origin CORS)
+  | "PREMIUM_SPEECH_RESULT" // background → content (base64 audio or error)
+  | "PLAY_TTS_AUDIO"       // content → background (play base64 via offscreen, payload: {audioBase64, contentType, volume})
+  | "STOP_TTS_AUDIO"       // content → background (stop offscreen audio)
+  | "PAUSE_TTS_AUDIO"      // content → background (pause offscreen audio)
+  | "RESUME_TTS_AUDIO";    // content → background (resume offscreen audio)
 
 export interface ExtensionMessage {
   type:    MessageType;
@@ -632,6 +639,7 @@ export interface TtsPlayOptions {
 export type VisualSource = "napkin";
 
 export interface VisualEntry {
+  sourceBlockId?: string;
   id: string;
   concept: string;
   source: VisualSource;

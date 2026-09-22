@@ -205,12 +205,12 @@ def _plan() -> VisualizationPlan:
     return VisualizationPlan(
         concept_name="Scaled Dot-Product Attention",
         visualization_type=VisualizationType.DATA_FLOW,
-        duration_seconds=30,
+        duration_seconds=90,
         scenes=[
             Scene(
                 order=1,
                 description="beat",
-                duration_seconds=10,
+                duration_seconds=15,
                 transitions="Write",
                 elements=["Text"],
             )

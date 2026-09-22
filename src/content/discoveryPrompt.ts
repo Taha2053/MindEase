@@ -45,19 +45,19 @@ const STYLES = `
 }
 
 #mindease-discovery-prompt[data-theme="dark"] {
-  --dp-bg: #010736;
-  --dp-border: #807A77;
-  --dp-text: #F7E6CA;
-  --dp-text-dim: #D8CDBA;
-  --dp-accent: #F7E6CA;
+  --dp-bg: #171717;
+  --dp-border: rgba(212,212,212,.22);
+  --dp-text: #d4d4d4;
+  --dp-text-dim: rgba(212,212,212,.78);
+  --dp-accent: #d4d4d4;
   --dp-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
 #mindease-discovery-prompt[data-theme="light"] {
-  --dp-bg: #F7E6CA;
-  --dp-border: #AAC4F5;
-  --dp-text: #2D2B55;
-  --dp-text-dim: #6E7FA8;
-  --dp-accent: #0F52BA;
+  --dp-bg: #d4d4d4;
+  --dp-border: rgba(23,23,23,.22);
+  --dp-text: #171717;
+  --dp-text-dim: rgba(23,23,23,.74);
+  --dp-accent: #171717;
   --dp-shadow: 0 8px 32px rgba(0,0,0,0.12);
 }
 .mindease-prompt-card {
@@ -76,7 +76,7 @@ const STYLES = `
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #F7E6CA, #F7E6CA);
+  background: linear-gradient(135deg, #d4d4d4, #d4d4d4);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -85,7 +85,7 @@ const STYLES = `
 .mindease-prompt-icon svg {
   width: 18px;
   height: 18px;
-  color: #010736;
+  color: #171717;
 }
 .mindease-prompt-text {
   font-size: 0.82rem;
@@ -116,8 +116,8 @@ const STYLES = `
   transform: translateY(0);
 }
 .mindease-prompt-btn-primary {
-  background: linear-gradient(135deg, #F7E6CA, #F7E6CA);
-  color: #010736;
+  background: linear-gradient(135deg, #d4d4d4, #d4d4d4);
+  color: #171717;
 }
 .mindease-prompt-btn-ghost {
   color: var(--dp-text-dim);

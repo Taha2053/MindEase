@@ -103,47 +103,31 @@ export async function generateVisualsFromChunks(
   chunks: ContentChunk[],
   params: TransformationParams,
   force = false,
+  onVisual?: (entries: VisualEntry[]) => Promise<void>,
+  learnerProfile?: object,
 ): Promise<VisualEntry[]> {
-  if (chunks.length === 0) return [];
-  if (!params.useVisualAnchors && !force) return [];
-
-  const now = Date.now();
+  if (!chunks.length || (!params.useVisualAnchors && !force)) return [];
   const entries: VisualEntry[] = [];
-  const napkinOptions = mapToNapkinOptions(params);
-
-  const results = await Promise.allSettled(
-    chunks.slice(0, 5).map(async (chunk) => {
-      const label = chunk.summary
-        ? chunk.summary.slice(0, 60)
-        : chunk.conceptTags[0] ?? `Section ${chunk.position + 1}`;
-      const content = chunk.text.slice(0, 2000);
-      return generateNapkinVisualFromContent(content, label, napkinOptions);
-    }),
-  );
-
-  for (const r of results) {
-    if (r.status === "fulfilled") {
-      entries.push({
-        id: uuidv4(),
-        concept: r.value.concept,
-        source: "napkin",
-        format: r.value.format,
-        dataUrl: r.value.dataUrl,
-        width: r.value.width,
-        height: r.value.height,
-        generatedAt: now,
-        expiresAt: now + 25 * 60 * 1000,
-      });
-    } else {
-      console.warn("[VisualOrchestrator] Skipped chunk visual:", r.reason?.message || r.reason);
+  const errors: string[] = [];
+  for (const chunk of chunks.slice(0, 5)) {
+    try {
+      const label = (chunk.conceptTags[0] || chunk.summary || `Section ${chunk.position + 1}`).slice(0, 200);
+      const result = await generateNapkinVisualFromContent(chunk.sourceText || chunk.text, label,
+        { learnerProfile: { ...params, ...learnerProfile, diagramPlan: chunk.visualPrompt } });
+      const now = Date.now();
+      entries.push({ id: uuidv4(), sourceBlockId: chunk.id, concept: result.concept, source: "napkin", format: result.format,
+        dataUrl: result.dataUrl, width: result.width, height: result.height,
+        generatedAt: now, expiresAt: now + 24 * 60 * 60 * 1000 });
+      if (onVisual) await onVisual([...entries]);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
     }
   }
-
+  if (!entries.length && errors.length) throw new Error(errors[0]);
   const cache = await loadVisualsCache();
   cache.entries.push(...entries);
-  cache.updatedAt = now;
+  cache.updatedAt = Date.now();
   await saveVisualsCache(cache);
-
   return entries;
 }
 
