@@ -1702,7 +1702,22 @@ const OVERLAY_CSS = `
       #mindease-overlay .mindease-chunk {border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;padding:0!important;margin:0 0 20px!important;}
       #mindease-overlay .mindease-chunk::before {display:none!important;}
       #mindease-overlay .chunk-body {font-size:16px;line-height:1.8;max-width:72ch;}
-      #mindease-overlay .chunk-body h1,#mindease-overlay .chunk-body h2,#mindease-overlay .chunk-body h3 {line-height:1.3;margin:1.4em 0 .6em;}
+      #mindease-overlay .chunk-body h1,
+      #mindease-overlay .chunk-body h2,
+      #mindease-overlay .chunk-body h3,
+      #mindease-overlay .chunk-body h4,
+      #mindease-overlay .chunk-body h5,
+      #mindease-overlay .chunk-body h6 {
+        color: var(--text-primary) !important;
+        -webkit-text-fill-color: var(--text-primary) !important;
+        line-height: 1.3;
+        margin: 1.4em 0 .6em;
+      }
+      #mindease-overlay[data-theme="dark"] #mindease-header,
+      #mindease-overlay[data-theme="dark"] #mindease-header .logo-text {
+        color: #d4d4d4 !important;
+        -webkit-text-fill-color: #d4d4d4 !important;
+      }
       #mindease-overlay .chunk-body p {margin:0 0 1em;}
       #mindease-overlay .chunk-body table {border-collapse:collapse;width:100%;}
       #mindease-overlay .chunk-body td,#mindease-overlay .chunk-body th {border:1px solid var(--border);padding:8px;text-align:left;}
