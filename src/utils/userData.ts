@@ -8,6 +8,7 @@ const PERSONAL_KEYS = new Set<string>([
   STORAGE_KEYS.SESSION_STATS, STORAGE_KEYS.SESSION_CHUNKS, STORAGE_KEYS.WORKSPACE,
   STORAGE_KEYS.NOTES, STORAGE_KEYS.SESSION_HISTORY, STORAGE_KEYS.VISUALS_CACHE,
   STORAGE_KEYS.OVERRIDES, "activeSession", "latestArtifact",
+  "mindease_saved_videos",
 ]);
 
 export function sanitizeUserData(all: Record<string, unknown>): Record<string, unknown> {
@@ -27,5 +28,11 @@ export async function deleteAllUserData(): Promise<number> {
   const all = await browser.storage.local.get(null) as Record<string, unknown>;
   const keys = personalDataKeys(all);
   if (keys.length) await browser.storage.local.remove(keys);
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase("mindease-local");
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("Close other MindEase pages before deleting local data."));
+  });
   return keys.length;
 }

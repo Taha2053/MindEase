@@ -55,12 +55,13 @@ def _get_mistral_api_key() -> str:
 def _get_deepseek_api_key() -> str:
     return os.environ.get("DEEPSEEK_API_KEY", "").strip()
 
-
 # GPT-5 reasoning tokens count against max_completion_tokens. Agents size
 # max_tokens for the *visible* answer, so give the model extra room to think
 # or it can return an empty message after exhausting the cap on reasoning.
 _AZURE_REASONING_HEADROOM = 4096
 
+# Reserve completion-budget space for reasoning before visible Manim code.
+_DEEPSEEK_REASONING_HEADROOM = int(os.environ.get("DEEPSEEK_REASONING_HEADROOM", "12000"))
 
 def _require_openai_env() -> None:
     if not os.environ.get("OPENAI_API_KEY"):
@@ -295,6 +296,9 @@ _mistral_sync_client = None
 _deepseek_async_client = None
 _deepseek_sync_client = None
 
+# Allow a bounded longer request for reasoning-heavy scene generation.
+_DEEPSEEK_CLIENT_TIMEOUT = float(os.environ.get("DEEPSEEK_TIMEOUT", "600"))
+
 
 def _get_deepseek_client():
     global _deepseek_async_client
@@ -303,7 +307,7 @@ def _get_deepseek_client():
         _deepseek_async_client = AsyncOpenAI(
             base_url=os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
             api_key=_get_deepseek_api_key(),
-            timeout=300.0,
+            timeout=_DEEPSEEK_CLIENT_TIMEOUT,
         )
     return _deepseek_async_client
 
@@ -315,7 +319,7 @@ def _get_deepseek_sync_client():
         _deepseek_sync_client = OpenAI(
             base_url=os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
             api_key=_get_deepseek_api_key(),
-            timeout=300.0,
+            timeout=_DEEPSEEK_CLIENT_TIMEOUT,
         )
     return _deepseek_sync_client
 
@@ -539,6 +543,8 @@ async def _execute_provider_call(
         if provider == "nvidia":
             nvidia_max = int(os.environ.get("NVIDIA_MAX_TOKENS", "16384"))
             token_cap = min(max(max_tokens, nvidia_max), 16384)
+        elif provider == "deepseek" and "reasoner" in resolved_model:
+            token_cap = max_tokens + _DEEPSEEK_REASONING_HEADROOM
 
         kwargs: dict[str, Any] = {
             "model": resolved_model,
@@ -627,6 +633,8 @@ def _execute_provider_call_sync(
         if provider == "nvidia":
             nvidia_max = int(os.environ.get("NVIDIA_MAX_TOKENS", "16384"))
             token_cap = min(max(max_tokens, nvidia_max), 16384)
+        elif provider == "deepseek" and "reasoner" in resolved_model:
+            token_cap = max_tokens + _DEEPSEEK_REASONING_HEADROOM
 
         kwargs: dict[str, Any] = {
             "model": resolved_model,

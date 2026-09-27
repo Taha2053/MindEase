@@ -1,3 +1,7 @@
+import { SessionFolderLibrary } from "./SessionFolderLibrary";
+import { MediaLibrary } from "./MediaLibrary";
+import { HelpPage } from "./HelpPage";
+import { ProfileEvolution } from "./ProfileEvolution";
 import katexStyles from "katex/dist/katex.min.css?url";
 import { useEffect, useState, useRef, useCallback, type FC } from "react";
 import { createRoot } from "react-dom/client";
@@ -227,6 +231,7 @@ function getNavItems(visualFirst: boolean): { id: string; label: string; icon: F
     { id: "profile", label: "My learning puzzle", icon: Puzzle },
     { id: "video-studio", label: "Video studio", icon: Film },
     { id: "data", label: "Account & data", icon: Package },
+    { id: "help", label: "Help", icon: BookOpen },
   ];
   return items;
 }
@@ -644,9 +649,6 @@ const SectionExplanations: FC<{ profile: FullCognitiveProfile | null }> = ({ pro
           <div className="explain-body">
             First: {recommendations[0].label}. {recommendations[0].reason}
             {' '}This is a preference-based suggestion, not a diagnosis or proof that one format improves comprehension.
-          </div>
-          <div className="feedback-actions">
-            <button type="button" onClick={() => location.assign("#profile")}>Edit my learning profile</button>
           </div>
         </div>
         {explanations.length === 0 ? (
@@ -1383,16 +1385,22 @@ const Dashboard: FC = () => {
             <SectionResources artifact={data.artifact} session={data.session} />
           </>}
           {activeSection === "review" && <>
+            <SessionFolderLibrary />
+            <MediaLibrary />
             <SectionLearned artifact={data.artifact} />
             <SectionReview artifact={data.artifact} />
             <SectionVisuals visuals={visuals} formatPreference={visualFirst ? "visual" : "text"} concepts={conceptLabels} onGenerateVisuals={handleGenerateVisuals} generating={generating} />
             <SectionInsights artifact={data.artifact} />
           </>}
           {activeSection === "profile" && <>
+            <ProfileEvolution profile={data.profile} onEditRequested={() => {
+              document.getElementById("section-profile")?.scrollIntoView({ behavior: "smooth" });
+            }} />
             <ProfileEditor profile={data.profile} onChange={profile => setData(current => current ? { ...current, profile } : current)} />
             <SectionExplanations profile={data.profile} />
           </>}
           {activeSection === "data" && <DataControls />}
+          {activeSection === "help" && <HelpPage />}
         </main>
 
         <footer className="dash-footer">

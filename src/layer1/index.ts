@@ -19,8 +19,9 @@ export async function transformContent(
   const sourceId = sourceUrl ?? "unknown";
   const blocks = createSourceBlocks(pageText, sourceId);
   // Generation must have enough response budget to rewrite every supplied
-  // section. Large analysis-only batches caused truncated, shallow output.
-  const batches = batchSourceBlocks(blocks, 7_000, 3);
+  // Adaptive batching: group coherent paragraphs (up to 12,000 chars, max 6 blocks)
+  // so the model sees more context at once and processes the entire article much faster.
+  const batches = batchSourceBlocks(blocks, 12_000, 6);
   const chunks: ContentChunk[] = [];
   const plan = await createAdaptationPlan({
       title: typeof document === "undefined" ? sourceId : document.title,

@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 import webExtension from "vite-plugin-web-extension";
 
 export default defineConfig(({ mode }) => ({
+  esbuild: { charset: "ascii" },
   build: {
     outDir: mode === "firefox" ? "dist/firefox" : "dist/chrome",
     emptyOutDir: true,

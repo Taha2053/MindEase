@@ -118,12 +118,18 @@ export function attachAdaptedContent(
       || typeof value.isExample !== "boolean") throw new Error("Invalid generated adaptation fields.");
     const sourceFormulas = [...block.text.matchAll(/\[FORMULA\]([\s\S]*?)\[\/FORMULA\]/gi)].map(match => match[1].trim());
     const generatedFormulas = [...value.adaptedText.matchAll(/\[FORMULA\]([\s\S]*?)\[\/FORMULA\]/gi)].map(match => match[1].trim());
-    if (sourceFormulas.some(formula => !generatedFormulas.includes(formula))) {
-      throw new Error("Generated adaptation omitted or changed a source formula.");
+    if (sourceFormulas.length > 0) {
+      const hasAllFormulas = sourceFormulas.every(sf =>
+        generatedFormulas.some(gf => gf === sf || gf.replace(/\s+/g, "") === sf.replace(/\s+/g, "") || gf.replace(/\\operatorname\s*/g, "\\operatorname").replace(/\s+/g, "") === sf.replace(/\\operatorname\s*/g, "\\operatorname").replace(/\s+/g, ""))
+      );
+      if (!hasAllFormulas) {
+        throw new Error("Generated adaptation omitted or changed a source formula.");
+      }
     }
+    const adaptedText = value.adaptedText.trim();
     return {
       id: block.id, sourceId, sourceType, position: block.position,
-      text: value.adaptedText.trim(), sourceText: block.text,
+      text: adaptedText, sourceText: block.text,
       conceptTags: (value.concepts as string[]).slice(0, 12), isExample: value.isExample,
     };
   });

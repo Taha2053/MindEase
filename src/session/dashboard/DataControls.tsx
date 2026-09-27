@@ -1,3 +1,5 @@
+import { ApiKeysSection } from "./ApiKeysSection";
+import { StorageDestinationSelector } from "./StorageDestinationSelector";
 import { useState } from "react";
 import { deleteAllUserData, exportUserData } from "@/utils/userData";
 import { AccountControls } from "./AccountControls";
@@ -29,17 +31,39 @@ export function DataControls() {
     } catch { setStatus("Data could not be deleted."); setBusy(false); }
   };
 
-  return <section className="section-card data-controls" id="section-data" data-section="data">
-    <h2>Your data</h2>
-    <p>Profile and session data currently stay in this browser. Adapted source text is sent to the providers named in the adaptation prompt.</p>
-    <div className="feedback-actions">
-      <button type="button" disabled={busy} onClick={download}>Export learner data</button>
-      {!confirming ? <button type="button" disabled={busy} onClick={() => setConfirming(true)}>Delete learner data</button> :
-        <><span>This removes profiles, sessions, feedback, notes, and cached visuals from this browser.</span>
-          <button type="button" disabled={busy} onClick={remove}>Confirm deletion</button>
-          <button type="button" disabled={busy} onClick={() => setConfirming(false)}>Cancel</button></>}
+  return (
+    <div className="data-controls-container" id="section-data" data-section="data">
+      {/* 1. Storage Destination & Local Folder Path */}
+      <StorageDestinationSelector />
+
+      {/* 2. Account & Cloud Synchronization */}
+      <AccountControls />
+
+      {/* 3. API Keys & AI Service Providers */}
+      <ApiKeysSection />
+
+      {/* 4. Local Telemetry Export & Reset */}
+      <section className="section-card data-controls-subcard">
+        <div className="section-card-header">
+          <h2>Local Data &amp; Privacy Management</h2>
+        </div>
+        <p style={{ margin: "4px 0 14px", fontSize: "0.84rem", color: "var(--text-dim)" }}>
+          Export your entire telemetry and session history as JSON, or permanently wipe all local profile and cache data from this browser.
+        </p>
+        <div className="feedback-actions">
+          <button type="button" disabled={busy} onClick={download}>Export learner data</button>
+          {!confirming ? (
+            <button type="button" disabled={busy} onClick={() => setConfirming(true)}>Delete learner data</button>
+          ) : (
+            <>
+              <span style={{ fontSize: "0.8rem", color: "var(--danger)" }}>This removes all profiles, sessions, feedback, and cached visuals from this device.</span>
+              <button type="button" disabled={busy} onClick={remove}>Confirm deletion</button>
+              <button type="button" disabled={busy} onClick={() => setConfirming(false)}>Cancel</button>
+            </>
+          )}
+        </div>
+        {status && <p role="status" aria-live="polite" style={{ fontSize: "0.8rem", color: "var(--accent)", marginTop: 8 }}>{status}</p>}
+      </section>
     </div>
-    <p role="status" aria-live="polite">{status}</p>
-    <AccountControls />
-  </section>;
+  );
 }

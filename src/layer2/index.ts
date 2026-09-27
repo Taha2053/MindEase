@@ -1,3 +1,4 @@
+import type { RLSessionAdaptationRecord } from "@/types";
 /* ============================================================
    layer2/index.ts - Adaptive Cognitive Profiling
    Owner: Taha
@@ -141,20 +142,45 @@ export async function endSession(): Promise<FullCognitiveProfile | null> {
   const stats = await getSessionStats();
   const rlAgent = await ensureAgent();
 
+  /* Run session-boundary batch RL adaptation */
+  const adaptationResult = await rlAgent.adaptAtSessionEnd(profile, stats);
+
   /* Decay epsilon after session */
   rlAgent.decayEpsilon();
 
   /* Increment session count */
   profile.rlState.sessionCount += 1;
 
-  /* Compute dominant signal */
-  const dominantSignal = rlAgent.computeDominantSignal(stats);
+  /* Persist adaptation record for popup and dashboard telemetry */
+  try {
+    const record: RLSessionAdaptationRecord = {
+      sessionId: `sess-${Date.now()}`,
+      timestamp: Date.now(),
+      actionTaken: adaptationResult.actionTaken,
+      reward: adaptationResult.reward,
+      dominantSignal: adaptationResult.dominantSignal,
+      telemetry: {
+        highlights: stats.totalHighlights,
+        pauses: stats.totalPauses,
+        skips: stats.totalSkips,
+        engagedSectionsCount: stats.engagedSections.length,
+      },
+      paramChanges: adaptationResult.paramChanges,
+      reason: adaptationResult.reason,
+    };
+    const existingRaw = await browser.storage.local.get(STORAGE_KEYS.RL_ADAPTATION_LOG);
+    const existingList = (existingRaw[STORAGE_KEYS.RL_ADAPTATION_LOG] ?? []) as RLSessionAdaptationRecord[];
+    existingList.unshift(record);
+    await browser.storage.local.set({ [STORAGE_KEYS.RL_ADAPTATION_LOG]: existingList.slice(0, 30) });
+  } catch (err) {
+    console.warn("[MindEase] Could not save RL adaptation record:", err);
+  }
 
   /* Build session end payload */
   const sessionEndPayload: SessionEndPayload = {
     sessionStats: {
       ...stats,
-      dominantSignal,
+      dominantSignal: adaptationResult.dominantSignal,
     },
     updatedProfile: profile,
   };
@@ -162,6 +188,8 @@ export async function endSession(): Promise<FullCognitiveProfile | null> {
   /* Save updated profile */
   await updateProfile(profile);
 
+  /* Broadcast update so active overlays reflect next session's personalization */
+  await broadcastProfileUpdate(profile).catch(() => {});
   /* Clear session stats for next session */
   await clearSessionStats();
 

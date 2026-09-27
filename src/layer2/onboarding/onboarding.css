@@ -49,7 +49,7 @@
 
 html, body {
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
 }
 
 body {
@@ -114,11 +114,11 @@ body::after {
 
 .container {
   width: 100%;
-  max-width: 520px;
+  max-width: 1080px;
   padding: 20px 24px;
   position: relative;
   z-index: 1;
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
@@ -231,7 +231,7 @@ body::after {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
   position: relative;
 }
 
@@ -245,7 +245,7 @@ body::after {
   flex-direction: column;
   flex: 1;
   position: relative;
-  overflow-y: auto;
+  overflow: visible;
   transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
 }
 
@@ -403,10 +403,9 @@ body::after {
 /* ── Options Grid ── */
 
 .options-grid {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 10px;
-  flex: 1;
 }
 
 .option-card {
@@ -788,3 +787,8 @@ body::before, body::after { display: none; }
 }
 .screen-enter { animation: none; }
 @media (max-width: 480px) { .container { padding: 20px 12px; } .card { padding: 22px 16px; } }
+
+@media (min-width: 760px) {
+  .question-illustration { max-width: 140px; margin-bottom: 10px; }
+  .card { padding: 24px 32px; }
+}

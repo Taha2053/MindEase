@@ -4,6 +4,7 @@
    and provides a floating reopen button with state restoration.
    ============================================================ */
 
+import { appendToShadow, getMindeaseShadow, shadowById } from "./shadowHost";
 import browser from "webextension-polyfill";
 import type { Theme } from "@/utils/themeManager";
 
@@ -103,7 +104,7 @@ export function injectReopenButton(theme: Theme): HTMLButtonElement {
     }
   });
 
-  document.body.appendChild(reopenBtn);
+  appendToShadow(reopenBtn);
   return reopenBtn;
 }
 
@@ -121,7 +122,7 @@ export function getReopenButton(): HTMLButtonElement | null {
 /* ── Inject inline CSS for button animation ── */
 
 export function ensureReopenStyles(): void {
-  if (document.getElementById(SIDEBAR_CSS_ID)) return;
+  if (shadowById(SIDEBAR_CSS_ID)) return;
   const style = document.createElement("style");
   style.id = SIDEBAR_CSS_ID;
   style.textContent = `
@@ -146,5 +147,5 @@ export function ensureReopenStyles(): void {
       }
     }
   `;
-  document.head.appendChild(style);
+  getMindeaseShadow().appendChild(style);
 }

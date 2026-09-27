@@ -1,5 +1,4 @@
-import "./onboarding.css";
-import { Onboarding } from "@/layer2/onboarding/onboarding";
+import type { RLSessionAdaptationRecord } from "@/types";
 import { AccountControls } from "@/session/dashboard/AccountControls";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createRoot } from "react-dom/client";
@@ -474,13 +473,100 @@ function TtsSettingsPanel() {
 
 function RLAgentPanel({ profile }: { profile: FullCognitiveProfile }) {
   const [open, setOpen] = useState(false);
-  return <><button className="rl-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>How adaptation works <ChevronDown size={14} /></button>
-    {open && <section className="body-wrap">
-      <p>Your saved preferences guide the reading layout. DeepSeek plans each document using its full source.</p>
-      <dl>{Object.entries(profile.baseline).map(([key, value]) => <div key={key}><dt>{key.replace(/([A-Z])/g, " $1")}</dt><dd>{String(value)}</dd></div>)}</dl>
-      <p>Session feedback records helpfulness, confidence, preferred format and your comments. Reading activity is used for session history.</p>
-      <p>Automatic learning from feedback is not enabled. The experimental Q-table does not change your preferences.</p>
-    </section>}</>;
+  const [recentRecord, setRecentRecord] = useState<RLSessionAdaptationRecord | null>(null);
+  const baseline = profile.baseline;
+  const rl = profile.rlState;
+
+  useEffect(() => {
+    void browser.storage.local.get(STORAGE_KEYS.RL_ADAPTATION_LOG).then((data) => {
+      const logs = (data[STORAGE_KEYS.RL_ADAPTATION_LOG] ?? []) as RLSessionAdaptationRecord[];
+      if (logs.length > 0) setRecentRecord(logs[0]);
+    });
+  }, [open]);
+
+  return (
+    <>
+      <button className="rl-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
+        How adaptation works <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s ease" }} />
+      </button>
+
+      {open && (
+        <div className="adaptation-clean-card">
+          <p className="adaptation-card-desc">
+            Your reading layout and chunking adapt at the end of each study session based on your real-time reading signals.
+          </p>
+
+          <div className="adaptation-grid-specs">
+            <div className="spec-pill">
+              <span>Format</span>
+              <strong>{baseline.formatPreference}</strong>
+            </div>
+            <div className="spec-pill">
+              <span>Chunking</span>
+              <strong>{profile.transformationParams.chunkSize}</strong>
+            </div>
+            <div className="spec-pill">
+              <span>Pace</span>
+              <strong>{profile.transformationParams.captionSpeed}</strong>
+            </div>
+            <div className="spec-pill">
+              <span>Density</span>
+              <strong>{profile.transformationParams.summaryFrequency} sum.</strong>
+            </div>
+            <div className="spec-pill">
+              <span>Approach</span>
+              <strong>{baseline.learningApproach.replace("-", " ")}</strong>
+            </div>
+            <div className="spec-pill">
+              <span>Anchors</span>
+              <strong>{profile.transformationParams.useVisualAnchors ? "Active" : "Standard"}</strong>
+            </div>
+          </div>
+
+          {/* Telemetry Data Section */}
+          <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+              <span>Telemetry Gathered</span>
+              <span>{rl.sessionCount} sessions logged</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, textAlign: "center" }}>
+              <div style={{ background: "var(--bg-base)", padding: "4px 2px", borderRadius: 5, border: "1px solid var(--border)" }}>
+                <span style={{ fontSize: "0.62rem", color: "var(--text-muted)", display: "block" }}>Highlights</span>
+                <strong style={{ fontSize: "0.76rem", color: "var(--accent)" }}>{rl.highlightRate}</strong>
+              </div>
+              <div style={{ background: "var(--bg-base)", padding: "4px 2px", borderRadius: 5, border: "1px solid var(--border)" }}>
+                <span style={{ fontSize: "0.62rem", color: "var(--text-muted)", display: "block" }}>Pauses</span>
+                <strong style={{ fontSize: "0.76rem", color: "var(--accent)" }}>{rl.pauseRate}</strong>
+              </div>
+              <div style={{ background: "var(--bg-base)", padding: "4px 2px", borderRadius: 5, border: "1px solid var(--border)" }}>
+                <span style={{ fontSize: "0.62rem", color: "var(--text-muted)", display: "block" }}>Skips</span>
+                <strong style={{ fontSize: "0.76rem", color: "var(--danger)" }}>{rl.skipRate}</strong>
+              </div>
+              <div style={{ background: "var(--bg-base)", padding: "4px 2px", borderRadius: 5, border: "1px solid var(--border)" }}>
+                <span style={{ fontSize: "0.62rem", color: "var(--text-muted)", display: "block" }}>Re-Reads</span>
+                <strong style={{ fontSize: "0.76rem", color: "var(--text-primary)" }}>{rl.reReadRate}</strong>
+              </div>
+            </div>
+          </div>
+
+          {recentRecord && (
+            <div style={{ background: "var(--bg-base)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", marginTop: 4 }}>
+              <span style={{ fontSize: "0.66rem", color: "var(--accent)", fontWeight: 700, textTransform: "uppercase", display: "block" }}>
+                Latest Session Tuning ({recentRecord.dominantSignal} bias)
+              </span>
+              <p style={{ margin: "2px 0 0", fontSize: "0.72rem", color: "var(--text-dim)", lineHeight: 1.4 }}>
+                {recentRecord.reason}
+              </p>
+            </div>
+          )}
+
+          <p className="adaptation-footer-note">
+            Telemetry is analyzed during study, but updates apply only at session end for stability. Manual controls always take priority.
+          </p>
+        </div>
+      )}
+    </>
+  );
 }
 
 /* ── No Profile ── */
@@ -674,20 +760,27 @@ function App() {
   }, []);
 
   const handleResetProfile = handleEditProfile;
-  const handleStartOnboarding = () => {};
+  const handleStartOnboarding = () => {
+    void browser.tabs.create({ url: browser.runtime.getURL("src/layer2/onboarding/onboarding.html"), active: true });
+  };
 
   const handleDashboard = useCallback(() => {
     browser.tabs.create({ url: browser.runtime.getURL("src/session/dashboard/dashboard.html"), active: true });
   }, []);
 
   if (!loaded) return <div className="body-wrap" role="status">Loading preferences…</div>;
-  if (!profile) return <div className="popup-onboarding"><Onboarding onComplete={async () => {
-    await load();
-  }} /></div>;
-  if (accountStep) return <div className="body-wrap account-onboarding"><AccountControls /><button className="account-skip" onClick={async () => {
-    await browser.storage.local.set({ mindease_account_prompt: false });
-    setAccountStep(false);
-  }}>Continue without signing in</button></div>;
+  if (!profile) return <NoProfile onStart={handleStartOnboarding} />;
+  if (accountStep) return (
+    <div className="account-onboarding">
+      <AccountControls compact />
+      <button className="account-skip" onClick={async () => {
+        await browser.storage.local.set({ mindease_account_prompt: false });
+        setAccountStep(false);
+      }}>
+        Skip for now &mdash; continue locally
+      </button>
+    </div>
+  );
 
   return (
     <>
@@ -733,6 +826,7 @@ function App() {
 
             <TtsSettingsPanel />
             <RLAgentPanel profile={profile} />
+            <button className="rl-toggle" onClick={() => void browser.tabs.create({ url: browser.runtime.getURL("src/session/dashboard/dashboard.html#help"), active: true })}>Help &amp; how to use MindEase</button>
           </>
         ) : (
           <NoProfile onStart={handleStartOnboarding} />

@@ -1,5 +1,7 @@
+import { createRoot } from "react-dom/client";
 import browser from "webextension-polyfill";
-import { STORAGE_KEYS } from "@/types";
-void browser.storage.local.get(STORAGE_KEYS.PROFILE).then(result => {
-  location.replace(browser.runtime.getURL(result[STORAGE_KEYS.PROFILE] ? "src/session/dashboard/dashboard.html#profile" : "src/popup/popup.html"));
-});
+import { Onboarding } from "./onboarding";
+
+createRoot(document.getElementById("root")!).render(<Onboarding onComplete={() => {
+  location.replace(browser.runtime.getURL("src/session/dashboard/dashboard.html#profile"));
+}} />);

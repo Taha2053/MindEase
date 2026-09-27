@@ -215,6 +215,14 @@ export async function fetchDocumentVideos(
         section_id: v.section_id,
       }));
 
+    if (validVideos.length) {
+      await navigator.locks.request("mindease-media-library", async () => {
+        const saved = await browser.storage.local.get("mindease_saved_videos");
+        const entries = new Map(((saved.mindease_saved_videos ?? []) as Array<{ id: string }>).map(video => [video.id, video]));
+        for (const video of validVideos) entries.set(video.id, { ...video, title: data.title, savedAt: Date.now() } as { id: string });
+        await browser.storage.local.set({ mindease_saved_videos: [...entries.values()] });
+      });
+    }
     return {
       title: data.title,
       videos: validVideos,

@@ -330,6 +330,7 @@ export interface SessionHistoryEntry {
   conceptCount: number;
   focusScore: number;
   resourceCount: number;
+  profileSnapshot?: Pick<FullCognitiveProfile, "baseline" | "transformationParams" | "updatedAt">;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -561,9 +562,13 @@ export const STORAGE_KEYS = {
   API_KEYS: "mindease_api_keys",
   AUTH_SESSION: "mindease_auth_session",
   SYNC_PREFERENCES: "mindease_sync_preferences",
+  STORAGE_DESTINATION: "mindease_storage_destination",
+  SESSION_FOLDERS: "mindease_session_folders",
+  RL_ADAPTATION_LOG: "mindease_rl_adaptation_log",
 } as const;
 
 export interface UserApiKeys {
+  deepseekApiKey?: string;
   mistralApiKey?: string;
   napkinApiKey?: string;
   hfToken?: string;
@@ -661,4 +666,64 @@ export interface GenerateVisualPayload {
   sourceUrl: string;
   sourceTitle: string;
   concepts: string[];
+}
+
+export type StorageDestinationType = "local" | "supabase";
+
+export interface StorageDestinationConfig {
+  destination: StorageDestinationType;
+  localPath: string; // e.g., "MindEase/Lessons"
+  updatedAt: number;
+}
+
+export interface SessionFolderSummary {
+  sessionId: string;
+  sessionNumber: number;
+  dateStr: string; // e.g., "2026-09-27"
+  folderName: string; // e.g., "2026-09-27_Session-01"
+  title: string;
+  durationMs: number;
+  conceptCount: number;
+  focusScore: number;
+  destination: StorageDestinationType;
+  savedAt: number;
+  videos: Array<{
+    id: string;
+    concept: string;
+    filename: string;
+    videoUrl: string;
+  }>;
+  visuals: Array<{
+    id: string;
+    concept: string;
+    filename: string;
+    dataUrl: string;
+  }>;
+  history: {
+    topic: string;
+    concepts: string[];
+    timeSpentMinutes: number;
+    notesCount: number;
+    summaryText: string;
+  };
+}
+
+export interface RLSessionAdaptationRecord {
+  sessionId: string;
+  timestamp: number;
+  actionTaken: Action | "noChange";
+  reward: number;
+  dominantSignal: "highlight" | "pause" | "skip";
+  telemetry: {
+    highlights: number;
+    pauses: number;
+    skips: number;
+    engagedSectionsCount: number;
+  };
+  paramChanges: Array<{
+    param: string;
+    from: string | number | boolean;
+    to: string | number | boolean;
+  }>;
+  reason: string;
 }

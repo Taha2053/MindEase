@@ -1,5 +1,7 @@
+import { getStorageConfig, recordSessionFolder } from "@/utils/sessionStorageManager";
+import type { VisualEntry, SessionFolderSummary } from "@/types";
 import browser from "webextension-polyfill";
-import type { SessionHistoryEntry, KeyConceptEntry, FocusMetrics, ResourceEntry } from "@/types";
+import type { SessionHistoryEntry, KeyConceptEntry, FocusMetrics, ResourceEntry, FullCognitiveProfile } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { deleteFeedback } from "./feedback";
 import { syncNow } from "@/utils/supabase";
@@ -27,6 +29,8 @@ export async function saveSessionHistory(
   resources: ResourceEntry[],
 ): Promise<void> {
   const name = generateAutoName(concepts, endTime);
+  const storedProfile = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
+  const profile = storedProfile[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined;
   const entry: SessionHistoryEntry = {
     sessionId,
     name,
@@ -35,6 +39,7 @@ export async function saveSessionHistory(
     conceptCount: concepts.length,
     focusScore,
     resourceCount: resources.length,
+    ...(profile ? { profileSnapshot: { baseline: profile.baseline, transformationParams: profile.transformationParams, updatedAt: profile.updatedAt } } : {}),
   };
 
   const result = await browser.storage.local.get(STORAGE_KEYS.SESSION_HISTORY);
@@ -44,6 +49,56 @@ export async function saveSessionHistory(
   // cap at 100 sessions to avoid unbounded storage growth
   const trimmed = history.slice(0, 100);
   await browser.storage.local.set({ [STORAGE_KEYS.SESSION_HISTORY]: trimmed });
+
+  // Package structured session folder (Date + Session Number / Videos, Visuals, History)
+  try {
+    const cfg = await getStorageConfig();
+    const cachedVisuals = await browser.storage.local.get(STORAGE_KEYS.VISUALS_CACHE);
+    const visualsList = ((cachedVisuals[STORAGE_KEYS.VISUALS_CACHE] as { entries?: VisualEntry[] })?.entries ?? []);
+    const cachedVideos = await browser.storage.local.get("mindease_saved_videos");
+    const videosList = (cachedVideos.mindease_saved_videos ?? []) as Array<{ id: string; concept: string; video_url: string; title?: string }>;
+
+    const dateObj = new Date(endTime);
+    const dateStr = dateObj.toISOString().slice(0, 10); // YYYY-MM-DD
+    const sessionNum = history.length + 1;
+    const folderName = `${dateStr}_Session-${String(sessionNum).padStart(2, "0")}`;
+
+    const folderSummary: SessionFolderSummary = {
+      sessionId,
+      sessionNumber: sessionNum,
+      dateStr,
+      folderName,
+      title: name,
+      durationMs,
+      conceptCount: concepts.length,
+      focusScore,
+      destination: cfg.destination,
+      savedAt: endTime,
+      videos: videosList.map((v, i) => ({
+        id: v.id,
+        concept: v.concept || `Scene ${i + 1}`,
+        filename: `videos/scene_${i + 1}.mp4`,
+        videoUrl: v.video_url,
+      })),
+      visuals: visualsList.map((vis, i) => ({
+        id: vis.id,
+        concept: vis.concept || `Diagram ${i + 1}`,
+        filename: `visuals/diagram_${i + 1}.png`,
+        dataUrl: vis.dataUrl,
+      })),
+      history: {
+        topic: name,
+        concepts: concepts.map((c) => c.label),
+        timeSpentMinutes: Math.round(durationMs / 60000),
+        notesCount: resources.reduce((acc, r) => acc + (r.notesCount ?? 0), 0),
+        summaryText: `Studied ${concepts.length} key concepts across ${resources.length} learning resources.`,
+      },
+    };
+
+    await recordSessionFolder(folderSummary);
+  } catch (err) {
+    console.warn("[MindEase] Session folder packaging failed:", err);
+  }
   await syncNow().catch(() => {});
 }
 

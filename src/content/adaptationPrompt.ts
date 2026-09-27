@@ -1,8 +1,9 @@
+import { appendToShadow, getMindeaseShadow, shadowById } from "./shadowHost";
 import type { Theme } from "@/utils/themeManager";
 import type { BaselineProfile } from "@/types";
 import { rankAdaptations } from "@/layer2/recommendations";
 
-export type AdaptationChoice = "structured" | "visual" | "all";
+export type AdaptationChoice = "structured" | "visual";
 
 const STYLE_ID = "mindease-adaptation-prompt-style";
 const PROMPT_ID = "mindease-adaptation-prompt";
@@ -28,13 +29,13 @@ const STYLES = `
 
 export function requestAdaptationChoice(theme: Theme, baseline?: Partial<BaselineProfile>): Promise<AdaptationChoice | null> {
   cancelPendingPrompt?.();
-  document.getElementById(PROMPT_ID)?.remove();
-  document.getElementById(STYLE_ID)?.remove();
+  shadowById(PROMPT_ID)?.remove();
+  shadowById(STYLE_ID)?.remove();
 
   const style = document.createElement("style");
   style.id = STYLE_ID;
   style.textContent = STYLES;
-  document.head.appendChild(style);
+  getMindeaseShadow().appendChild(style);
 
   const prompt = document.createElement("section");
   prompt.id = PROMPT_ID;
@@ -48,7 +49,6 @@ export function requestAdaptationChoice(theme: Theme, baseline?: Partial<Baselin
       <p id="mindease-adaptation-description">Accepting sends the extracted material to Mistral. Visual options also send sections to Napkin. Generated explanations may contain errors.</p>
       <div class="ap-options">
         <div class="ap-recommendations"></div>
-        <button type="button" data-choice="all">Structured reading and visual explanation</button>
       </div>
       <button type="button" class="ap-cancel" data-choice="alternative">Suggest another option</button>
       <button type="button" class="ap-cancel" data-choice="cancel">Keep the original page</button>
@@ -68,7 +68,7 @@ export function requestAdaptationChoice(theme: Theme, baseline?: Partial<Baselin
     options.append(button, reason);
   };
   showOption(0);
-  document.body.appendChild(prompt);
+  appendToShadow(prompt);
 
   const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const firstButton = prompt.querySelector<HTMLButtonElement>("button");
@@ -97,7 +97,7 @@ export function requestAdaptationChoice(theme: Theme, baseline?: Partial<Baselin
         options.querySelector<HTMLButtonElement>("button")?.focus();
         return;
       }
-      finish(choice === "structured" || choice === "visual" || choice === "all" ? choice : null);
+      finish(choice === "structured" || choice === "visual" ? choice : null);
     });
     prompt.addEventListener("keydown", (event) => {
       if (event.key === "Escape") finish(null);

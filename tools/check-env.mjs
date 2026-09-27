@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const readNames = (relativePath) => {
@@ -14,6 +15,7 @@ const readNames = (relativePath) => {
     const previous = entries.get(name);
     entries.set(name, {
       count: (previous?.count ?? 0) + 1,
+      value,
       populated: Boolean(value) && !/^(?:PASTE_|your[-_]|sk-your|<)/i.test(value),
     });
   }
@@ -36,7 +38,7 @@ console.log("Configuration names and presence only; no credential values are pri
 for (const name of ["VITE_MISTRAL_API_KEY", "VITE_NAPKIN_API_KEY", "VITE_OCR_SPACE_API_KEY"]) {
   check(name, extension, ".env");
 }
-console.log("Planned integrations: these credentials alone do not enable the features.");
+console.log("Cloud authentication requires deployed Supabase tables and policies as well as credentials.");
 for (const name of ["VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY"]) {
   check(name, extension, ".env");
   if (!extension.has(name) && server.has(name)) {
@@ -54,5 +56,17 @@ for (const [location, entries] of [[".env", extension], ["server/.env", server]]
     }
   }
 }
+const mode = process.env.STORAGE_MODE || server.get("STORAGE_MODE")?.value || "local";
+console.log(`Video storage mode: ${mode}`);
+if (mode === "local") {
+  const media = resolve(root, "server", process.env.MEDIA_DIR || server.get("MEDIA_DIR")?.value || "./media/videos");
+  console.log(`Video directory (npm run server): ${media} (${existsSync(media) ? "exists" : "created on first use"})`);
+  console.log("Relative MEDIA_DIR resolves against the backend working directory; use an absolute path for other launch commands.");
+} else if (mode === "r2") {
+  for (const name of ["S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_PUBLIC_URL"]) check(name, server, "server/.env");
+} else { console.log("Unsupported STORAGE_MODE"); issues += 1; }
+console.log(`Diagram database default: ${resolve(root, "server/data/diagrams.sqlite3")}`);
+console.log(`Video metadata database default: ${resolve(root, "server/arxiviz.db")}`);
+console.log("Extension visual previews: browser.storage.local / mindease_visuals_cache. Backend files must remain available for later playback.");
 console.log(`Configuration issues: ${issues}. Provider connectivity was not tested.`);
 process.exitCode = issues ? 1 : 0;

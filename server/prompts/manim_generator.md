@@ -50,6 +50,13 @@ The video must feel like a coherent teaching sequence, not a list of disconnecte
   the arrow region or omit per-arrow labels entirely.
 - Scale to fit: if a group would exceed the safe area, `group.scale_to_fit_width(12)`
   (or height 7) BEFORE positioning it.
+- Keep body labels at least 24 px and titles at least 32 px. If text does not fit,
+  shorten the label or split the beat; do not shrink an entire diagram until unreadable.
+- Use at most one new concept per beat. Introduce objects before relationships,
+  then animate the causal change being explained. Avoid decorative motion.
+- Preserve a consistent visual legend and stable positions across related beats.
+- Use only claims supported by the plan. Mark invented numeric examples as
+  illustrative; never invent study results, measurements or source quotations.
 
 ## LaTeX and MathTex Safety (CRITICAL)
 - Keep MathTex valid with BasicTeX-safe syntax.
@@ -75,8 +82,10 @@ When voiceover is enabled (`{voiceover_enabled}` = true):
    - Still be technically accurate — don't oversimplify the core concept, just make it accessible
    - Short, punchy sentences. Avoid long academic phrasing.
    - NEVER start with: display/show/fade/animate/create/draw/move/write
-6. Every narrated `self.play(...)` call MUST include:
-   - `run_time=tracker.duration`
+6. Use one core `self.play(..., run_time=tracker.duration)` per voiceover block.
+   If several animations belong together, compose them in an AnimationGroup or
+   Succession sharing that duration; never spend the entire narration duration
+   separately on each sequential play.
 
 When voiceover is disabled (`{voiceover_enabled}` = false):
 - Use a regular `Scene` (or `ThreeDScene` when needed).
@@ -87,6 +96,8 @@ When voiceover is disabled (`{voiceover_enabled}` = false):
 - Aim for ~90 seconds by expanding to 6-10 beats and richer narration.
 - Allow meaningful pauses with `self.wait(0.5-1.2)` where concept transitions need breathing room.
 - Avoid extremely rapid cut-like transitions.
+- Hold completed diagrams briefly so labels can be read. Do not introduce a new
+  object while narrating an unrelated one. End with the key mechanism and its limitation.
 
 ## Output Contract
 Return ONLY raw Python code. No markdown, no prose.

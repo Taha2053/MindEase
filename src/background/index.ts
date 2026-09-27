@@ -355,7 +355,7 @@ browser.runtime.onMessage.addListener(
 
         try {
           console.log("[Background] Starting transform for:", pageType);
-          const wantsVisuals = adaptation === "visual" || adaptation === "all";
+          const wantsVisuals = adaptation === "visual";
           let visualCount = 0;
           let visualQueue = Promise.resolve();
           const completeSource = pageType === "pdf" ? await extractRemoteSource(url, "pdf") : text;

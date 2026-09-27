@@ -248,6 +248,138 @@ export class RLAgent {
     );
   }
 
+  /* ─── End-of-Session Batch Adaptation ───
+     Called once at session end. Evaluates the completed session's aggregated telemetry,
+     computes batch reward, updates Q-values, and applies subtle tuning to transformation
+     parameters with threshold safeguards for fundamental preferences.
+  */
+  async adaptAtSessionEnd(
+    profile: FullCognitiveProfile,
+    stats: {
+      totalHighlights: number;
+      totalPauses: number;
+      totalSkips: number;
+      engagedSections: string[];
+      skippedSections: string[];
+    },
+  ): Promise<{
+    actionTaken: Action | "noChange";
+    reward: number;
+    dominantSignal: "highlight" | "pause" | "skip";
+    paramChanges: Array<{ param: string; from: string | number | boolean; to: string | number | boolean }>;
+    reason: string;
+  }> {
+    const { totalHighlights, totalPauses, totalSkips, engagedSections, skippedSections } = stats;
+    const dominantSignal = this.computeDominantSignal(stats);
+    const totalInteractions = totalHighlights + totalPauses + totalSkips;
+
+    // If virtually no interactions occurred in this session, don't perturb user settings
+    if (totalInteractions < 2) {
+      return {
+        actionTaken: "noChange",
+        reward: 0,
+        dominantSignal,
+        paramChanges: [],
+        reason: "Session too brief to infer presentation adjustments.",
+      };
+    }
+
+    // Compute session net reward
+    // High engagement sections and highlights give strong positive reward;
+    // excessive skipping signals cognitive fatigue or mismatched density.
+    const reward = (totalHighlights * 1.0) + (totalPauses * 0.4) - (totalSkips * 0.8);
+    profile.rlState.totalEngagementScore += reward;
+    profile.rlState.highlightRate = totalHighlights;
+    profile.rlState.pauseRate = totalPauses;
+    profile.rlState.skipRate = totalSkips;
+
+    const currentState = discretizeState(profile.rlState);
+    const stateKey = stateToKey(currentState);
+
+    if (!this.qTable[stateKey]) {
+      this.qTable[stateKey] = new Array(ACTION_COUNT).fill(0);
+    }
+
+    // Update Q-table with session reward
+    if (this.prevStateKey !== null && this.prevAction !== null) {
+      if (!this.qTable[this.prevStateKey]) {
+        this.qTable[this.prevStateKey] = new Array(ACTION_COUNT).fill(0);
+      }
+      const prevQ = this.qTable[this.prevStateKey];
+      const actionIdx = ACTIONS.indexOf(this.prevAction);
+      const maxNextQ = Math.max(...this.qTable[stateKey]);
+      const tdTarget = reward + this.config.discountFactor * maxNextQ;
+      prevQ[actionIdx] = prevQ[actionIdx] + this.config.learningRate * (tdTarget - prevQ[actionIdx]);
+    }
+    // Choose action via epsilon-greedy
+    let chosenAction: Action | "noChange" = this.selectAction(profile.rlState);
+
+    // Safeguard Thresholds for fundamental preferences:
+    // 1. Never turn OFF visuals if user baseline format is visual or needs concept anchors
+    if (chosenAction === "toggleVisualAnchors") {
+      const wantsVisuals = profile.baseline.formatPreference === "visual" || profile.baseline.needsConceptAnchor;
+      if (wantsVisuals && profile.transformationParams.useVisualAnchors) {
+        chosenAction = totalSkips > totalHighlights ? "increaseSummaryFrequency" : "increaseCaptionSpeed";
+      }
+    }
+
+    // 2. High skip rate threshold guard: if user is skipping heavily, never increase chunk size
+    if (totalSkips > (totalHighlights + totalPauses) && chosenAction === "increaseChunkSize") {
+      chosenAction = "decreaseChunkSize";
+    }
+
+    // 3. High engagement threshold guard: if user is highlighting and not skipping, don't over-simplify
+    if (totalHighlights > 4 && totalSkips <= 1 && chosenAction === "increaseSimplification") {
+      chosenAction = "noChange";
+    }
+
+    this.prevStateKey = stateKey;
+    this.prevAction = chosenAction === "noChange" ? null : chosenAction;
+    await saveQTable(this.qTable);
+
+    if (chosenAction === "noChange") {
+      return {
+        actionTaken: "noChange",
+        reward,
+        dominantSignal,
+        paramChanges: [],
+        reason: "Stable engagement maintained; no parameter tuning needed.",
+      };
+    }
+
+    // Apply small adaptation to transformation params
+    const oldParams = { ...profile.transformationParams };
+    const newParams = this.applyAction(oldParams, chosenAction);
+    profile.transformationParams = newParams;
+
+    // Identify changed fields
+    const paramChanges: Array<{ param: string; from: string | number | boolean; to: string | number | boolean }> = [];
+    (Object.keys(newParams) as Array<keyof TransformationParams>).forEach((k) => {
+      if (newParams[k] !== oldParams[k]) {
+        paramChanges.push({ param: k, from: oldParams[k], to: newParams[k] });
+      }
+    });
+
+    let reason = "Refined pacing based on reading rhythm.";
+    if (chosenAction.includes("ChunkSize")) {
+      reason = totalSkips > totalHighlights ? "Reduced section length to ease reading load." : "Expanded section length for deeper reading flow.";
+    } else if (chosenAction.includes("Simplification")) {
+      reason = totalSkips > totalHighlights ? "Clarified sentence structure based on skipping pattern." : "Maintained natural phrasing based on steady engagement.";
+    } else if (chosenAction.includes("SummaryFrequency")) {
+      reason = "Adjusted milestone summaries to reinforce understanding.";
+    } else if (chosenAction.includes("CaptionSpeed")) {
+      reason = "Synchronized audio pace with your reading speed.";
+    }
+
+    return {
+      actionTaken: chosenAction,
+      reward,
+      dominantSignal,
+      paramChanges,
+      reason,
+    };
+  }
+
   /* ─── Compute dominant signal from session stats ─── */
   computeDominantSignal(stats: {
     totalHighlights: number;

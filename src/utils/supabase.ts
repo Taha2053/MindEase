@@ -1,3 +1,4 @@
+import { persistLocalProfile } from "./localDatabase";
 import browser from "webextension-polyfill";
 import { STORAGE_KEYS, type FullCognitiveProfile, type SessionHistoryEntry } from "@/types";
 import type { SessionFeedback } from "@/session/feedback";
@@ -47,7 +48,12 @@ async function requestSession(path: string, body: object): Promise<AuthSession> 
   return session;
 }
 
-export const signIn = (email: string, password: string) => requestSession("token?grant_type=password", { email, password });
+export async function signIn(email: string, password: string): Promise<AuthSession> {
+  const session = await requestSession("token?grant_type=password", { email, password });
+  // A newly selected account must not inherit another account's upload consent.
+  await browser.storage.local.set({ [STORAGE_KEYS.SYNC_PREFERENCES]: { profile: false, history: false } });
+  return session;
+}
 export async function signUp(email: string, password: string): Promise<AuthSession | null> {
   const { url, key } = config();
   const response = await fetch(`${url}/auth/v1/signup`, { method: "POST", headers: authHeaders(key), body: JSON.stringify({ email, password }) });
@@ -64,8 +70,14 @@ export async function getSession(): Promise<AuthSession | null> {
   const session = stored[STORAGE_KEYS.AUTH_SESSION] as AuthSession | undefined;
   if (!session) return null;
   if (session.expiresAt > Date.now() + 60_000) return session;
-  try { return await requestSession("token?grant_type=refresh_token", { refresh_token: session.refreshToken }); }
-  catch { await signOut(); return null; }
+  // Serialize refreshes across extension pages and the service worker.
+  return navigator.locks.request("mindease-auth-refresh", async () => {
+    const latest = await browser.storage.local.get(STORAGE_KEYS.AUTH_SESSION);
+    const current = latest[STORAGE_KEYS.AUTH_SESSION] as AuthSession | undefined;
+    if (!current) return null;
+    if (current.expiresAt > Date.now() + 60_000) return current;
+    return requestSession("token?grant_type=refresh_token", { refresh_token: current.refreshToken });
+  });
 }
 
 export async function signOut(): Promise<void> {
@@ -83,7 +95,27 @@ export async function loadSyncPreferences(): Promise<SyncPreferences> {
   return { profile: false, history: false, ...(result[STORAGE_KEYS.SYNC_PREFERENCES] as Partial<SyncPreferences> | undefined) };
 }
 
+export async function restoreCloudData(preferences: SyncPreferences): Promise<void> {
+  const session = await getSession();
+  if (!session) throw new Error("Sign in before restoring cloud data.");
+  const { url, key } = config();
+  const restored: Record<string, unknown> = {};
+  for (const [enabled, table, column, storageKey] of [
+    [preferences.profile, "learning_profiles", "profile", STORAGE_KEYS.PROFILE],
+    [preferences.history, "session_history", "sessions", STORAGE_KEYS.SESSION_HISTORY],
+  ] as const) {
+    if (!enabled) continue;
+    const response = await fetch(`${url}/rest/v1/${table}?user_id=eq.${encodeURIComponent(session.user.id)}&select=${column}`, { headers: authHeaders(key, session.accessToken) });
+    if (!response.ok) throw new Error(`Cloud retrieval failed (${response.status}). Local data was not changed.`);
+    const rows = await response.json() as Record<string, unknown>[];
+    if (rows[0]?.[column] !== undefined) restored[storageKey] = rows[0][column];
+  }
+  if (Object.keys(restored).length) await browser.storage.local.set(restored);
+}
 export async function saveSyncPreferences(preferences: SyncPreferences): Promise<void> {
+  // Restore existing account data before the first upload from a new installation.
+  const previous = await loadSyncPreferences();
+  await restoreCloudData({ profile: preferences.profile && !previous.profile, history: preferences.history && !previous.history });
   await browser.storage.local.set({ [STORAGE_KEYS.SYNC_PREFERENCES]: preferences });
   await syncNow();
 }
@@ -99,6 +131,7 @@ async function upsert(table: string, body: object): Promise<void> {
 }
 
 export async function syncNow(): Promise<void> {
+  await persistLocalProfile();
   const session = await getSession();
   if (!session) return;
   const preferences = await loadSyncPreferences();

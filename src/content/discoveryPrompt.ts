@@ -1,3 +1,4 @@
+import { appendToShadow, getMindeaseShadow, shadowById } from "./shadowHost";
 import browser from "webextension-polyfill";
 import type { Theme } from "@/utils/themeManager";
 
@@ -156,7 +157,7 @@ const BRAIN_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" s
 
 export async function showDiscoveryPrompt(theme: Theme, onEnable: () => void): Promise<void> {
   if (await isDismissed()) return;
-  if (document.getElementById("mindease-discovery-prompt")) return;
+  if (shadowById("mindease-discovery-prompt")) return;
 
   const excludeHosts = ["netflix.com", "twitch.tv", "discord.com", "whatsapp.com", "snapchat.com", "imgur.com"];
   if (excludeHosts.some(h => getHostname().includes(h))) return;
@@ -164,7 +165,7 @@ export async function showDiscoveryPrompt(theme: Theme, onEnable: () => void): P
   const style = document.createElement("style");
   style.id = PROMPT_CSS_ID;
   style.textContent = STYLES;
-  document.head.appendChild(style);
+  getMindeaseShadow().appendChild(style);
 
   const prompt = document.createElement("div");
   prompt.id = "mindease-discovery-prompt";
@@ -181,7 +182,7 @@ export async function showDiscoveryPrompt(theme: Theme, onEnable: () => void): P
     </div>
   `;
 
-  document.body.appendChild(prompt);
+  appendToShadow(prompt);
 
   prompt.querySelector("#mindease-prompt-enable")?.addEventListener("click", () => {
     cleanup();
@@ -199,11 +200,11 @@ export async function showDiscoveryPrompt(theme: Theme, onEnable: () => void): P
 
   function cleanup(): void {
     if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
-    const el = document.getElementById("mindease-discovery-prompt");
+    const el = shadowById("mindease-discovery-prompt");
     if (el) {
       el.style.animation = "mindease-prompt-out 0.2s ease both";
       setTimeout(() => el.remove(), 200);
     }
-    document.getElementById(PROMPT_CSS_ID)?.remove();
+    shadowById(PROMPT_CSS_ID)?.remove();
   }
 }

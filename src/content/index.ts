@@ -21,11 +21,10 @@ import {
   DEFAULT_TTS_SETTINGS,
 } from "@/utils/ttsManager";
 import { STORAGE_KEYS } from "@/types";
-import { initTheme, applyTheme, type Theme } from "@/utils/themeManager";
+import { loadTheme, saveTheme, type Theme } from "@/utils/themeManager";
 import { iconHTML } from "@/utils/icons";
 import { renderLatex } from "@/utils/latex";
 import katex from "katex";
-import "katex/dist/katex.min.css";
 import {
   saveSidebarState,
   loadSidebarState,
@@ -38,6 +37,15 @@ import { showDiscoveryPrompt } from "@/content/discoveryPrompt";
 import { requestAdaptationChoice } from "@/content/adaptationPrompt";
 import { extractReadingText } from "@/content/sourceExtraction";
 import { isExcludedPage } from "@/utils/pagePrivacy";
+import {
+  injectShadowStyle,
+  removeShadowStyle,
+  appendToShadow,
+  shadowById,
+  shadowQuery,
+  shadowQueryAll,
+  getMindeaseShadow,
+} from "@/content/shadowHost";
 
 interface ActivationResult {
   decision: boolean;
@@ -460,8 +468,8 @@ function onExtensionStateChange(active: boolean): void {
   _extensionActive = active;
   if (!active) {
     destroyBehaviorTracking();
-    document.getElementById("mindease-overlay")?.remove();
-    document.getElementById("mindease-pdf-loader")?.remove();
+    shadowById("mindease-overlay")?.remove();
+    shadowById("mindease-pdf-loader")?.remove();
     removeReopenButton();
     _cleanupYouTube?.();
     _cleanupYouTube = null;
@@ -559,7 +567,7 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
 (async () => {
   if (isExcludedPage(window.location.href, browser.extension.inIncognitoContext)
     || document.querySelector('input[type="password"], input[autocomplete="cc-number"]')) return;
-  _theme = await initTheme();
+  _theme = await loadTheme();
 
   // Always listen for state changes — handles tabs opened during a session too
   browser.runtime.onMessage.addListener((message: unknown) => {
@@ -639,7 +647,7 @@ async function performTransformationRequest(
 }
 
 function showAdaptationStatus(message: string, error: boolean): void {
-  let status = document.getElementById("mindease-adaptation-status");
+  let status = shadowById("mindease-adaptation-status");
   if (!status) {
     status = document.createElement("div");
     status.id = "mindease-adaptation-status";
@@ -651,7 +659,7 @@ function showAdaptationStatus(message: string, error: boolean): void {
       font: "600 14px/1.45 Inter, system-ui, sans-serif",
       boxShadow: "0 12px 36px rgba(0,0,0,.28)",
     });
-    document.body.appendChild(status);
+    appendToShadow(status);
   }
   status.setAttribute("role", error ? "alert" : "status");
   status.style.background = _theme === "dark" ? "#171717" : "#d4d4d4";
@@ -689,7 +697,7 @@ function _trunc(s: string, max: number): string {
 
 /* ── Render notes into the notes list container ── */
 function renderNotesList(notes?: Array<Record<string, unknown>>): void {
-  const container = document.getElementById("mindease-notes-list");
+  const container = shadowById("mindease-notes-list");
   if (!container) return;
   if (!notes || notes.length === 0) {
     container.innerHTML = '<p style="color:var(--text-muted);font-size:0.78rem;text-align:center;padding:12px">Highlight text on the page to create notes.</p>';
@@ -726,15 +734,15 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks && msg.chunks.length > 0) {
     if (!_extensionActive) return;
     removeReopenButton();
-    document.getElementById("mindease-adaptation-status")?.remove();
+    shadowById("mindease-adaptation-status")?.remove();
     if (msg.append) {
       appendToOverlay(msg.chunks);
     } else {
       injectOverlay(msg.chunks, msg.baseline, msg.transformationParams);
     }
     if (msg.done) {
-      const marker = document.getElementById("mindease-loading-marker");
-      if (marker) marker.style.display = "none";
+      const marker = shadowById("mindease-loading-marker");
+      if (marker) (marker as HTMLElement).style.display = "none";
     }
   }
   if (msg.type === "VISUALS_READY" && msg.visuals) {
@@ -757,14 +765,14 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   }
   if (msg.type === "EXPLAIN_SELECTION_RESULT") {
     const p = msg.payload as { text: string; explanation: string };
-    const capturePopup = document.getElementById("mindease-capture-result");
+    const capturePopup = shadowById("mindease-capture-result");
     const capPlaceholder = capturePopup?.querySelector(".cap-ocr-text");
     if (capPlaceholder) {
       capPlaceholder.innerHTML = `<strong>Explanation:</strong><div style="margin:6px 0 0;line-height:1.6">${renderMarkdown(p.explanation)}</div>`;
     } else {
-      const popup = document.getElementById("mindease-explain-popup");
-      const body = document.getElementById("mindease-explain-body");
-      const loader = document.getElementById("mindease-explain-loader");
+      const popup = shadowById("mindease-explain-popup");
+      const body = shadowById("mindease-explain-body");
+      const loader = shadowById("mindease-explain-loader");
       if (popup && body && loader) {
         loader.style.display = "none";
         body.textContent = p.explanation;
@@ -795,7 +803,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
 
   if (msg.type === "OCR_RESULT") {
     const p = msg.payload as { imageUrl: string; text?: string; error?: string };
-    const capturePopup = document.getElementById("mindease-capture-result");
+    const capturePopup = shadowById("mindease-capture-result");
     if (capturePopup) {
       const placeholder = capturePopup.querySelector(".cap-ocr-placeholder");
       if (placeholder) {
@@ -1852,14 +1860,10 @@ const EXPLAIN_POPUP_CSS = `
 }
 `;
 
-function setupSelectionPopup(container: HTMLElement | Document): void {
-  if (document.getElementById("mindease-explain-styles")) return;
-  const styleEl = document.createElement("style");
-  styleEl.id = "mindease-explain-styles";
-  styleEl.textContent = EXPLAIN_POPUP_CSS;
-  document.head.appendChild(styleEl);
+function setupSelectionPopup(container: HTMLElement): void {
+  injectShadowStyle("mindease-explain-styles", EXPLAIN_POPUP_CSS);
 
-  if (document.getElementById("mindease-explain-popup")) return;
+  if (shadowById("mindease-explain-popup")) return;
   const popup = document.createElement("div");
   popup.id = "mindease-explain-popup";
   popup.innerHTML = `
@@ -1871,9 +1875,9 @@ function setupSelectionPopup(container: HTMLElement | Document): void {
     <div id="mindease-explain-body"></div>
     <div id="mindease-explain-selected"></div>
   `;
-  document.body.appendChild(popup);
+  appendToShadow(popup);
 
-  document.getElementById("mindease-explain-close")?.addEventListener("click", () => {
+  popup.querySelector("#mindease-explain-close")?.addEventListener("click", () => {
     popup.style.display = "none";
   });
 
@@ -1885,9 +1889,9 @@ function setupSelectionPopup(container: HTMLElement | Document): void {
     const text = sel.toString().trim().slice(0, 300);
     if (text.length < 3) return;
 
-    const body = document.getElementById("mindease-explain-body");
-    const loader = document.getElementById("mindease-explain-loader");
-    const selected = document.getElementById("mindease-explain-selected");
+    const body = shadowById("mindease-explain-body");
+    const loader = shadowById("mindease-explain-loader");
+    const selected = shadowById("mindease-explain-selected");
     if (!body || !loader || !selected) return;
 
     body.style.display = "none";
@@ -1912,8 +1916,7 @@ function setupSelectionPopup(container: HTMLElement | Document): void {
   });
 
   document.addEventListener("mousedown", (e: Event) => {
-    const target = e.target as HTMLElement;
-    if (target && target.closest && !target.closest("#mindease-explain-popup")) {
+    if (!e.composedPath().includes(popup)) {
       popup.style.display = "none";
     }
   });
@@ -2017,11 +2020,11 @@ const CTX_EXPLAIN_CSS = `
 `;
 
 function injectCtxStyles(): void {
-  if (document.getElementById("mindease-ctx-styles")) return;
+  if (shadowById("mindease-ctx-styles")) return;
   const el = document.createElement("style");
   el.id = "mindease-ctx-styles";
   el.textContent = CTX_EXPLAIN_CSS;
-  document.head.appendChild(el);
+  getMindeaseShadow().appendChild(el);
 }
 
 function getSelectionRect(): DOMRect | null {
@@ -2032,14 +2035,14 @@ function getSelectionRect(): DOMRect | null {
 
 function showContextExplainLoading(text: string): void {
   injectCtxStyles();
-  let loader = document.getElementById("mindease-ctx-loading");
+  let loader = shadowById("mindease-ctx-loading");
   if (!loader) {
     loader = document.createElement("div");
     loader.id = "mindease-ctx-loading";
     loader.innerHTML = `<span class="ctx-loader-icon">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
     </span><span class="ctx-loader-text">Thinking</span><span class="ctx-loader-dots"></span>`;
-    document.body.appendChild(loader);
+    appendToShadow(loader);
   }
   loader.style.display = "flex";
 
@@ -2061,11 +2064,11 @@ function showContextExplainLoading(text: string): void {
 }
 
 function showContextExplainResult(_text: string, explanation: string): void {
-  const loader = document.getElementById("mindease-ctx-loading");
+  const loader = shadowById("mindease-ctx-loading");
   if (loader) loader.remove();
 
   injectCtxStyles();
-  let popup = document.getElementById("mindease-ctx-popup");
+  let popup = shadowById("mindease-ctx-popup");
   if (!popup) {
     popup = document.createElement("div");
     popup.id = "mindease-ctx-popup";
@@ -2085,14 +2088,13 @@ function showContextExplainResult(_text: string, explanation: string): void {
     `;
     const bodyEl = popup.querySelector(".ctx-popup-body");
     if (bodyEl) bodyEl.innerHTML = renderMarkdown(explanation);
-    document.body.appendChild(popup);
+    appendToShadow(popup);
 
     popup.querySelector(".ctx-popup-close")?.addEventListener("click", () => popup!.remove());
 
     // Dismiss on outside click
     document.addEventListener("mousedown", function dismiss(e) {
-      const t = e.target as HTMLElement;
-      if (!t.closest("#mindease-ctx-popup")) {
+      if (!e.composedPath().includes(popup!)) {
         popup!.remove();
         document.removeEventListener("mousedown", dismiss);
       }
@@ -2136,7 +2138,7 @@ function showOcrResult(text?: string, error?: string): void {
     font-family:system-ui,-apple-system,sans-serif;
   `;
 
-  document.body.appendChild(popup);
+  appendToShadow(popup);
 
   popup.querySelector("#mindease-ocr-close")?.addEventListener("click", () => {
     popup.remove();
@@ -2289,19 +2291,19 @@ const CAPTURE_CSS = `
 `;
 
 function injectCaptureStyles(): void {
-  if (document.getElementById("mindease-cap-styles")) return;
+  if (shadowById("mindease-cap-styles")) return;
   const el = document.createElement("style");
   el.id = "mindease-cap-styles";
   el.textContent = CAPTURE_CSS;
-  document.head.appendChild(el);
+  getMindeaseShadow().appendChild(el);
 }
 
 function showCaptureCropTool(dataUrl: string): void {
   injectCaptureStyles();
 
   // Remove previous overlay if any
-  document.getElementById("mindease-capture-overlay")?.remove();
-  document.getElementById("mindease-capture-result")?.remove();
+  shadowById("mindease-capture-overlay")?.remove();
+  shadowById("mindease-capture-result")?.remove();
 
   const overlay = document.createElement("div");
   overlay.id = "mindease-capture-overlay";
@@ -2315,10 +2317,10 @@ function showCaptureCropTool(dataUrl: string): void {
       </div>
     </div>
   `;
-  document.body.appendChild(overlay);
+  appendToShadow(overlay);
 
   const wrap = overlay.querySelector(".cap-image-wrap") as HTMLElement;
-  const selEl = document.getElementById("cap-selection") as HTMLElement;
+  const selEl = shadowById("cap-selection") as HTMLElement;
   // Capture result will be created on confirm
 
   let dragging = false;
@@ -2360,13 +2362,13 @@ function showCaptureCropTool(dataUrl: string): void {
   document.addEventListener("mousemove", onMouseMove);
   document.addEventListener("mouseup", onMouseUp);
 
-  document.getElementById("cap-cancel")?.addEventListener("click", () => {
+  shadowById("cap-cancel")?.addEventListener("click", () => {
     overlay.remove();
     document.removeEventListener("mousemove", onMouseMove);
     document.removeEventListener("mouseup", onMouseUp);
   });
 
-  document.getElementById("cap-confirm")?.addEventListener("click", () => {
+  shadowById("cap-confirm")?.addEventListener("click", () => {
     if (sel.w < 10 || sel.h < 10) return;
     document.removeEventListener("mousemove", onMouseMove);
     document.removeEventListener("mouseup", onMouseUp);
@@ -2398,12 +2400,12 @@ function showCaptureCropTool(dataUrl: string): void {
 
 function showCaptureResult(croppedDataUrl: string): void {
   // Ensure KaTeX CSS is loaded for formula rendering
-  if (!document.getElementById("mindease-katex-css")) {
+  if (!shadowById("mindease-katex-css")) {
     const link = document.createElement("link");
     link.id = "mindease-katex-css";
     link.rel = "stylesheet";
     link.href = browser.runtime.getURL(katexStyles.replace(/^\//, ""));
-    document.head.appendChild(link);
+    getMindeaseShadow().appendChild(link);
   }
 
   const popup = document.createElement("div");
@@ -2437,11 +2439,11 @@ function showCaptureResult(croppedDataUrl: string): void {
       </div>
     </div>
   `;
-  document.body.appendChild(popup);
+  appendToShadow(popup);
 
   popup.querySelector(".cap-result-close")?.addEventListener("click", () => popup.remove());
   document.addEventListener("mousedown", function dismiss(e) {
-    if (!(e.target as HTMLElement).closest("#mindease-capture-result")) {
+    if (!e.composedPath().includes(popup)) {
       popup.remove();
       document.removeEventListener("mousedown", dismiss);
     }
@@ -2562,11 +2564,11 @@ const FLOATING_TTS_CSS = `
 `;
 
 function injectFloatingTtsStyles(): void {
-  if (document.getElementById("mindease-floating-tts-styles")) return;
+  if (shadowById("mindease-floating-tts-styles")) return;
   const el = document.createElement("style");
   el.id = "mindease-floating-tts-styles";
   el.textContent = FLOATING_TTS_CSS;
-  document.head.appendChild(el);
+  getMindeaseShadow().appendChild(el);
 }
 
 function hideFloatingTtsPlayer(): void {
@@ -2617,7 +2619,7 @@ function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void
       </div>
     `;
 
-    document.body.appendChild(el);
+    appendToShadow(el);
 
     const rect = initialRect || getSelectionRect();
     const popupW = 330;
@@ -2699,8 +2701,8 @@ function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 function appendToOverlay(chunks: ContentChunk[]): void {
-  const container = document.getElementById("tab-content");
-  const marker = document.getElementById("mindease-loading-marker");
+  const container = shadowById("tab-content");
+  const marker = shadowById("mindease-loading-marker");
   if (!container) return;
   _contentChunks.push(...chunks);
   _ttsTexts.push(...chunks.map(chunk => stripInlineTags(chunk.text)));
@@ -2738,7 +2740,7 @@ function appendToOverlay(chunks: ContentChunk[]): void {
   } else {
     container.insertAdjacentHTML("beforeend", html);
   }
-  const statEl = document.getElementById("mindease-engage-count");
+  const statEl = shadowById("mindease-engage-count");
   if (statEl) {
     const total = container.querySelectorAll(".mindease-chunk").length;
     statEl.textContent = String(total);
@@ -2751,8 +2753,8 @@ function injectOverlay(
   transformationParams?: TransformationParams,
 ): void {
   stopTTS();
-  document.getElementById("mindease-overlay")?.remove();
-  document.getElementById("mindease-pdf-loader")?.remove();
+  shadowById("mindease-overlay")?.remove();
+  shadowById("mindease-pdf-loader")?.remove();
   removeReopenButton();
 
   const tParams = transformationParams ?? chunkParams;
@@ -2825,19 +2827,19 @@ function injectOverlay(
   overlay.setAttribute("aria-label", "MindEase study panel");
   overlay.setAttribute("aria-hidden", "false");
 
-  if (!document.getElementById("mindease-katex-css")) {
+  if (!shadowById("mindease-katex-css")) {
     const link = document.createElement("link");
     link.id = "mindease-katex-css";
     link.rel = "stylesheet";
     link.href = browser.runtime.getURL(katexStyles.replace(/^\//, ""));
-    document.head.appendChild(link);
+    getMindeaseShadow().appendChild(link);
   }
 
-  if (!document.getElementById("mindease-overlay-styles")) {
+  if (!shadowById("mindease-overlay-styles")) {
     const styleEl = document.createElement("style");
     styleEl.id = "mindease-overlay-styles";
     styleEl.textContent = OVERLAY_CSS;
-    document.head.appendChild(styleEl);
+    getMindeaseShadow().appendChild(styleEl);
   }
 
   overlay.innerHTML = `
@@ -2898,8 +2900,8 @@ function injectOverlay(
     </div>
   `;
 
-  document.body.appendChild(overlay);
-  setupSelectionPopup(document.getElementById("mindease-body")!);
+  appendToShadow(overlay);
+  setupSelectionPopup(shadowById("mindease-body")!);
 
 
   // Persistent reading region: keyboard focus may leave for the source page.
@@ -2935,7 +2937,7 @@ function injectOverlay(
       tab.classList.add("active");
       tab.setAttribute("aria-selected", "true");
       const tabId = (tab as HTMLElement).dataset.tab;
-      const panel = document.getElementById(`tab-${tabId}`);
+      const panel = shadowById(`tab-${tabId}`);
       panel?.classList.add("active");
       panel?.focus();
       saveSidebarState({ activeTab: tabId as SidebarState["activeTab"] });
@@ -2952,7 +2954,7 @@ function injectOverlay(
       visible: false,
       minimized: false,
       onRight,
-      activeTab: (document.querySelector(".mindease-tab.active") as HTMLElement)?.dataset.tab as SidebarState["activeTab"] ?? "content",
+      activeTab: shadowQuery(".mindease-tab.active")?.dataset.tab as SidebarState["activeTab"] ?? "content",
       lastScrollY: window.scrollY,
     });
     ensureReopenStyles();
@@ -2970,16 +2972,16 @@ function injectOverlay(
     });
   }
 
-  document.getElementById("mindease-close")?.addEventListener("click", handleClose);
+  shadowById("mindease-close")?.addEventListener("click", handleClose);
 
   /* ── Minimize ── */
   let minimized = false;
-  document.getElementById("mindease-minimize")?.addEventListener("click", () => {
+  shadowById("mindease-minimize")?.addEventListener("click", () => {
     minimized = !minimized;
-    const body = document.getElementById("mindease-body");
-    const tabs = document.getElementById("mindease-tabs");
-    const stats = document.getElementById("mindease-stats-bar");
-    const footer = document.getElementById("mindease-footer");
+    const body = shadowById("mindease-body");
+    const tabs = shadowById("mindease-tabs");
+    const stats = shadowById("mindease-stats-bar");
+    const footer = shadowById("mindease-footer");
     if (minimized) {
       body!.style.display = "none";
       if (tabs) tabs.style.display = "none";
@@ -2997,7 +2999,7 @@ function injectOverlay(
   });
 
   /* ── End Session ── */
-  document.getElementById("mindease-end-session")?.addEventListener("click", () => {
+  shadowById("mindease-end-session")?.addEventListener("click", () => {
     browser.runtime.sendMessage({ type: "SESSION_END" }).catch(() => {});
   });
 
@@ -3034,7 +3036,7 @@ function injectOverlay(
 
   /* ── Side toggle ── */
   let onRight = true;
-  document.getElementById("mindease-toggle-side")?.addEventListener("click", () => {
+  shadowById("mindease-toggle-side")?.addEventListener("click", () => {
     onRight = !onRight;
     overlay.style.right = onRight ? "0" : "auto";
     overlay.style.left = onRight ? "auto" : "0";
@@ -3046,16 +3048,16 @@ function injectOverlay(
 
   /* ── TTS: Read aloud / Stop ── */
   /* ── TTS: Read aloud / Stop / Pause ── */
-  document.getElementById("mindease-tts-btn")?.addEventListener("click", () => {
+  shadowById("mindease-tts-btn")?.addEventListener("click", () => {
     if (_ttsSpeaking) {
       stopTTS();
     } else if (_ttsTexts.length > 0) {
       speakTexts(_ttsTexts);
     }
   });
-  document.getElementById("mindease-tts-stop")?.addEventListener("click", stopTTS);
-  document.getElementById("mindease-tts-pause")?.addEventListener("click", () => {
-    const pauseBtn = document.getElementById("mindease-tts-pause");
+  shadowById("mindease-tts-stop")?.addEventListener("click", stopTTS);
+  shadowById("mindease-tts-pause")?.addEventListener("click", () => {
+    const pauseBtn = shadowById("mindease-tts-pause");
     if (isSpeaking() && !isPaused()) {
       ttsPause();
       if (pauseBtn) pauseBtn.textContent = "▶";
@@ -3095,15 +3097,15 @@ function injectOverlay(
     }
   });
   /* ── Theme toggle in overlay ── */
-  document.getElementById("mindease-theme-toggle")?.addEventListener("click", () => {
+  shadowById("mindease-theme-toggle")?.addEventListener("click", () => {
     const next = _theme === "light" ? "dark" : "light";
     _theme = next;
-    applyTheme(next);
+    void saveTheme(next);
     overlay.setAttribute("data-theme", next);
   });
 
   /* ── Pop out / Full view ── */
-  document.getElementById("mindease-popout")?.addEventListener("click", () => {
+  shadowById("mindease-popout")?.addEventListener("click", () => {
     const url = browser.runtime.getURL("src/session/dashboard/dashboard.html");
     window.open(url, "_blank");
   });
@@ -3112,10 +3114,10 @@ function injectOverlay(
   loadSidebarState().then((saved) => {
     if (saved.minimized) {
       minimized = true;
-      const body = document.getElementById("mindease-body");
-      const tabs = document.getElementById("mindease-tabs");
-      const stats = document.getElementById("mindease-stats-bar");
-      const footer = document.getElementById("mindease-footer");
+      const body = shadowById("mindease-body");
+      const tabs = shadowById("mindease-tabs");
+      const stats = shadowById("mindease-stats-bar");
+      const footer = shadowById("mindease-footer");
       body!.style.display = "none";
       if (tabs) tabs.style.display = "none";
       if (stats) stats.style.display = "none";
@@ -3150,49 +3152,49 @@ function injectOverlay(
       const rlState = profile.rlState as Record<string, unknown> | undefined;
       const params = profile.transformationParams as Record<string, unknown> | undefined;
 
-      const formatEl = document.getElementById("pc-format");
+      const formatEl = shadowById("pc-format");
       if (formatEl) formatEl.textContent = String(baseline?.formatPreference ?? "-");
-      const attentionEl = document.getElementById("pc-attention");
+      const attentionEl = shadowById("pc-attention");
       if (attentionEl) attentionEl.textContent = String(baseline?.attentionSpan ?? "-");
-      const paceEl = document.getElementById("pc-pace");
+      const paceEl = shadowById("pc-pace");
       if (paceEl) paceEl.textContent = String(baseline?.readingPace ?? "-");
-      const sessionsEl = document.getElementById("pc-sessions");
+      const sessionsEl = shadowById("pc-sessions");
       if (sessionsEl) sessionsEl.textContent = String(rlState?.sessionCount ?? 0);
 
       const chunkMap: Record<string, number> = { small: 25, medium: 50, large: 75 };
       const simplifyMap: Record<string, number> = { "1": 33, "2": 66, "3": 100 };
       const summaryMap: Record<string, number> = { low: 25, medium: 50, high: 75 };
 
-      const chunkBarEl = document.getElementById("rl-chunk-bar");
-      const chunkEl = document.getElementById("rl-chunk");
+      const chunkBarEl = shadowById("rl-chunk-bar");
+      const chunkEl = shadowById("rl-chunk");
       if (chunkBarEl) chunkBarEl.style.width = `${chunkMap[String(params?.chunkSize)] ?? 50}%`;
       if (chunkEl) chunkEl.textContent = String(params?.chunkSize ?? "-");
 
-      const simplifyBarEl = document.getElementById("rl-simplify-bar");
-      const simplifyEl = document.getElementById("rl-simplify");
+      const simplifyBarEl = shadowById("rl-simplify-bar");
+      const simplifyEl = shadowById("rl-simplify");
       if (simplifyBarEl) simplifyBarEl.style.width = `${simplifyMap[String(params?.simplificationLevel)] ?? 50}%`;
       if (simplifyEl) simplifyEl.textContent = String(params?.simplificationLevel ?? "-");
 
-      const summaryBarEl = document.getElementById("rl-summary-bar");
-      const summaryEl = document.getElementById("rl-summary");
+      const summaryBarEl = shadowById("rl-summary-bar");
+      const summaryEl = shadowById("rl-summary");
       if (summaryBarEl) summaryBarEl.style.width = `${summaryMap[String(params?.summaryFrequency)] ?? 50}%`;
       if (summaryEl) summaryEl.textContent = String(params?.summaryFrequency ?? "-");
     }
 
     if (stats) {
-      const hlEl = document.getElementById("sess-highlights");
+      const hlEl = shadowById("sess-highlights");
       if (hlEl) hlEl.textContent = String(stats.totalHighlights ?? 0);
-      const pauseEl = document.getElementById("sess-pauses");
+      const pauseEl = shadowById("sess-pauses");
       if (pauseEl) pauseEl.textContent = String(stats.totalPauses ?? 0);
-      const skipEl = document.getElementById("sess-skips");
+      const skipEl = shadowById("sess-skips");
       if (skipEl) skipEl.textContent = String(stats.totalSkips ?? 0);
       const rl = profile?.rlState as Record<string, unknown> | undefined;
-      const rereadEl = document.getElementById("sess-rereads");
+      const rereadEl = shadowById("sess-rereads");
       if (rereadEl) rereadEl.textContent = String(rl?.reReadRate ?? 0);
       const score = Number(rl?.totalEngagementScore ?? 0);
-      const scoreEl = document.getElementById("sess-score");
+      const scoreEl = shadowById("sess-score");
       if (scoreEl) scoreEl.textContent = score.toFixed(1);
-      const scoreBarEl = document.getElementById("sess-score-bar");
+      const scoreBarEl = shadowById("sess-score-bar");
       if (scoreBarEl) scoreBarEl.style.width = `${Math.min(Math.max(score * 10, 0), 100)}%`;
     }
 
@@ -3200,31 +3202,31 @@ function injectOverlay(
     if (artifact) {
       const focus = artifact.focusSummary as Record<string, unknown> | undefined;
       if (focus) {
-        const durationEl = document.getElementById("sess-duration");
+        const durationEl = shadowById("sess-duration");
         if (durationEl) durationEl.textContent = fmtDurationLocal(Number(focus.totalDurationMs ?? 0));
-        const focusedEl = document.getElementById("sess-focused");
+        const focusedEl = shadowById("sess-focused");
         if (focusedEl) focusedEl.textContent = fmtDurationLocal(Number(focus.focusedTimeMs ?? 0));
-        const interruptEl = document.getElementById("sess-interruptions");
+        const interruptEl = shadowById("sess-interruptions");
         if (interruptEl) interruptEl.textContent = String(focus.interruptionCount ?? 0);
-        const longestEl = document.getElementById("sess-longest");
+        const longestEl = shadowById("sess-longest");
         if (longestEl) longestEl.textContent = fmtDurationLocal(Number(focus.longestInterruptionMs ?? 0));
       }
       const resources = artifact.resourcesUsed as Array<Record<string, unknown>> | undefined;
       if (resources) {
-        const resEl = document.getElementById("sess-resources");
+        const resEl = shadowById("sess-resources");
         if (resEl) resEl.textContent = String(resources.length);
       }
       const cards = artifact.studyCards as Array<Record<string, unknown>> | undefined;
       if (cards) {
-        const cardsEl = document.getElementById("sess-cards");
+        const cardsEl = shadowById("sess-cards");
         if (cardsEl) cardsEl.textContent = String(cards.length);
         const reviewCards = cards.filter(c => c.reviewFlag).length;
-        const reviewEl = document.getElementById("sess-review-cards");
+        const reviewEl = shadowById("sess-review-cards");
         if (reviewEl) reviewEl.textContent = String(reviewCards);
       }
       const gaps = artifact.needsReview as Array<Record<string, unknown>> | undefined;
       if (gaps) {
-        const gapsEl = document.getElementById("sess-gaps");
+        const gapsEl = shadowById("sess-gaps");
         if (gapsEl) gapsEl.textContent = String(gaps.length);
       }
     }
@@ -3259,22 +3261,22 @@ function stopTTS(): void {
   _ttsSpeaking = false;
   _ttsActiveChunkIdx = null;
 
-  document.querySelectorAll(".mindease-chunk.tts-active-chunk").forEach((el) => el.classList.remove("tts-active-chunk"));
-  document.querySelectorAll(".chunk-speak-btn.speaking").forEach((btn) => {
+  shadowQueryAll(".mindease-chunk.tts-active-chunk").forEach((el) => el.classList.remove("tts-active-chunk"));
+  shadowQueryAll(".chunk-speak-btn.speaking").forEach((btn) => {
     btn.classList.remove("speaking");
     btn.innerHTML = iconHTML("volume-2");
   });
 
-  const bar = document.getElementById("mindease-tts-bar");
-  const btn = document.getElementById("mindease-tts-btn");
-  const pauseBtn = document.getElementById("mindease-tts-pause");
+  const bar = shadowById("mindease-tts-bar");
+  const btn = shadowById("mindease-tts-btn");
+  const pauseBtn = shadowById("mindease-tts-pause");
   if (bar) bar.style.display = "none";
   if (btn) btn.innerHTML = iconHTML("volume-2");
   if (pauseBtn) pauseBtn.textContent = "❚❚";
 }
 
 function updateActiveChunkHighlight(chunkIdx: number): void {
-  document.querySelectorAll(".mindease-chunk").forEach((el, idx) => {
+  shadowQueryAll(".mindease-chunk").forEach((el, idx) => {
     const attr = el.getAttribute("data-chunk-index");
     const isTarget = attr !== null ? parseInt(attr, 10) === chunkIdx : idx === chunkIdx;
     if (isTarget) {
@@ -3313,9 +3315,9 @@ function speakSingleChunk(chunkIdx: number): void {
   _ttsActiveChunkIdx = chunkIdx;
   updateActiveChunkHighlight(chunkIdx);
 
-  const bar = document.getElementById("mindease-tts-bar");
-  const btn = document.getElementById("mindease-tts-btn");
-  const pauseBtn = document.getElementById("mindease-tts-pause");
+  const bar = shadowById("mindease-tts-bar");
+  const btn = shadowById("mindease-tts-btn");
+  const pauseBtn = shadowById("mindease-tts-pause");
   if (bar) {
     bar.style.display = "flex";
     const label = bar.querySelector(".tts-label");
@@ -3345,11 +3347,11 @@ function speakTexts(texts: string[]): void {
   _ttsSpeaking = true;
   _ttsActiveChunkIdx = 0;
 
-  const btn = document.getElementById("mindease-tts-btn");
+  const btn = shadowById("mindease-tts-btn");
   if (btn) btn.innerHTML = iconHTML("x") + " Stop";
 
-  const bar = document.getElementById("mindease-tts-bar");
-  const pauseBtn = document.getElementById("mindease-tts-pause");
+  const bar = shadowById("mindease-tts-bar");
+  const pauseBtn = shadowById("mindease-tts-pause");
   if (bar) {
     bar.style.display = "flex";
     const label = bar.querySelector(".tts-label");
@@ -3366,7 +3368,7 @@ function speakTexts(texts: string[]): void {
     _ttsActiveChunkIdx = i;
     updateActiveChunkHighlight(i);
 
-    const b = document.getElementById("mindease-tts-bar");
+    const b = shadowById("mindease-tts-bar");
     const l = b?.querySelector(".tts-label");
     if (l) l.textContent = `Reading section ${i + 1} of ${texts.length}...`;
 
@@ -3386,10 +3388,10 @@ let _contentChunks: ContentChunk[] = [];
 
 function renderVisuals(visuals: VisualEntry[]): void {
   _visualEntries = visuals;
-  const grid = document.getElementById("mindease-visuals-grid");
+  const grid = shadowById("mindease-visuals-grid");
   if (!grid) return;
   for (const visual of visuals) {
-    if (document.getElementById(`mindease-visual-${visual.id}`)) continue;
+    if (shadowById(`mindease-visual-${visual.id}`)) continue;
     if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(visual.dataUrl)) continue;
     const figure = document.createElement("figure");
     figure.id = `mindease-visual-${visual.id}`;
@@ -3398,7 +3400,7 @@ function renderVisuals(visuals: VisualEntry[]): void {
     image.src = visual.dataUrl; image.alt = visual.concept;
     const caption = document.createElement("figcaption"); caption.textContent = visual.concept;
     figure.append(image, caption);
-    const section = Array.from(document.querySelectorAll<HTMLElement>("#tab-content [data-source-block]"))
+    const section = Array.from(shadowQueryAll("#tab-content [data-source-block]"))
       .find(element => element.dataset.sourceBlock === visual.sourceBlockId);
     if (section) section.after(figure); else if (!visual.sourceBlockId) grid.append(figure);
   }
@@ -3442,7 +3444,7 @@ async function initYouTubeMode(): Promise<void> {
     display: none;
     box-shadow: 0 4px 24px rgba(23, 23, 23, 0.2);
   `;
-  document.body.appendChild(captionOverlay);
+  appendToShadow(captionOverlay);
 
   const pageText = document.querySelector("#description")?.textContent?.slice(0, 2000)
     ?? document.title + " - YouTube video";

@@ -33,6 +33,8 @@ from pydantic import BaseModel, Field
 from agents.base import call_llm_json
 
 from .schemas import (
+    LLMProxyRequest,
+    LLMProxyResponse,
     FeedbackRequest,
     FeedbackResponse,
     HealthResponse,
@@ -242,6 +244,31 @@ Complete source blocks:
             detail="DeepSeek could not produce a complete, valid article plan. Please try adapting the page again.",
         ) from exc
     return AdaptationPlanResponse(plan=plan)
+
+@router.post("/llm/generate", response_model=LLMProxyResponse)
+async def generate_llm(
+    request: LLMProxyRequest,
+    _user: dict | None = Depends(current_user),
+) -> LLMProxyResponse:
+    """Secure server-side LLM proxy: uses server's DEEPSEEK_API_KEY with Mistral fallback.
+    Prevents client-side bundling or public exposure of provider API keys.
+    """
+    try:
+        from agents.base import call_llm
+        content = await call_llm(
+            prompt=request.prompt,
+            max_tokens=request.max_tokens,
+            json_mode=request.json_mode,
+            name="client_adaptation_proxy",
+            providers=("deepseek", "mistral"),
+        )
+        return LLMProxyResponse(content=content)
+    except Exception as exc:
+        logger.warning("Server LLM generation proxy failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI generation failed: {exc}",
+        ) from exc
 
 @router.post("/speech")
 async def create_speech(

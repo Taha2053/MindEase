@@ -8,7 +8,7 @@
 import browser from "webextension-polyfill";
 import { STORAGE_KEYS, type UserApiKeys } from "@/types";
 
-export type ApiKeyService = "mistral" | "napkin" | "ocr" | "premiumServer";
+export type ApiKeyService = "deepseek" | "mistral" | "napkin" | "ocr" | "premiumServer";
 
 const DEFAULT_PREMIUM_SERVER = "http://localhost:8000";
 
@@ -20,6 +20,7 @@ export async function loadApiKeys(): Promise<UserApiKeys> {
     const result = await browser.storage.local.get(STORAGE_KEYS.API_KEYS);
     const stored = (result[STORAGE_KEYS.API_KEYS] as UserApiKeys) ?? {};
     return {
+      deepseekApiKey: stored.deepseekApiKey?.trim() || "",
       mistralApiKey: stored.mistralApiKey?.trim() || "",
       napkinApiKey: stored.napkinApiKey?.trim() || "",
       ocrSpaceApiKey: stored.ocrSpaceApiKey?.trim() || "",
@@ -30,6 +31,7 @@ export async function loadApiKeys(): Promise<UserApiKeys> {
     console.warn("[MindEase] Failed to load API keys from storage:", err);
     return {
       mistralApiKey: "",
+      deepseekApiKey: "",
       napkinApiKey: "",
       ocrSpaceApiKey: "",
       premiumServerUrl: (import.meta.env.VITE_PREMIUM_API_URL as string) || DEFAULT_PREMIUM_SERVER,
@@ -64,6 +66,8 @@ export async function getApiKey(service: ApiKeyService): Promise<string | undefi
   const stored = await loadApiKeys();
 
   switch (service) {
+    case "deepseek":
+      return stored.deepseekApiKey || (import.meta.env.VITE_DEEPSEEK_API_KEY as string | undefined);
     case "mistral":
       return stored.mistralApiKey || (import.meta.env.VITE_MISTRAL_API_KEY as string | undefined);
     case "napkin":
@@ -79,11 +83,12 @@ export async function getApiKey(service: ApiKeyService): Promise<string | undefi
 
 /**
  * Check if the minimum required keys exist for Layer 1 transformation.
- * Mistral AI is the primary requirement.
+ * DeepSeek (preferred) or Mistral (fallback) is required.
  */
 export async function hasRequiredKeys(): Promise<boolean> {
+  const deepseek = await getApiKey("deepseek");
   const mistral = await getApiKey("mistral");
-  return Boolean(mistral && mistral.trim().length > 0);
+  return Boolean((deepseek && deepseek.trim().length > 0) || (mistral && mistral.trim().length > 0));
 }
 
 /**
