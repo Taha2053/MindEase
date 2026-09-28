@@ -108,6 +108,8 @@ VITE_NAPKIN_API_KEY=your_napkin_api_key_here
 VITE_OCR_SPACE_API_KEY=your_ocr_space_api_key_here
 ```
 
+For web-wide related-lesson recommendations, place `TAVILY_API_KEY` in the ignored **`server/.env`** file (not a `VITE_` variable). Start the backend with `uv run --directory server uvicorn main:app --reload` and set the extension's Premium Server URL to `http://localhost:8000` if it differs from the default. Tavily Basic Search costs one free-tier credit per request. Without the server, a key, or available credits, recommendations fall back to public Wikibooks/Wikiversity search.
+
 ### 3. (Optional) Run the Napkin Proxy for Firefox Dev
 
 Firefox enforces strict origin constraints on extension requests (`moz-extension://`). If using Napkin AI in Firefox:
@@ -148,13 +150,13 @@ npm run napkin-proxy
 
 ## 📖 How to Use MindEase
 
-1. **Onboarding Questionnaire:**
-   When you first install the extension, the onboarding questionnaire opens automatically to establish your baseline profile (format preference, reading pace, attention span, cognitive condition, and learning approach).
+1. **Onboarding questionnaire:** Choose a learning language, reading length and pace, format, and whether to start narrated reading automatically after accepting an adaptation. Optionally describe support needs in your own words; that description is sent to the configured AI service to propose allowlisted presentation hints, not to diagnose a condition. The original description is saved even when the AI service is unavailable.
 
-2. **Browsing & Studying:**
-   - When you visit an educational article, documentation page, or lecture, MindEase activates automatically.
-   - The adaptive sidebar presents the page restructured into digestible chunks, complete with KaTeX equations and visual diagrams.
-   - Click the **Read Aloud** button for audio narration.
+2. **Browsing and studying:**
+   - During an active session, MindEase checks candidate pages' extracted content with the configured LLM before automatically treating them as study tabs. If classification is unavailable, it does not automatically include that page.
+   - Before adapting a source, choose structured or visual explanation. **Use my preferred learning language** is selected by default; uncheck it to keep the document's language. Original source sections remain accessible.
+   - The reading panel applies font size and motion preferences, with A−/A+ controls. Narration reads rendered text (not Markdown markers); automatic narration requires an explicit onboarding choice. Controls pause or stop speech.
+   - Related learning links use server-side Tavily web search across websites, with live Wikibooks/Wikiversity results as a fallback. Visual search favors illustrated explanations when per-page image metadata is available; inspect each result to confirm its quality. No model-invented URLs are shown.
 
 3. **Highlighting & Note-Taking:**
    - Highlight any text on the page to save it as a study note.
@@ -168,14 +170,14 @@ npm run napkin-proxy
 5. **Popup Controls & Overrides:**
    - Click the MindEase extension icon to check active session status, adjust manual parameter overrides, or view live Q-table learning values.
 
-6. **Session Dashboard & Knowledge Artifact:**
-   - End your study session from the popup or close your study tabs.
-   - MindEase opens the **Dashboard**, presenting your complete 7-section Knowledge Artifact:
-     - Flagged gaps (missed or rushed sections)
-     - Cross-source concept links
-     - Personalized study flashcards
-     - Focus metrics and duration statistics
-     - Export options (Markdown / JSON)
+6. **Session dashboard and complete review:**
+   - End your study session from the popup or reading panel. The dashboard shows source-grounded topics, notes, study cards, and gaps, plus a complete printable review with source material and original links.
+   - Click **Open complete review / Save as PDF**, then choose **Print / Save as PDF** and the browser's **Save as PDF** destination. PDF creation is browser-driven so multilingual text and multi-page lessons remain legible.
+   - If session-end learning actually changes presentation parameters, the dashboard shows the observed interaction counts and the specific adjustment planned for next session. No notice appears for no-change sessions.
+   - The complete source-text review is available for the latest completed session while its saved chunks remain in local storage; historical session entries retain metadata, not full lesson text.
+   - Optional support presets are starting points, not diagnoses. User-selected format, length, audio choice, and font override take priority.
+
+Accessibility choices follow the [W3C cognitive accessibility guidance](https://www.w3.org/TR/coga-usable/), [WCAG text spacing](https://www.w3.org/WAI/WCAG22/Understanding/text-spacing.html), and [WCAG audio control](https://www.w3.org/WAI/WCAG22/Understanding/audio-control.html). Different people with the same label benefit from different settings; audio is never enabled solely by a condition label.
 
 ---
 

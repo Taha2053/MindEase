@@ -792,3 +792,15 @@ body::before, body::after { display: none; }
   .question-illustration { max-width: 140px; margin-bottom: 10px; }
   .card { padding: 24px 32px; }
 }
+
+.support-needs-section, .custom-language-section { margin-top: 20px; display: grid; gap: 8px; }
+.support-needs-label { color: var(--text); font-size: .95rem; font-weight: 600; }
+.optional-badge, .ai-disclosure, .custom-lang-hint { color: var(--text-dim); font-size: .82rem; line-height: 1.5; }
+.support-needs-input, .custom-language-input {
+  box-sizing: border-box; width: 100%; min-height: 44px; padding: 10px 12px;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; font: inherit;
+}
+.support-needs-input { resize: vertical; min-height: 96px; }
+.custom-language-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 480px) { .custom-language-row { grid-template-columns: 1fr; } }

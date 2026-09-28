@@ -135,7 +135,7 @@ export async function handleBehaviorSignal(
 }
 
 /* ─── End session and emit SESSION_END to Layer 3 ─── */
-export async function endSession(): Promise<FullCognitiveProfile | null> {
+export async function endSession(sessionId?: string): Promise<FullCognitiveProfile | null> {
   const profile = await getProfile();
   if (!profile) return null;
 
@@ -154,7 +154,7 @@ export async function endSession(): Promise<FullCognitiveProfile | null> {
   /* Persist adaptation record for popup and dashboard telemetry */
   try {
     const record: RLSessionAdaptationRecord = {
-      sessionId: `sess-${Date.now()}`,
+      sessionId: sessionId ?? `sess-${Date.now()}`,
       timestamp: Date.now(),
       actionTaken: adaptationResult.actionTaken,
       reward: adaptationResult.reward,

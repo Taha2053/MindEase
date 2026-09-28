@@ -28,6 +28,27 @@ async function premiumHeaders(accept: string): Promise<Record<string, string>> {
     ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}),
   };
 }
+/** Search the wider web through the backend; Tavily credentials never enter the extension bundle. */
+export async function searchRelatedResources(input: {
+  topics: string[];
+  preference: "visual" | "text";
+  sourceUrl: string;
+}): Promise<Array<{ title: string; url: string; description: string; reason: string }>> {
+  const baseUrl = await getServerBaseUrl();
+  const response = await fetch(`${baseUrl}/api/resources/related`, {
+    method: "POST",
+    headers: await premiumHeaders("application/json"),
+    body: JSON.stringify({
+      topics: input.topics,
+      preference: input.preference,
+      source_url: input.sourceUrl,
+    }),
+  });
+  if (!response.ok) throw new Error(`Web search is unavailable (${response.status})`);
+  const data = await response.json() as { resources?: Array<{ title: string; url: string; description: string; reason: string }> };
+  return data.resources ?? [];
+}
+
 
 export async function createAdaptationPlan(input: {
   title: string;
@@ -58,12 +79,12 @@ export async function createAdaptationPlan(input: {
 }
 
 /** Direct fetch to the premium speech endpoint (call from background or extension pages where Origin is allowed). */
-export async function synthesizePremiumSpeechDirect(text: string): Promise<Blob> {
+export async function synthesizePremiumSpeechDirect(text: string, language?: string): Promise<Blob> {
   const baseUrl = await getServerBaseUrl();
   const res = await fetch(`${baseUrl}/api/speech`, {
     method: "POST",
     headers: await premiumHeaders("audio/mpeg"),
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, language }),
   });
   if (!res.ok) {
     throw new Error(`Premium speech is unavailable (${res.status})`);
@@ -77,7 +98,7 @@ export async function synthesizePremiumSpeechDirect(text: string): Promise<Blob>
  *  To avoid that, page-context callers proxy through the background service
  *  worker whose Origin is chrome-extension://… (matched by EXTENSION_ORIGIN_REGEX).
  */
-export async function synthesizePremiumSpeech(text: string): Promise<Blob> {
+export async function synthesizePremiumSpeech(text: string, language?: string): Promise<Blob> {
   const isPageContext =
     typeof window !== "undefined" &&
     typeof document !== "undefined" &&
@@ -91,7 +112,7 @@ export async function synthesizePremiumSpeech(text: string): Promise<Blob> {
       }
       const raw = await browser.runtime.sendMessage({
         type: "PREMIUM_SPEECH",
-        payload: { text },
+        payload: { text, language },
       } as unknown as never);
       const response = raw as { audioBase64?: string; contentType?: string; error?: string } | null | undefined;
       if (response?.error) throw new Error(response.error);
@@ -110,7 +131,7 @@ export async function synthesizePremiumSpeech(text: string): Promise<Blob> {
       throw new Error(`Premium speech is unavailable (proxy failed: ${msg})`);
     }
   }
-  return synthesizePremiumSpeechDirect(text);
+  return synthesizePremiumSpeechDirect(text, language);
 }
 
 /**

@@ -9,6 +9,13 @@ def test_ssml_escapes_user_text_and_voice():
     assert 'name="voice&quot;&gt;&lt;bad"' in ssml
     assert "<bad" not in ssml
 
+def test_ssml_uses_requested_language_and_rejects_invalid_locale():
+    ssml = azure_speech.build_ssml("مرحبا", "en-US-AvaMultilingualNeural", "ar-EG")
+    assert 'xml:lang="ar-EG"' in ssml
+    assert "مرحبا" in ssml
+    with pytest.raises(ValueError):
+        azure_speech.build_ssml("Hello", "voice", 'en-US"><bad')
+
 
 def test_ssml_rejects_empty_and_oversized_text():
     with pytest.raises(ValueError): azure_speech.build_ssml(" ", "voice")

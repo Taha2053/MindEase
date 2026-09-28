@@ -6,18 +6,84 @@ import { STORAGE_KEYS } from "@/types";
 import { deleteFeedback } from "./feedback";
 import { syncNow } from "@/utils/supabase";
 
+/**
+ * Build a deterministic, human-readable session name from source data.
+ *
+ * Priority:
+ *   1. Resource titles (actual page/document titles the user visited)
+ *   2. Cleaned concept labels from Layer 1 concept tags
+ *   3. Date-based fallback
+ *
+ * Avoids LLM-generated fragments or malformed substrings by filtering
+ * candidates through basic sanity checks.
+ */
 function generateAutoName(
   concepts: KeyConceptEntry[],
   endTime: number,
+  resources: ResourceEntry[],
 ): string {
-  if (concepts.length > 0) {
-    const top = concepts[0].label;
-    const capitalized = top.charAt(0).toUpperCase() + top.slice(1);
-    return `Study: ${capitalized}`;
+  // ── Try resource titles first (ground truth: actual page titles) ──────────
+  const meaningfulTitles = resources
+    .map(r => r.title)
+    .filter(t => t && t.length > 2 && !looksLikeUrl(t))
+    .map(t => (t.split(/\s+[-|–—]\s+/)[0] || t).trim().replace(/\s+/g, " "));
+
+  if (meaningfulTitles.length > 0) {
+    // Use the first meaningful title, trimmed
+    const primary = truncLabel(meaningfulTitles[0], 50);
+    if (meaningfulTitles.length > 1) {
+      return `Study: ${primary} (+${meaningfulTitles.length - 1} more)`;
+    }
+    return `Study: ${primary}`;
   }
+
+  // ── Fall back to cleaned concept labels ───────────────────────────────────
+  const cleanConcepts = concepts
+    .map(c => c.label)
+    .filter(isValidConceptLabel)
+    .map(l => l.charAt(0).toUpperCase() + l.slice(1));
+
+  if (cleanConcepts.length > 0) {
+    const primary = truncLabel(cleanConcepts[0], 40);
+    if (cleanConcepts.length > 1) {
+      return `Study: ${primary} & ${truncLabel(cleanConcepts[1], 25)}`;
+    }
+    return `Study: ${primary}`;
+  }
+
+  // ── Date fallback ─────────────────────────────────────────────────────────
   const d = new Date(endTime);
   const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return `Session - ${dateStr}`;
+}
+
+/** Returns true if the string looks like a bare URL rather than a title */
+function looksLikeUrl(s: string): boolean {
+  return /^https?:\/\//i.test(s) || /^www\./i.test(s);
+}
+
+
+/** Truncate a label with an ellipsis if too long */
+function truncLabel(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const lastBoundary = s.lastIndexOf(" ", max);
+  return lastBoundary > 12 ? `${s.slice(0, lastBoundary)}…` : s;
+}
+
+/**
+ * Filter out malformed concept labels:
+ * - too short (<2 chars) or too long (>80 chars)
+ * - looks like a code fragment or URL
+ * - has excessive punctuation or non-alphabetic chars
+ */
+function isValidConceptLabel(label: string): boolean {
+  if (label.length < 2 || label.length > 80) return false;
+  // Reject labels that look like code/HTML/URLs
+  if (/[{}<>\/\\=;]/.test(label)) return false;
+  if (looksLikeUrl(label)) return false;
+  const alpha = label.match(/\p{L}/gu)?.length ?? 0;
+  if (alpha / label.length < 0.5) return false;
+  return true;
 }
 
 export async function saveSessionHistory(
@@ -28,7 +94,7 @@ export async function saveSessionHistory(
   focusScore: number,
   resources: ResourceEntry[],
 ): Promise<void> {
-  const name = generateAutoName(concepts, endTime);
+  const name = generateAutoName(concepts, endTime, resources);
   const storedProfile = await browser.storage.local.get(STORAGE_KEYS.PROFILE);
   const profile = storedProfile[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined;
   const entry: SessionHistoryEntry = {

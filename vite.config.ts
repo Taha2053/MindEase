@@ -56,6 +56,7 @@ export default defineConfig(({ mode }) => ({
       additionalInputs: [
         "src/layer2/onboarding/onboarding.html",
         "src/session/dashboard/dashboard.html",
+        "src/session/dashboard/printReview.html",
         "src/offscreen/offscreen.html",
         "src/video/video.html",
       ],

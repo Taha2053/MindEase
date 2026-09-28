@@ -20,7 +20,7 @@ import type {
   Connection, TabResource, FocusSummary, StateTransition,
   SessionState, AdaptationExplanation,
   CrossSourceConnection, VisualEntry,
-  BaselineProfile, CognitiveNeed,
+  BaselineProfile, CognitiveNeed, RLSessionAdaptationRecord,
 } from "@/types";
 import { initialTransformationParams, updateProfile } from "@/layer2/profileManager";
 import { loadExplanations } from "@/layer2/explainer";
@@ -1250,6 +1250,7 @@ const Dashboard: FC = () => {
   const [generating, setGenerating] = useState(false);
   const [visuals, setVisuals] = useState<VisualEntry[]>([]);
   const [videoModalOpen, setVideoModalOpen] = useState(false);
+  const [rlNotice, setRlNotice] = useState<RLSessionAdaptationRecord | null>(null);
   const sectionRefs = useRef<Map<string, IntersectionObserverEntry>>(new Map());
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -1272,6 +1273,25 @@ const Dashboard: FC = () => {
       document.head.appendChild(link);
     }
   }, []);
+  useEffect(() => {
+    const currentId = data?.session?.sessionId ?? data?.artifact?.sessionId;
+    if (!currentId) return;
+    const consider = async (raw: unknown) => {
+      const record = Array.isArray(raw) ? raw[0] as RLSessionAdaptationRecord | undefined : undefined;
+      if (!record || record.sessionId !== currentId || !record.paramChanges?.length) return;
+      const seen = await browser.storage.local.get("mindease_rl_notice_seen");
+      if (seen.mindease_rl_notice_seen !== record.timestamp) setRlNotice(record);
+    };
+    void browser.storage.local.get(STORAGE_KEYS.RL_ADAPTATION_LOG)
+      .then(saved => consider(saved[STORAGE_KEYS.RL_ADAPTATION_LOG]));
+    const listener = (changes: Record<string, { newValue?: unknown }>, area: string) => {
+      if (area === "local" && changes[STORAGE_KEYS.RL_ADAPTATION_LOG]) {
+        void consider(changes[STORAGE_KEYS.RL_ADAPTATION_LOG].newValue);
+      }
+    };
+    browser.storage.onChanged.addListener(listener);
+    return () => browser.storage.onChanged.removeListener(listener);
+  }, [data?.session?.sessionId, data?.artifact?.sessionId]);
 
   useEffect(() => {
     const navigate = () => setActiveSection(location.hash.slice(1) || "overview");
@@ -1292,7 +1312,7 @@ const Dashboard: FC = () => {
   };
 
   const handleExport = () => {
-    window.print();
+    void browser.tabs.create({ url: browser.runtime.getURL("src/session/dashboard/printReview.html") });
   };
 
   const handleClose = () => {
@@ -1370,6 +1390,17 @@ const Dashboard: FC = () => {
         </header>
 
         <main className="dash-content" ref={contentRef}>
+          {rlNotice && <aside className="section-card" role="status" aria-label="Next session adaptation">
+            <div className="section-card-header"><Sparkles size={16} /><h2>What MindEase will adjust next session</h2></div>
+            <p>Observed {rlNotice.telemetry.highlights} highlights, {rlNotice.telemetry.pauses} pauses and {rlNotice.telemetry.skips} skips. These signals suggest a presentation adjustment, not a diagnosis.</p>
+            <ul>{rlNotice.paramChanges.map(change =>
+              <li key={change.param}>{change.param.replace(/([A-Z])/g, " $1").toLowerCase()}: {String(change.from)} → {String(change.to)}</li>
+            )}</ul>
+            <button type="button" onClick={() => {
+              void browser.storage.local.set({ mindease_rl_notice_seen: rlNotice.timestamp });
+              setRlNotice(null);
+            }}>Got it</button>
+          </aside>}
           {activeSection === "overview" && <DashboardHero
             artifact={data.artifact}
             session={data.session}
@@ -1377,6 +1408,16 @@ const Dashboard: FC = () => {
           />}
           {activeSection === "overview" && <>
             <SectionOverview artifact={data.artifact} session={data.session} />
+            <section className="section-card" aria-labelledby="session-summary-title">
+              <div className="section-card-header"><BookOpenText size={16} /><h2 id="session-summary-title">Session summary</h2></div>
+              <p>Reviewed {data.artifact?.resourcesUsed?.length ?? 0} sources and captured {data.artifact?.userNotes?.length ?? 0} notes.</p>
+              {(data.artifact?.keyConcepts?.length ?? 0) > 0 && <p>Topics found in the source material: {data.artifact!.keyConcepts.map(c => c.label).join(", ")}.</p>}
+              {(data.artifact?.studyCards ?? []).map(card =>
+                <article key={card.id}><h3>{card.concept}</h3><p>{card.content}</p></article>
+              )}
+              {(data.artifact?.needsReview?.length ?? 0) > 0 && <p>{data.artifact!.needsReview.length} areas need another look; see Review for details.</p>}
+              <button type="button" className="header-btn" onClick={handleExport}>Open complete review / Save as PDF</button>
+            </section>
             <SectionFocus session={data.session} artifact={data.artifact} />
             <SessionFeedbackPanel key={data.feedbackSessionId} sessionId={data.feedbackSessionId} />
           </>}

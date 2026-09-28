@@ -8,7 +8,7 @@ import { renderMarkdown } from "@/utils/markdown";
    ============================================================ */
 
 import browser from "webextension-polyfill";
-import type { ContentChunk, VisualEntry, BaselineProfile, TransformationParams } from "@/types";
+import type { ContentChunk, VisualEntry, BaselineProfile, TransformationParams, CognitiveNeed } from "@/types";
 import {
   speak as ttsSpeak,
   pause as ttsPause,
@@ -430,6 +430,8 @@ let _theme: Theme = "dark";
 let _extensionActive = false;
 let _cleanupYouTube: (() => void) | null = null;
 let _adaptationFlow: Promise<boolean> | null = null;
+let _activated = false;
+let _classificationPromise: Promise<"educational" | "entertainment"> | null = null;
 
 const defaultBaseline: BaselineProfile = {
   formatPreference: "text",
@@ -467,6 +469,8 @@ async function isExtensionActive(): Promise<boolean> {
 function onExtensionStateChange(active: boolean): void {
   _extensionActive = active;
   if (!active) {
+    _activated = false;
+    _classificationPromise = null;
     destroyBehaviorTracking();
     shadowById("mindease-overlay")?.remove();
     shadowById("mindease-pdf-loader")?.remove();
@@ -474,36 +478,55 @@ function onExtensionStateChange(active: boolean): void {
     _cleanupYouTube?.();
     _cleanupYouTube = null;
   } else {
-    const { decision, ambiguous } = shouldActivate();
+    const { decision } = shouldActivate();
     if (!decision) return;
     const sourceType = detectSourceType();
     if (!sourceType) return;
-    // Classification remains local; provider calls require the adaptation choice.
-    activateForSession(sourceType);
+    void (async () => {
+      const classification = await requestClassification();
+      if (classification !== "educational" || _activated) return;
+      _activated = true;
+      activateForSession(sourceType);
+    })();
   }
 }
 
-function requestLLMClassification(sourceType: string): void {
-  browser.runtime.sendMessage({
-    type: "CLASSIFY_CONTENT",
-    payload: {
-      title: document.title,
-      snippet: document.body.innerText.slice(0, 1500),
-    },
-  }).catch(() => {});
-  const handler = (message: unknown) => {
-    const msg = message as { type: string; payload?: { classification: string } };
-    if (msg.type === "CLASSIFY_CONTENT_RESULT") {
+/**
+ * Request LLM-based page classification from background service worker.
+ * Returns "entertainment" as safe fallback on timeout or failure —
+ * never silently blesses non-educational pages.
+ */
+function requestClassification(): Promise<"educational" | "entertainment"> {
+  if (_classificationPromise) return _classificationPromise;
+
+  _classificationPromise = new Promise<"educational" | "entertainment">((resolve) => {
+    const timeout = setTimeout(() => {
       browser.runtime.onMessage.removeListener(handler);
-      if (msg.payload?.classification === "educational" && _extensionActive) {
-        const sourceType = detectSourceType();
-        if (sourceType) {
-          activateForSession(sourceType);
-        }
+      resolve("entertainment");
+    }, 15_000);
+
+    const handler = (message: unknown) => {
+      const msg = message as { type: string; payload?: { classification: string } };
+      if (msg.type === "CLASSIFY_CONTENT_RESULT") {
+        clearTimeout(timeout);
+        browser.runtime.onMessage.removeListener(handler);
+        resolve(msg.payload?.classification === "educational" ? "educational" : "entertainment");
       }
-    }
-  };
-  browser.runtime.onMessage.addListener(handler);
+    };
+    browser.runtime.onMessage.addListener(handler);
+
+    const snippet = (document.body?.innerText ?? "").slice(0, 2000);
+    browser.runtime.sendMessage({
+      type: "CLASSIFY_CONTENT",
+      payload: { title: document.title, snippet },
+    }).catch(() => {
+      clearTimeout(timeout);
+      browser.runtime.onMessage.removeListener(handler);
+      resolve("entertainment");
+    });
+  });
+
+  return _classificationPromise;
 }
 
 async function activateForSession(sourceType: string): Promise<void> {
@@ -582,12 +605,14 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
 
   _extensionActive = await isExtensionActive();
   if (!_extensionActive) {
+    // Discovery prompt: manual user activation — intentional bypass of LLM classification
     const sourceType = detectSourceType();
     if (!sourceType) return;
     setTimeout(() => {
       void showDiscoveryPrompt(_theme, () => {
         void (async () => {
           _extensionActive = true;
+          _activated = true;
           await browser.storage.local.set({ [STORAGE_KEYS.EXTENSION_ACTIVE]: true });
           await browser.runtime.sendMessage({ type: "SESSION_STATE_CHANGED", payload: { active: true } }).catch(() => {});
           await activateForSession(sourceType);
@@ -597,8 +622,13 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
     return;
   }
 
+  // LLM classification gate for auto-activation
   const sourceType = detectSourceType();
   if (!sourceType) return;
+  const classification = await requestClassification();
+  if (classification !== "educational") return;
+  if (_activated) return;
+  _activated = true;
   await activateForSession(sourceType);
 })();
 
@@ -630,7 +660,7 @@ async function performTransformationRequest(
   try {
     response = await browser.runtime.sendMessage({
       type: "TRANSFORM_CONTENT",
-      payload: { text, pageType, adaptation },
+      payload: { text, pageType, adaptation: adaptation.adaptation, language: adaptation.language },
     }) as { received?: boolean; error?: string } | null;
   } catch (error) {
     showAdaptationStatus(`MindEase background connection failed: ${error instanceof Error ? error.message : String(error)}. Reload the extension and refresh this tab.`, true);
@@ -729,18 +759,20 @@ browser.runtime.onMessage.addListener((message: unknown) => {
   const msg = message as {
     type: string; chunks?: ContentChunk[]; error?: string; payload?: unknown;
     visuals?: VisualEntry[]; baseline?: BaselineProfile; transformationParams?: TransformationParams;
-    append?: boolean; done?: boolean;
+    condition?: CognitiveNeed; language?: string; append?: boolean; done?: boolean;
   };
   if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks && msg.chunks.length > 0) {
     if (!_extensionActive) return;
     removeReopenButton();
     shadowById("mindease-adaptation-status")?.remove();
+    if (!msg.append) _ttsBatchesDone = false;
     if (msg.append) {
       appendToOverlay(msg.chunks);
     } else {
-      injectOverlay(msg.chunks, msg.baseline, msg.transformationParams);
+      injectOverlay(msg.chunks, msg.baseline, msg.transformationParams, msg.condition, msg.language);
     }
     if (msg.done) {
+      _ttsBatchesDone = true;
       const marker = shadowById("mindease-loading-marker");
       if (marker) (marker as HTMLElement).style.display = "none";
     }
@@ -750,6 +782,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     else if (msg.error) showAdaptationStatus(`Visual generation failed: ${msg.error}`, true);
   }
   if (msg.type === "TRANSFORM_ERROR") {
+    _ttsBatchesDone = true;
     console.error("[MindEase Content] Transform error:", msg.error);
     showAdaptationStatus(`Adaptation failed: ${msg.error || "The provider did not return valid grounded content."}`, true);
   }
@@ -1605,7 +1638,7 @@ const OVERLAY_CSS = `
 
       /* ── Adaptive: Slow pace - larger text ── */
       #mindease-overlay[data-pace="slow"] .chunk-body {
-        font-size: 1rem;
+        font-size: var(--reader-font-size, 18px);
         line-height: 1.8;
       }
       #mindease-overlay[data-pace="slow"] .mindease-chunk {
@@ -1696,8 +1729,10 @@ const OVERLAY_CSS = `
       #mindease-overlay .mindease-chunk.color-tertiary,
       #mindease-overlay .mindease-chunk.color-quaternary { background: var(--bg-surface); border-color: var(--border); }
       #mindease-overlay .chunk-concept-tag { text-transform: none; letter-spacing: normal; border-radius: 7px; }
-      #mindease-overlay .chunk-body { font-size: 16px; line-height: 1.75; }
+      #mindease-overlay .chunk-body { font-size: var(--reader-font-size, 16px); line-height: 1.75; text-align: start; }
       #mindease-overlay .chunk-body p { margin: 0 0 14px; }
+      #mindease-overlay[data-dyslexia="true"] .chunk-body { font-family: Verdana, Arial, sans-serif; letter-spacing: .02em; line-height: 1.8; }
+      #mindease-overlay[data-reduced-motion="true"] *, #mindease-overlay[data-reduced-motion="true"] *::before, #mindease-overlay[data-reduced-motion="true"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
       #mindease-overlay .adapted-label { text-transform: none; letter-spacing: normal; font-size: 12px; }
       #mindease-overlay button { min-height: 36px; border-radius: 9px; }
       #mindease-overlay button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
@@ -2705,7 +2740,7 @@ function appendToOverlay(chunks: ContentChunk[]): void {
   const marker = shadowById("mindease-loading-marker");
   if (!container) return;
   _contentChunks.push(...chunks);
-  _ttsTexts.push(...chunks.map(chunk => stripInlineTags(chunk.text)));
+  // Narration reads rendered .chunk-body elements, not Markdown/source disclosure.
   const palette = ["accent", "secondary", "tertiary", "quaternary"];
   const existing = container.querySelectorAll(".mindease-chunk").length;
   const html = chunks.map((chunk, i) => {
@@ -2740,6 +2775,7 @@ function appendToOverlay(chunks: ContentChunk[]): void {
   } else {
     container.insertAdjacentHTML("beforeend", html);
   }
+  _ttsTexts = _contentChunks.map((_, i) => renderedChunkText(i));
   const statEl = shadowById("mindease-engage-count");
   if (statEl) {
     const total = container.querySelectorAll(".mindease-chunk").length;
@@ -2747,10 +2783,48 @@ function appendToOverlay(chunks: ContentChunk[]): void {
   }
 }
 
+async function showRelatedResources(topics: string[], preference: "visual" | "text"): Promise<void> {
+  const panel = shadowById("mindease-related-resources");
+  if (!panel) return;
+  const heading = document.createElement("h3");
+  heading.textContent = "Explore related learning websites";
+  panel.replaceChildren(heading);
+  const validTopics = topics.filter(topic => topic.length >= 3 && topic.length <= 90);
+  if (!validTopics.length) return;
+  try {
+    const reply = await browser.runtime.sendMessage({
+      type: "RELATED_RESOURCES",
+      payload: { topics: validTopics.slice(0, 3), preference, sourceUrl: location.href },
+    }) as { resources?: Array<{ title: string; url: string; description: string; reason: string }> };
+    if (!panel.isConnected) return;
+    const list = document.createElement("ul");
+    for (const resource of reply?.resources ?? []) {
+      const url = new URL(resource.url);
+      if (url.protocol !== "https:") continue;
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = url.href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = resource.title;
+      const detail = document.createElement("p");
+      detail.textContent = `${resource.description} ${resource.reason}`;
+      item.append(link, detail);
+      list.append(item);
+    }
+    if (list.childElementCount) panel.append(list);
+    else panel.remove();
+  } catch {
+    panel.remove();
+  }
+}
+
 function injectOverlay(
   chunks: ContentChunk[],
   baseline?: BaselineProfile,
   transformationParams?: TransformationParams,
+  condition?: CognitiveNeed,
+  language?: string,
 ): void {
   stopTTS();
   shadowById("mindease-overlay")?.remove();
@@ -2801,9 +2875,7 @@ function injectOverlay(
 
   _formatPreference = baselineProfile.formatPreference;
   _conceptsFromChunks = [...new Set(orderedChunks.flatMap(c => c.conceptTags).filter(Boolean))];
-  _ttsTexts = orderedChunks
-    .map(c => stripInlineTags(c.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+  _ttsTexts = [];
   _contentChunks = orderedChunks;
   console.log(`[Content] Extracted ${_conceptsFromChunks.length} concepts, ${_contentChunks.length} chunks`);
   const totalConcepts = orderedChunks.reduce((acc, c) => acc + c.conceptTags.length, 0);
@@ -2816,6 +2888,12 @@ function injectOverlay(
   const readingPace = baselineProfile.readingPace;
   const attentionSpan = baselineProfile.attentionSpan;
 
+  try {
+    const locale = new Intl.Locale(language || document.documentElement.lang || "en-US").maximize();
+    _ttsLanguage = `${locale.language}-${locale.region || "US"}`;
+  } catch {
+    _ttsLanguage = "en-US";
+  }
   const overlay = document.createElement("div");
   overlay.id = "mindease-overlay";
   overlay.setAttribute("data-theme", _theme);
@@ -2823,6 +2901,9 @@ function injectOverlay(
   overlay.setAttribute("data-pace", readingPace);
   overlay.setAttribute("data-density", infoDensity);
   overlay.setAttribute("data-second-lang", String(secondLang));
+  overlay.setAttribute("data-dyslexia", String(condition === "dyslexia"));
+  overlay.setAttribute("data-reduced-motion", String(baselineProfile.supportHints?.reducedMotion === true || condition === "autism"));
+  overlay.style.setProperty("--reader-font-size", `${baselineProfile.supportHints?.largerText || condition === "dyslexia" ? 20 : readingPace === "slow" ? 18 : 16}px`);
   overlay.setAttribute("role", "complementary");
   overlay.setAttribute("aria-label", "MindEase study panel");
   overlay.setAttribute("aria-hidden", "false");
@@ -2850,6 +2931,8 @@ function injectOverlay(
         <span class="logo-badge">ADAPTIVE</span>
       </div>
       <div id="mindease-controls">
+        <button class="mindease-ctrl-btn" id="mindease-font-down" title="Decrease text size" aria-label="Decrease text size">A−</button>
+        <button class="mindease-ctrl-btn" id="mindease-font-up" title="Increase text size" aria-label="Increase text size">A+</button>
         <button class="mindease-ctrl-btn" id="mindease-tts-btn" title="Read content aloud" aria-label="Read content aloud">${iconHTML("volume-2")}</button>
         <button class="mindease-ctrl-btn" id="mindease-theme-toggle" title="Toggle theme" aria-label="Toggle theme">${_theme === "light" ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>'}</button>
         <button class="mindease-ctrl-btn" id="mindease-minimize" title="Minimize" aria-label="Minimize panel">&minus;</button>
@@ -2888,6 +2971,7 @@ function injectOverlay(
       </div>
 
       <div id="mindease-visuals-grid" class="visuals-grid" aria-live="polite"></div>
+      <section id="mindease-related-resources" aria-label="Related learning websites" style="padding:16px"></section>
     </div>
 
     <div id="mindease-footer">
@@ -2901,7 +2985,19 @@ function injectOverlay(
   `;
 
   appendToShadow(overlay);
+  void browser.storage.local.get("mindease_reader_font_size").then(saved => {
+    const size = saved.mindease_reader_font_size;
+    if (typeof size === "number" && Number.isFinite(size) && size >= 14 && size <= 32) {
+      overlay.style.setProperty("--reader-font-size", `${size}px`);
+    }
+  }).catch(() => {});
   setupSelectionPopup(shadowById("mindease-body")!);
+  void showRelatedResources(
+    orderedChunks.flatMap(chunk => chunk.conceptTags.filter(tag =>
+      (chunk.sourceText ?? chunk.text).toLocaleLowerCase().includes(tag.toLocaleLowerCase()),
+    )),
+    baselineProfile.formatPreference,
+  );
 
 
   // Persistent reading region: keyboard focus may leave for the source page.
@@ -3046,6 +3142,14 @@ function injectOverlay(
     saveSidebarState({ onRight });
   });
 
+  for (const [id, delta] of [["mindease-font-down", -2], ["mindease-font-up", 2]] as const) {
+    overlay.querySelector(`#${id}`)?.addEventListener("click", () => {
+      const current = parseInt(overlay.style.getPropertyValue("--reader-font-size"), 10) || 16;
+      const size = Math.min(32, Math.max(14, current + delta));
+      overlay.style.setProperty("--reader-font-size", `${size}px`);
+      void browser.storage.local.set({ mindease_reader_font_size: size });
+    });
+  }
   /* ── TTS: Read aloud / Stop ── */
   /* ── TTS: Read aloud / Stop / Pause ── */
   shadowById("mindease-tts-btn")?.addEventListener("click", () => {
@@ -3240,6 +3344,11 @@ function injectOverlay(
     activeTab: "content",
     lastScrollY: window.scrollY,
   });
+  _ttsTexts = _contentChunks.map((_, i) => renderedChunkText(i));
+  if (baselineProfile.autoReadAloud && _ttsTexts.some(Boolean)) {
+    // Narration begins only after the learner has opted in during onboarding.
+    speakTexts(_ttsTexts);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
@@ -3255,8 +3364,12 @@ let _ttsSpeaking = false;
 let _ttsTexts: string[] = [];
 let _ttsActiveChunkIdx: number | null = null;
 let _ttsOverlayRate = 1.0;
+let _ttsBatchesDone = true;
+let _ttsGeneration = 0;
+let _ttsLanguage = "en-US";
 
 function stopTTS(): void {
+  _ttsGeneration++;
   ttsStop();
   _ttsSpeaking = false;
   _ttsActiveChunkIdx = null;
@@ -3298,6 +3411,13 @@ function updateActiveChunkHighlight(chunkIdx: number): void {
   });
 }
 
+function renderedChunkText(chunkIdx: number): string {
+  const body = shadowById("tab-content")?.querySelector<HTMLElement>(
+    `.mindease-chunk[data-chunk-index="${chunkIdx}"] .chunk-body`,
+  );
+  return (body?.innerText ?? body?.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
 function speakSingleChunk(chunkIdx: number): void {
   if (_ttsSpeaking && _ttsActiveChunkIdx === chunkIdx) {
     stopTTS();
@@ -3308,7 +3428,7 @@ function speakSingleChunk(chunkIdx: number): void {
   const chunk = _contentChunks[chunkIdx];
   if (!chunk) return;
 
-  const cleanText = stripInlineTags(chunk.text).replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  const cleanText = renderedChunkText(chunkIdx);
   if (!cleanText) return;
 
   _ttsSpeaking = true;
@@ -3328,6 +3448,7 @@ function speakSingleChunk(chunkIdx: number): void {
 
   ttsSpeak(cleanText, {
     rate: _ttsOverlayRate,
+    voiceLang: _ttsLanguage,
     onEnd: () => {
       stopTTS();
     },
@@ -3359,10 +3480,13 @@ function speakTexts(texts: string[]): void {
   }
   if (pauseBtn) pauseBtn.textContent = "❚❚";
 
+  const generation = _ttsGeneration;
   let i = 0;
   function speakNext(): void {
-    if (!_ttsSpeaking || i >= texts.length) {
-      stopTTS();
+    if (generation !== _ttsGeneration || !_ttsSpeaking) return;
+    if (i >= _ttsTexts.length) {
+      if (_ttsBatchesDone) stopTTS();
+      else setTimeout(speakNext, 300);
       return;
     }
     _ttsActiveChunkIdx = i;
@@ -3370,10 +3494,11 @@ function speakTexts(texts: string[]): void {
 
     const b = shadowById("mindease-tts-bar");
     const l = b?.querySelector(".tts-label");
-    if (l) l.textContent = `Reading section ${i + 1} of ${texts.length}...`;
+    if (l) l.textContent = `Reading section ${i + 1} of ${_ttsTexts.length}...`;
 
-    ttsSpeak(texts[i], {
+    ttsSpeak(_ttsTexts[i], {
       rate: _ttsOverlayRate,
+      voiceLang: _ttsLanguage,
     }).then(() => {
       i++;
       speakNext();

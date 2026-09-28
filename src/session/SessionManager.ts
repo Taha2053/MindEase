@@ -275,11 +275,13 @@ export class SessionManager {
     this.clearTimers();
     await this.persist();
 
+    let reviewChunks: ContentChunk[] = [];
     // Call Layer 3 endSession with workspace data
     if (this.onLayer3EndSession) {
       try {
         const stored = await browser.storage.local.get(STORAGE_KEYS.SESSION_CHUNKS);
         const chunks = (stored[STORAGE_KEYS.SESSION_CHUNKS] ?? []) as ContentChunk[];
+        reviewChunks = chunks;
         const highlights = this.getHighlights();
         const tabs = this.getTabs();
         const focus = this.getFocusSummary();
@@ -290,6 +292,14 @@ export class SessionManager {
         const focus = this.getFocusSummary();
         await this.onLayer3EndSession(undefined, highlights, tabs, focus);
       }
+    }
+    try {
+      await browser.storage.local.set({
+        latestReviewChunks: { sessionId: this.session.sessionId, chunks: reviewChunks },
+      });
+      await browser.storage.local.remove(STORAGE_KEYS.SESSION_CHUNKS);
+    } catch (error) {
+      console.warn("[MindEase] Could not archive session source text:", error);
     }
     // Call Layer 2 endSession
     if (this.onLayer2EndSession) {

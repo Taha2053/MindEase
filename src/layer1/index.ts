@@ -7,6 +7,7 @@ import { createAdaptationPlan } from "./premiumClient";
 export interface TransformInput {
   transformationParams: TransformationParams;
   baseline: BaselineProfile;
+  outputLanguage?: "preferred" | "source";
 }
 
 export async function transformContent(

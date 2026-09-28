@@ -22,6 +22,7 @@ import { transformContent } from "@/layer1/index";
 import { isTransformRequest } from "@/layer1/transformRequest";
 import { isExcludedPage } from "@/utils/pagePrivacy";
 import { classifyContent, explainSelection } from "@/layer1/llmClient";
+import { findRelatedResources } from "@/layer1/resourceRecommendations";
 import { generateVisualsForConcepts, generateVisualsFromChunks } from "@/layer1/visualOrchestrator";
 import { ocrImageUrl, ocrImageBase64 } from "@/layer1/ocrClient";
 import { SessionManager } from "@/session/SessionManager";
@@ -176,7 +177,7 @@ sessionManager.onLayer3EndSession = async (
   }).catch(() => {});
 };
 sessionManager.onLayer2EndSession = async () => {
-  return endLayer2Session();
+  return endLayer2Session(sessionManager.getSessionId() ?? undefined);
 };
 
 const sessionReady = Promise.all([sessionManager.init(), restoreSession()]);
@@ -319,7 +320,7 @@ browser.runtime.onMessage.addListener(
         sendResponse({ received: false, error: "Choose an adaptation before sending valid source content." });
         return true;
       }
-      const { text, pageType, adaptation } = msg.payload;
+      const { text, pageType, adaptation, language } = msg.payload;
       const tabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
 
       if (!tabId) {
@@ -365,6 +366,7 @@ browser.runtime.onMessage.addListener(
             {
               transformationParams: fullProfile.transformationParams,
               baseline: fullProfile.baseline,
+              outputLanguage: language,
             },
             url,
             async (batch, append, done) => {
@@ -373,6 +375,8 @@ browser.runtime.onMessage.addListener(
                 chunks: batch,
                 baseline: fullProfile.baseline,
                 transformationParams: fullProfile.transformationParams,
+                condition: fullProfile.condition,
+                language: language === "preferred" ? fullProfile.baseline.preferredLanguage : undefined,
                 append,
                 done,
               }).catch(() => {});
@@ -507,6 +511,18 @@ browser.runtime.onMessage.addListener(
         browser.action.setBadgeBackgroundColor({ color: "#7C3AED" });
         break;
 
+      case "RELATED_RESOURCES": {
+        const { topics, preference, sourceUrl } = msg.payload as {
+          topics?: unknown; preference?: unknown; sourceUrl?: unknown;
+        };
+        void findRelatedResources(
+          Array.isArray(topics) ? topics.filter((t): t is string => typeof t === "string").slice(0, 3) : [],
+          preference === "visual" ? "visual" : "text",
+          typeof sourceUrl === "string" ? sourceUrl : "",
+        ).then(resources => sendResponse({ resources })).catch(() => sendResponse({ resources: [] }));
+        return true;
+      }
+
       case "CLASSIFY_CONTENT": {
         const { title, snippet } = msg.payload as { title: string; snippet: string };
         const tabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
@@ -519,10 +535,10 @@ browser.runtime.onMessage.addListener(
               payload: { classification },
             }).catch(() => {});
           } catch (err) {
-            console.warn("[Background] Classification error, defaulting to educational:", err);
+            console.warn("[Background] Classification error, defaulting to non-educational:", err);
             await browser.tabs.sendMessage(tabId, {
               type: "CLASSIFY_CONTENT_RESULT",
-              payload: { classification: "educational" },
+              payload: { classification: "entertainment" },
             }).catch(() => {});
           }
         })();
@@ -614,7 +630,7 @@ browser.runtime.onMessage.addListener(
       }
 
       case "PREMIUM_SPEECH": {
-        const payload = msg.payload as { text?: string };
+        const payload = msg.payload as { text?: string; language?: string };
         const text = typeof payload?.text === "string" ? payload.text : "";
         if (!text.trim()) {
           sendResponse({ error: "Premium speech: empty text" });
@@ -636,7 +652,7 @@ browser.runtime.onMessage.addListener(
             const res = await fetch(`${baseUrl}/api/speech`, {
               method: "POST",
               headers,
-              body: JSON.stringify({ text }),
+              body: JSON.stringify({ text, language: payload.language }),
             });
             if (!res.ok) {
               const detail = await res.text().catch(() => res.statusText);

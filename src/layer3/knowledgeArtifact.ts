@@ -23,7 +23,7 @@ import type {
   CrossSourceConnection,
 } from "@/types";
 import { analyzeGaps }         from "./gapAnalyzer";
-import { detectConnections, detectCrossSourceConnections, connectionsToKeyConcepts } from "./connectionDetector";
+import { detectConnections, detectCrossSourceConnections } from "./connectionDetector";
 import { generateStudyCards }  from "./studyCardGenerator";
 import { saveArtifact }        from "./storage";
 
@@ -66,7 +66,16 @@ function extractKeyConcepts(
 
   for (const chunk of chunks) {
     for (const tag of chunk.conceptTags) {
-      const key = tag.toLowerCase();
+      const key = tag.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+      // A suggested topic must be present in the original source, not just model output.
+      const source = (chunk.sourceText ?? chunk.text).normalize("NFKC").toLocaleLowerCase();
+      const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const completePhrase = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}(?=$|[^\\p{L}\\p{N}])`, "u");
+      if (key.length < 2 || key.length > 80 || !completePhrase.test(source)) continue;
+      if (/[{}<>\/\\=;]/.test(key) || /^https?:\/\//i.test(key)) continue;
+      const letters = key.match(/\p{L}/gu)?.length ?? 0;
+      if (letters / key.length < 0.5) continue;
+
       if (!conceptMap.has(key)) {
         conceptMap.set(key, { sources: new Set(), occurrences: 0, totalEngagement: 0 });
       }
@@ -87,20 +96,7 @@ function extractKeyConcepts(
         ? Math.min(1, data.totalEngagement / data.occurrences)
         : 0.5,
     }))
-    .sort((a, b) => b.engagementScore - a.engagementScore);
-}
-
-function inferConceptsForTab(
-  tab: TabResource,
-  allKeyConcepts: KeyConceptEntry[],
-): string[] {
-  const tabConcepts = allKeyConcepts.filter(kc =>
-    kc.sources.some(s => tab.url.includes(s) || s.includes(tab.url)),
-  );
-  if (tabConcepts.length > 0) {
-    return tabConcepts.map(c => c.label);
-  }
-  return allKeyConcepts.slice(0, 2).map(c => c.label);
+    .sort((a, b) => b.occurrences - a.occurrences || b.engagementScore - a.engagementScore);
 }
 
 // ── Artifact Assembler ───────────────────────────────────────────────────────
@@ -138,14 +134,6 @@ export async function assembleArtifact(
   const crossSourceConnections = tabs
     ? detectCrossSourceConnections(tabs, chunks, highlights ?? [])
     : [];
-  const crossSourceConcepts = connectionsToKeyConcepts(crossSourceConnections);
-  // Merge cross-source concepts into key concepts (avoiding duplicates)
-  const existingLabels = new Set(keyConcepts.map(kc => kc.label.toLowerCase()));
-  for (const csc of crossSourceConcepts) {
-    if (!existingLabels.has(csc.label.toLowerCase())) {
-      keyConcepts.push(csc);
-    }
-  }
 
   // ── Step 3: Generate personalized study cards ─────────────────────────────
   const learnedCards = generateStudyCards(log, chunks, profile, gaps);
@@ -159,9 +147,7 @@ export async function assembleArtifact(
     );
     return {
       ...r,
-      conceptsFound: tabConcepts.length > 0
-        ? tabConcepts.map(c => c.label).slice(0, 5)
-        : keyConcepts.slice(0, 2).map(c => c.label),
+      conceptsFound: tabConcepts.map(c => c.label).slice(0, 5),
     };
   });
 

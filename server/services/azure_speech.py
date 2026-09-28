@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import html
+import re
 import os
 
 import httpx
@@ -20,21 +21,23 @@ def speech_config() -> tuple[str, str, str]:
     return key, region, voice
 
 
-def build_ssml(text: str, voice: str) -> str:
+def build_ssml(text: str, voice: str, language: str = "en-US") -> str:
     cleaned = text.strip()
     if not cleaned or len(cleaned) > MAX_TEXT_CHARS:
         raise ValueError(f"Text must contain 1 to {MAX_TEXT_CHARS} characters")
+    if not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}", language):
+        raise ValueError("Invalid speech language")
     return (
-        '<speak version="1.0" xml:lang="en-US">'
+        f'<speak version="1.0" xml:lang="{html.escape(language, quote=True)}">'
         f'<voice name="{html.escape(voice, quote=True)}">{html.escape(cleaned)}</voice></speak>'
     )
 
 
-async def synthesize(text: str) -> bytes:
-    """Use Azure English neural speech. No gTTS fallback — caller handles errors."""
+async def synthesize(text: str, language: str = "en-US") -> bytes:
+    """Use the configured multilingual Azure voice and requested locale."""
     key, region, voice = speech_config()
     endpoint = f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
-    body = build_ssml(text, voice).encode()
+    body = build_ssml(text, voice, language).encode()
     timeout = httpx.Timeout(60.0, connect=20.0, pool=20.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(3):

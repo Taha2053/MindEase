@@ -45,8 +45,9 @@ class FeedbackResponse(BaseModel):
 
 
 class SpeechRequest(BaseModel):
-    """Short learner-selected text for English speech synthesis."""
+    """Short learner-selected text with an optional BCP 47 speech locale."""
     text: str = Field(..., min_length=1, max_length=5000)
+    language: str | None = Field(default=None, pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$")
 
 
 class AdaptationPlanRequest(BaseModel):

@@ -3,7 +3,7 @@ import type { Theme } from "@/utils/themeManager";
 import type { BaselineProfile } from "@/types";
 import { rankAdaptations } from "@/layer2/recommendations";
 
-export type AdaptationChoice = "structured" | "visual";
+export type AdaptationChoice = { adaptation: "structured" | "visual"; language: "preferred" | "source" };
 
 const STYLE_ID = "mindease-adaptation-prompt-style";
 const PROMPT_ID = "mindease-adaptation-prompt";
@@ -24,6 +24,8 @@ const STYLES = `
 #${PROMPT_ID} button:hover, #${PROMPT_ID} button:focus-visible { outline:3px solid var(--ap-accent); outline-offset:2px; }
 #${PROMPT_ID} button[data-primary="true"] { background:var(--ap-accent); color:var(--ap-bg); }
 #${PROMPT_ID} .ap-cancel { margin-top:10px; border-color:transparent; color:var(--ap-dim); text-align:center; }
+#${PROMPT_ID} .ap-language { display:flex; align-items:center; gap:8px; margin:12px 0; color:var(--ap-text); font:400 .85rem/1.4 Inter,system-ui,sans-serif; }
+#${PROMPT_ID} .ap-language input { width:18px; height:18px; accent-color:var(--ap-accent); }
 @media (prefers-reduced-motion: reduce) { #${PROMPT_ID} * { scroll-behavior:auto !important; transition:none !important; } }
 `;
 
@@ -50,9 +52,12 @@ export function requestAdaptationChoice(theme: Theme, baseline?: Partial<Baselin
       <div class="ap-options">
         <div class="ap-recommendations"></div>
       </div>
+        ${baseline?.preferredLanguage ? '<label class="ap-language"><input type="checkbox" class="ap-language-check" checked>Use my preferred learning language (<span class="ap-language-name"></span>) for the adaptation. Uncheck to use the source language.</label>' : ""}
       <button type="button" class="ap-cancel" data-choice="alternative">Suggest another option</button>
       <button type="button" class="ap-cancel" data-choice="cancel">Keep the original page</button>
     </div>`;
+  const languageName = prompt.querySelector(".ap-language-name");
+  if (languageName) languageName.textContent = baseline?.preferredLanguage ?? "";
   const recommendations = rankAdaptations(baseline);
   const options = prompt.querySelector(".ap-recommendations")!;
   const showOption = (index: number) => {
@@ -97,7 +102,9 @@ export function requestAdaptationChoice(theme: Theme, baseline?: Partial<Baselin
         options.querySelector<HTMLButtonElement>("button")?.focus();
         return;
       }
-      finish(choice === "structured" || choice === "visual" ? choice : null);
+      finish(choice === "structured" || choice === "visual"
+        ? { adaptation: choice, language: prompt.querySelector<HTMLInputElement>(".ap-language-check")?.checked ? "preferred" : "source" }
+        : null);
     });
     prompt.addEventListener("keydown", (event) => {
       if (event.key === "Escape") finish(null);

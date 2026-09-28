@@ -2,22 +2,22 @@ import { useState, useEffect, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import browser from "webextension-polyfill";
 import type {
-  BaselineProfile, FullCognitiveProfile, CognitiveNeed,
-  TransformationParams, ChunkSize, SimplificationLevel,
-  CaptionSpeed, SummaryFrequency,
+  BaselineProfile, CognitiveNeed,
 } from "@/types";
 import { STORAGE_KEYS } from "@/types";
 import { syncNow } from "@/utils/supabase";
+import { initialTransformationParams } from "@/layer2/profileManager";
 import {
   applyTheme, loadTheme, toggleTheme as themeManagerToggle,
   type Theme,
 } from "@/utils/themeManager";
 import {
   BookOpenText, Brain, Check, Clock, Eye, Feather, Globe, Heart,
-  HelpCircle, Home, Landmark, Library, Lightbulb, Map, Palette,
+  HelpCircle, Home, Landmark, Languages, Library, Lightbulb, Map, Palette,
   PersonStanding, Play, Rainbow, RefreshCw, Rocket, Ruler, Search,
-  Smile, Text, Timer, Waves, Zap,
+  Smile, Text, Timer, Volume2, VolumeX, Waves, Zap,
 } from "lucide-react";
+import { mapSupportNeeds } from "./supportHintsMapper";
 
 /* ─── Types ─── */
 
@@ -30,7 +30,7 @@ interface Option {
 }
 
 interface Question {
-  id: keyof BaselineProfile | "condition";
+  id: keyof BaselineProfile | "condition" | "preferredLanguage" | "autoReadAloud";
   icon: string;
   title: string;
   subtitle: string;
@@ -95,6 +95,24 @@ const QUESTIONS: Question[] = [
     ],
   },
   {
+    id: "preferredLanguage",
+    icon: "Languages",
+    title: "What language do you prefer to learn in?",
+    subtitle: "Choose the language you're most comfortable reading and studying in. Content explanations will target this language.",
+    options: [
+      { icon: "Globe", label: "English", description: "en", value: "en" },
+      { icon: "Globe", label: "العربية (Arabic)", description: "ar", value: "ar" },
+      { icon: "Globe", label: "中文 (Chinese)", description: "zh", value: "zh" },
+      { icon: "Globe", label: "Español (Spanish)", description: "es", value: "es" },
+      { icon: "Globe", label: "Français (French)", description: "fr", value: "fr" },
+      { icon: "Globe", label: "हिन्दी (Hindi)", description: "hi", value: "hi" },
+      { icon: "Globe", label: "日本語 (Japanese)", description: "ja", value: "ja" },
+      { icon: "Globe", label: "Português (Portuguese)", description: "pt", value: "pt" },
+      { icon: "Globe", label: "Русский (Russian)", description: "ru", value: "ru" },
+      { icon: "Globe", label: "Türkçe (Turkish)", description: "tr", value: "tr" },
+    ],
+  },
+  {
     id: "secondLanguageLearner",
     icon: "Globe",
     title: "Would English terminology support be useful?",
@@ -125,6 +143,16 @@ const QUESTIONS: Question[] = [
       { icon: "Search", label: "No \u2014 I'll explore as I go", description: "I prefer to build up to the big picture.", value: "false" },
     ],
   },
+  {
+    id: "autoReadAloud",
+    icon: "Volume2",
+    title: "Automatically read adapted sections aloud?",
+    subtitle: "When you choose an adaptation, the adapted text can be read aloud automatically. Audio will not play without this choice.",
+    options: [
+      { icon: "Volume2", label: "Yes — read aloud automatically", description: "Play audio of adapted sections when they appear.", value: "true" },
+      { icon: "VolumeX", label: "No — I'll read on my own", description: "No automatic audio. You can still use read-aloud manually.", value: "false" },
+    ],
+  },
 ];
 
 const TOTAL_STEPS = QUESTIONS.length;
@@ -134,9 +162,9 @@ const TOTAL_STEPS = QUESTIONS.length;
 
 const ICON_MAP: Record<string, React.ComponentType<React.SVGProps<SVGSVGElement> & { size?: number | string }>> = {
   BookOpenText, Brain, Check, Clock, Eye, Feather, Globe, Heart,
-  HelpCircle, Home, Landmark, Library, Lightbulb, Map, Palette,
+  HelpCircle, Home, Landmark, Languages, Library, Lightbulb, Map, Palette,
   PersonStanding, Play, Rainbow, RefreshCw, Rocket, Ruler, Search,
-  Smile, Text, Timer, Waves, Zap,
+  Smile, Text, Timer, Volume2, VolumeX, Waves, Zap,
 };
 
 function Icon({ name, size = 24 }: { name: string; size?: number }) {
@@ -161,47 +189,6 @@ function previewLabel(value: string): string {
   return map[value] ?? value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function getTransformationParamsWithCondition(
-  baseline: BaselineProfile,
-  condition?: string,
-): TransformationParams {
-  let chunkSize: ChunkSize = "medium";
-  let simplificationLevel: SimplificationLevel = 2;
-  let captionSpeed: CaptionSpeed = "normal";
-  let useVisualAnchors = baseline.formatPreference === "visual";
-  let summaryFrequency: SummaryFrequency = "medium";
-
-  if (baseline.attentionSpan === "short") {
-    chunkSize = "small"; summaryFrequency = "high";
-  } else if (baseline.attentionSpan === "long") {
-    chunkSize = "large"; summaryFrequency = "low";
-  }
-
-  if (baseline.readingPace === "slow") {
-    captionSpeed = "slow"; simplificationLevel = 3;
-  } else if (baseline.readingPace === "fast") {
-    captionSpeed = "fast"; simplificationLevel = 1;
-  }
-
-  if (baseline.secondLanguageLearner) {
-    simplificationLevel = Math.min(3, simplificationLevel + 1) as SimplificationLevel;
-    captionSpeed = "slow";
-  }
-
-  if (baseline.infoDensity === "concise") {
-    chunkSize = chunkSize === "large" ? "medium" : "small";
-    summaryFrequency = "high";
-  }
-
-  if (baseline.learningApproach === "example-first") {
-    useVisualAnchors = true;
-    simplificationLevel = Math.min(3, simplificationLevel + 1) as SimplificationLevel;
-  }
-
-  // Self-declared condition is context, never an override of chosen controls.
-
-  return { chunkSize, simplificationLevel, captionSpeed, useVisualAnchors, summaryFrequency };
-}
 
 function generateProfileSummary(baseline: BaselineProfile, _condition?: string): string {
   return [
@@ -225,6 +212,9 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [draftLoaded, setDraftLoaded] = useState(false);
+  const [supportNeedsText, setSupportNeedsText] = useState("");
+  const [customLanguage, setCustomLanguage] = useState("");
+  const [customLanguageLabel, setCustomLanguageLabel] = useState("");
 
   useEffect(() => {
     void loadTheme().then(saved => { applyTheme(saved); setTheme(saved); });
@@ -233,15 +223,23 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
 
   useEffect(() => {
     void browser.storage.local.get("mindease_onboarding_draft").then(result => {
-      const draft = result.mindease_onboarding_draft as { step?: number; answers?: Record<string, string> } | undefined;
+      const draft = result.mindease_onboarding_draft as {
+        step?: number; answers?: Record<string, string>;
+        supportNeedsText?: string; customLanguage?: string; customLanguageLabel?: string;
+      } | undefined;
       if (draft?.answers) setAnswers(draft.answers);
+      if (draft?.supportNeedsText) setSupportNeedsText(draft.supportNeedsText);
+      if (draft?.customLanguage) setCustomLanguage(draft.customLanguage);
+      if (draft?.customLanguageLabel) setCustomLanguageLabel(draft.customLanguageLabel);
       if (typeof draft?.step === "number") setStep(Math.max(-1, Math.min(TOTAL_STEPS - 1, draft.step)));
       setDraftLoaded(true);
     });
   }, []);
   useEffect(() => {
-    if (draftLoaded && step < TOTAL_STEPS) void browser.storage.local.set({ mindease_onboarding_draft: { step, answers } });
-  }, [draftLoaded, step, answers]);
+    if (draftLoaded && step < TOTAL_STEPS) void browser.storage.local.set({
+      mindease_onboarding_draft: { step, answers, supportNeedsText, customLanguage, customLanguageLabel },
+    });
+  }, [draftLoaded, step, answers, supportNeedsText, customLanguage, customLanguageLabel]);
 
   const toggleThemeLocal = useCallback(async () => {
     const next = await themeManagerToggle();
@@ -250,13 +248,21 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
 
   const selectOption = useCallback((questionId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [questionId]: value }));
+    if (questionId === "preferredLanguage") {
+      setCustomLanguage("");
+      setCustomLanguageLabel("");
+    }
     setFeedback("Preference selected. You can change it later.");
   }, []);
 
   const goNext = useCallback(async () => {
     if (step < 0) { setStep(0); return; }
     const q = QUESTIONS[step];
-    if (!answers[q.id]) return;
+    if (!answers[q.id] && !(q.id === "condition" && supportNeedsText.trim())) return;
+    if (q.id === "preferredLanguage") {
+      try { Intl.getCanonicalLocales(answers.preferredLanguage); }
+      catch { setSaveError("Enter a valid language tag such as en, ar, or zh-Hans."); return; }
+    }
     if (step === TOTAL_STEPS - 1) {
       if (saving) return;
       setSaving(true);
@@ -280,6 +286,9 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
   }, [step]);
 
   async function saveProfile() {
+    // Resolve preferred language: custom typed value takes priority over option selection
+    const resolvedLanguage = Intl.getCanonicalLocales(customLanguage.trim() || answers.preferredLanguage || "en")[0];
+
     const baseline: BaselineProfile = {
       formatPreference: (answers.formatPreference as BaselineProfile["formatPreference"]) ?? "text",
       attentionSpan: (answers.attentionSpan as BaselineProfile["attentionSpan"]) ?? "medium",
@@ -288,7 +297,23 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
       secondLanguageLearner: answers.secondLanguageLearner === "true",
       infoDensity: (answers.infoDensity as BaselineProfile["infoDensity"]) ?? "detailed",
       learningApproach: (answers.learningApproach as BaselineProfile["learningApproach"]) ?? "theory-first",
+      preferredLanguage: resolvedLanguage,
+      autoReadAloud: answers.autoReadAloud === "true",
     };
+
+    // Always store raw support needs text, regardless of LLM success
+    const rawNeeds = supportNeedsText.trim();
+    if (rawNeeds) {
+      baseline.supportNeeds = rawNeeds;
+    }
+
+    // Attempt AI-derived presentation hints (non-blocking; raw text preserved above)
+    if (rawNeeds) {
+      const hints = await mapSupportNeeds(rawNeeds).catch(() => undefined);
+      if (hints) {
+        baseline.supportHints = hints;
+      }
+    }
 
     const rawCondition = answers.condition;
     const mappedCondition: CognitiveNeed =
@@ -298,8 +323,7 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
           ? "multilingual"
           : "none";
 
-    const params = getTransformationParamsWithCondition(baseline, rawCondition);
-
+    const params = initialTransformationParams(baseline, mappedCondition);
 
     const profile = {
       userId: uuidv4(),
@@ -410,12 +434,80 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
                     </div>
                   ))}
                 </div>
+
+                {/* Condition step: free-form support needs */}
+                {q.id === "condition" && (
+                  <div className="support-needs-section">
+                    <label className="support-needs-label" htmlFor="support-needs-input">
+                      Or describe what helps you learn in your own words <span className="optional-badge">(optional)</span>
+                    </label>
+                    <textarea
+                      id="support-needs-input"
+                      className="support-needs-input"
+                      placeholder="e.g. I find it hard to focus on long paragraphs, audio helps me follow along…"
+                      value={supportNeedsText}
+                      onChange={(e) => setSupportNeedsText(e.target.value)}
+                      maxLength={500}
+                      rows={3}
+                    />
+                    {supportNeedsText.trim() && (
+                      <p className="ai-disclosure" role="note">
+                        Your description will be sent to an AI service to suggest presentation adjustments.
+                        Your original text is always saved, even if the AI is unavailable.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Language step: custom BCP47 input */}
+                {q.id === "preferredLanguage" && (
+                  <div className="custom-language-section">
+                    <label className="support-needs-label" htmlFor="custom-language-input">
+                      Don't see your language? Type it here:
+                    </label>
+                    <div className="custom-language-row">
+                      <input
+                        id="custom-language-input"
+                        className="custom-language-input"
+                        type="text"
+                        placeholder="e.g. ko, de, ur, sw…"
+                        value={customLanguage}
+                        onChange={(e) => {
+                          const tag = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "");
+                          setCustomLanguage(tag);
+                          if (tag) {
+                            // Deselect any option card when using custom input
+                            setAnswers((prev) => ({ ...prev, preferredLanguage: tag }));
+                          }
+                        }}
+                        maxLength={11}
+                        aria-describedby="custom-lang-hint"
+                      />
+                      <input
+                        className="custom-language-input custom-language-name"
+                        type="text"
+                        placeholder="Language name (optional)"
+                        value={customLanguageLabel}
+                        onChange={(e) => setCustomLanguageLabel(e.target.value)}
+                        maxLength={40}
+                      />
+                    </div>
+                    <p className="custom-lang-hint" id="custom-lang-hint">
+                      Enter a BCP 47 language tag. Examples: ko (Korean), de (German), sw (Swahili).
+                    </p>
+                  </div>
+                )}
+
                 {feedback && <div className="micro-feedback" role="status" aria-live="polite" key={feedback}>{feedback}</div>}
               </div>
             );
           })()}
 
           {step >= TOTAL_STEPS && (() => {
+            const resolvedLang = customLanguage.trim() || answers.preferredLanguage || "en";
+            const langLabel = customLanguageLabel.trim()
+              || QUESTIONS.find(q => q.id === "preferredLanguage")?.options.find(o => o.value === resolvedLang)?.label
+              || resolvedLang;
             const baseline: BaselineProfile = {
               formatPreference: (answers.formatPreference as BaselineProfile["formatPreference"]) ?? "text",
               attentionSpan: (answers.attentionSpan as BaselineProfile["attentionSpan"]) ?? "medium",
@@ -424,8 +516,10 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
               secondLanguageLearner: answers.secondLanguageLearner === "true",
               infoDensity: (answers.infoDensity as BaselineProfile["infoDensity"]) ?? "detailed",
               learningApproach: (answers.learningApproach as BaselineProfile["learningApproach"]) ?? "theory-first",
+              preferredLanguage: resolvedLang,
+              autoReadAloud: answers.autoReadAloud === "true",
             };
-            const params = getTransformationParamsWithCondition(baseline, answers.condition);
+            const params = initialTransformationParams(baseline, answers.condition as CognitiveNeed);
             const summary = generateProfileSummary(baseline, answers.condition);
 
             return (
@@ -441,8 +535,9 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
                     ["Density", previewLabel(baseline.infoDensity)],
                     ["Focus", previewLabel(baseline.attentionSpan)],
                     ["Pace", previewLabel(baseline.readingPace)],
+                    ["Language", langLabel],
                     ["Chunks", previewLabel(params.chunkSize)],
-                    ["Simplify", `Level ${params.simplificationLevel}`],
+                    ["Read aloud", baseline.autoReadAloud ? "Auto" : "Manual"],
                     ["Captions", previewLabel(params.captionSpeed)],
                   ].map(([label, value]) => (
                     <div className="preview-item" key={label}>
@@ -467,8 +562,8 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
             ← Back
           </button>
           <button
-            className={`btn-next ${answers[QUESTIONS[step].id] ? "enabled" : ""}`}
-            disabled={saving || !answers[QUESTIONS[step].id]}
+            className={`btn-next ${answers[QUESTIONS[step].id] || (QUESTIONS[step].id === "condition" && supportNeedsText.trim()) ? "enabled" : ""}`}
+            disabled={saving || (!answers[QUESTIONS[step].id] && !(QUESTIONS[step].id === "condition" && supportNeedsText.trim()))}
             onClick={goNext}
           >
             {saving ? "Saving preferences…" : step === TOTAL_STEPS - 1 ? "Save my preferences" : "Continue"}

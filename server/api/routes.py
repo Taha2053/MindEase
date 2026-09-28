@@ -11,6 +11,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta
+from typing import Annotated, Literal
 
 import httpx
 
@@ -28,6 +29,7 @@ from jobs import process_paper_job
 from rendering import extract_scene_name, get_video_path, get_video_url, process_visualization
 from services.adaptation_plan import AdaptationPlanError, normalize_adaptation_plan
 from services.azure_speech import synthesize
+from services.related_resources import search_related_resources
 from services.napkin import generate_diagram
 from pydantic import BaseModel, Field
 from agents.base import call_llm_json
@@ -119,6 +121,25 @@ class DiagramRequest(BaseModel):
     content: str = Field(min_length=1, max_length=24000)
     label: str = Field(min_length=1, max_length=200)
     learner_profile: dict = Field(default_factory=dict)
+
+
+class RelatedResourceRequest(BaseModel):
+    topics: list[Annotated[str, Field(max_length=90)]] = Field(min_length=1, max_length=3)
+    preference: Literal["visual", "text"]
+    source_url: str = Field(default="", max_length=4096)
+
+
+@router.post("/resources/related")
+async def related_resources(request: RelatedResourceRequest, _user: dict | None = Depends(current_user)):
+    topic = next((topic.strip() for topic in request.topics if 3 <= len(topic.strip()) <= 90), None)
+    if not topic:
+        raise HTTPException(status_code=422, detail="A learning topic is required")
+    try:
+        return {"resources": await search_related_resources(topic, request.preference, request.source_url)}
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Web search is not configured") from None
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(status_code=502, detail="Web search is temporarily unavailable") from None
 
 
 @router.post("/visuals/napkin/jobs")
@@ -277,7 +298,7 @@ async def create_speech(
 ) -> Response:
     """Synthesize premium narration. Browser speech remains the free fallback."""
     try:
-        audio = await synthesize(request.text)
+        audio = await synthesize(request.text, request.language) if request.language else await synthesize(request.text)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except (ValueError, httpx.HTTPError) as exc:

@@ -438,7 +438,7 @@ export async function speak(
       for (const [index, group] of groups.entries()) {
         if (_cancelRequested || !_isPlaying) break;
         options?.onProgress?.(index, groups.length, group);
-        const blob = await synthesizePremiumSpeech(group);
+        const blob = await synthesizePremiumSpeech(group, options?.voiceLang || settings.voiceLang);
         console.log("[TTS] Azure blob received", { size: blob.size, type: blob.type });
         if (_cancelRequested || !_isPlaying) break;
         await playAudioBlob(blob, options?.volume ?? settings.volume, options?.rate ?? settings.rate);

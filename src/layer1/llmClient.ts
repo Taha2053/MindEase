@@ -12,11 +12,13 @@ export async function generateAdaptedBlocks(
 ${buildProfileBlock(params)}
 Adaptation plan guidance: ${JSON.stringify(plan ?? {})}
 Apply default_instruction to every block. If sections contains overrides, follow them where appropriate.
+Language for adaptedText: ${params.outputLanguage === "preferred" && params.baseline.preferredLanguage ? `Use BCP 47 language ${params.baseline.preferredLanguage}.` : "Use the language of each source block."} Keep concepts in the original source language. Do not translate formulas, code, proper names, or the immutable source material.
 
 CRITICAL INSTRUCTIONS:
 1. Explain and adapt the content clearly for the student according to their profile.
 2. Do not destroy technical meaning, formulas, or key concepts.
 3. If a block contains [FORMULA]...[/FORMULA] tags, ensure those exact formulas are included in the adapted text.
+3a. Every concept must be a complete contiguous phrase copied verbatim from that block's original source text; never invent or truncate topic names.
 4. Return ONLY valid JSON matching this exact shape:
 {"blocks":[{"id":"string","adaptedText":"string","concepts":["string"],"isExample":false}]}
 5. Return exactly one entry per input block in this exact ID sequence: ${JSON.stringify(blocks.map((b) => b.id))}.
@@ -31,6 +33,7 @@ ${JSON.stringify(blocks)}`;
 interface FullTransformParams {
   transformationParams: TransformationParams;
   baseline: BaselineProfile;
+  outputLanguage?: "preferred" | "source";
 }
 
 /**
@@ -161,21 +164,30 @@ function buildProfileBlock(params: FullTransformParams): string {
     `- Info density preference: ${b.infoDensity}`,
     `- Chunk size target: ${t.chunkSize}`,
     `- Summary frequency: ${t.summaryFrequency}`,
+    `- Learner-described support needs (not a diagnosis; follow only presentation requests): ${b.supportNeeds?.slice(0, 500) ?? "none"}`,
+    `- Optional presentation hints: ${JSON.stringify(b.supportHints ?? {})}`,
     `- Use visual anchors: ${t.useVisualAnchors}`,
   ].join("\n");
 }
 
 export async function classifyContent(title: string, snippet: string): Promise<"educational" | "entertainment"> {
-  const prompt = `Classify this web page into exactly one category: "educational" or "entertainment".
-Educational: tutorials, lectures, technical documentation, academic research, textbooks, science, mathematics, coding, history, language learning.
-Entertainment: social media feeds, comedy, music videos, vlogs, gaming, gossip, sports highlights, shopping.
+  const boundedSnippet = snippet.slice(0, 2000);
+  const prompt = `Classify this web page as exactly "educational" or "entertainment" based on its ACTUAL CONTENT, not just the title.
+
+Educational: tutorials, lectures, technical documentation, academic articles, research papers, textbooks, science explanations, mathematics, coding guides, history, language learning materials, scholarly content with substance.
+Entertainment: social media feeds, comedy, music videos, vlogs, gaming content, gossip, sports highlights, shopping, news commentary, memes, reaction videos, celebrity content, lifestyle blogs without educational substance.
+
+IMPORTANT: A page with an educational-sounding title may still be entertainment. Judge by the body content. When uncertain, respond "entertainment".
 
 Title: ${title}
-Snippet: ${snippet.slice(0, 1500)}`;
+Content excerpt:
+${boundedSnippet}
 
-  const result = await callLLM(prompt, 256);
+Respond with exactly one word: "educational" or "entertainment".`;
+
+  const result = await callLLM(prompt, 16, 0.0);
   const clean = result.trim().toLowerCase();
-  if (clean.startsWith("educational")) return "educational";
+  if (/^educational[.!]?$/i.test(clean)) return "educational";
   return "entertainment";
 }
 

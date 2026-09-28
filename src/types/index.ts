@@ -248,7 +248,8 @@ export type MessageType =
   | "PLAY_TTS_AUDIO"       // content → background (play base64 via offscreen, payload: {audioBase64, contentType, volume})
   | "STOP_TTS_AUDIO"       // content → background (stop offscreen audio)
   | "PAUSE_TTS_AUDIO"      // content → background (pause offscreen audio)
-  | "RESUME_TTS_AUDIO";    // content → background (resume offscreen audio)
+  | "RESUME_TTS_AUDIO"     // content → background (resume offscreen audio)
+  | "RELATED_RESOURCES";   // content → background (search related learning websites)
 
 export interface ExtensionMessage {
   type:    MessageType;
@@ -387,12 +388,24 @@ export type ReadingPace        = "slow" | "moderate" | "fast";
 export type InfoDensity        = "concise" | "detailed";
 export type LearningApproach   = "example-first" | "theory-first";
 
+export interface SupportHints {
+  largerText?: boolean;
+  reducedMotion?: boolean;
+  readAloud?: boolean;
+  shortSections?: boolean;
+  visualAnchors?: boolean;
+}
+
 export interface BaselineProfile {
   formatPreference:       FormatPreference;
   attentionSpan:          AttentionSpanType;
   readingPace:            ReadingPace;
   needsConceptAnchor:     boolean;
   secondLanguageLearner:  boolean;
+  preferredLanguage?: string; // BCP 47 learning language; absent on existing profiles means source language
+  autoReadAloud?: boolean; // explicitly chosen automatic narration after adaptation
+  supportNeeds?: string; // learner's own words, never interpreted as a diagnosis
+  supportHints?: SupportHints;
   infoDensity:            InfoDensity;
   learningApproach:       LearningApproach;
 }

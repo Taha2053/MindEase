@@ -75,18 +75,14 @@ export function initialTransformationParams(
     simplificationLevel = Math.min(3, simplificationLevel + 1) as TransformationParams["simplificationLevel"];
   }
 
-  // ─── Condition-based overrides ───
-  if (condition === "dyslexia") {
-    chunkSize = "small";
-    simplificationLevel = 3;
-    useVisualAnchors = true;
-    if (captionSpeed === "fast") captionSpeed = "normal";
-  } else if (condition === "adhd") {
+  // Optional support presets refine, but never reverse a chosen format, section
+  // length, or pace. No condition label is treated as a diagnosis from signals.
+  if ((condition === "dyslexia" || condition === "adhd" || baseline.supportHints?.shortSections)
+    && baseline.attentionSpan === "short") {
     chunkSize = "small";
     summaryFrequency = "high";
-    useVisualAnchors = true;
-  } else if (condition === "autism") {
-    simplificationLevel = Math.max(simplificationLevel, 2) as TransformationParams["simplificationLevel"];
+  }
+  if (baseline.supportHints?.visualAnchors && baseline.formatPreference === "visual") {
     useVisualAnchors = true;
   }
 

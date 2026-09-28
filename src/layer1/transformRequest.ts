@@ -2,6 +2,7 @@ export interface TransformRequest {
   text: string;
   pageType: "website" | "pdf" | "video" | "lecture";
   adaptation: "structured" | "visual";
+  language: "preferred" | "source";
 }
 
 /** Validate the boundary before session mutation, storage, or provider calls. */
@@ -13,5 +14,6 @@ export function isTransformRequest(value: unknown): value is TransformRequest {
     && ["website", "pdf", "video", "lecture"].includes(String(input.pageType))
     && ["structured", "visual"].includes(String(input.adaptation))
     && typeof input.pageType === "string"
-    && typeof input.adaptation === "string";
+    && typeof input.adaptation === "string"
+    && (input.language === "preferred" || input.language === "source");
 }
