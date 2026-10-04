@@ -4,6 +4,8 @@ FastAPI routes for the ArXiviz API.
 Now using SQLite database and local Manim rendering.
 """
 
+import hashlib
+import secrets
 import hmac
 import json
 import logging
@@ -17,12 +19,13 @@ import httpx
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import analytics
 from db import queries
 from db.connection import get_db
+from db.models import DocumentAccess, DocumentJobAccess
 from db.queries import _utcnow_naive
 from ingestion.text_normalize import normalize_display_text, tex_to_text
 from jobs import process_paper_job
@@ -33,6 +36,7 @@ from services.related_resources import search_related_resources
 from services.napkin import generate_diagram
 from pydantic import BaseModel, Field
 from agents.base import call_llm_json
+from .document_access import document_access, is_document, optional_user, owns_document
 
 from .schemas import (
     LLMProxyRequest,
@@ -60,21 +64,15 @@ from .schemas import (
     VisualizationStatus,
 )
 from .auth import current_user
+from .admission import admit_processing
 from .throttle import (
     client_ip,
-    daily_cap_verdict,
     enforce,
-    enforce_all,
     feedback_limiter,
-    global_window_seconds,
-    global_window_verdict,
     ip_fingerprint,
-    per_ip_daily_limiter,
-    per_ip_limiter,
     recent_jobs,
     request_context,
 )
-from .turnstile import turnstile_cdata, verify_turnstile_detailed
 
 logger = logging.getLogger(__name__)
 
@@ -97,23 +95,13 @@ def _viz_order(v) -> tuple:
 
 
 def _authorize_render(secret: str | None) -> None:
-    """Guard the raw-code render endpoint.
-
-    ``POST /api/render`` executes caller-supplied Python via Manim, so it must
-    never be openly reachable in production. Outside production it stays open for
-    local development; in production it is disabled entirely unless RENDER_API_SECRET
-    is configured AND the caller presents it. We return 404 (not 403) so the
-    endpoint's existence isn't advertised.
-    """
+    """Guard the raw-code render endpoint."""
     if os.getenv("ENVIRONMENT", "development").lower() != "production":
         return
     expected = os.getenv("RENDER_API_SECRET")
-    # Timing-safe comparison; the explicit None guard keeps compare_digest from
-    # being handed a non-str. No configured secret in prod = fully disabled.
-    if expected and secret is not None and hmac.compare_digest(secret, expected):
+    if expected and secret is not None and hmac.compare_digest(secret.encode(), expected.encode()):
         return
     raise HTTPException(status_code=404, detail="Not found")
-
 
 # === Endpoints ===
 
@@ -285,10 +273,10 @@ async def generate_llm(
         )
         return LLMProxyResponse(content=content)
     except Exception as exc:
-        logger.warning("Server LLM generation proxy failed: %s", exc)
+        logger.warning("Server LLM generation proxy failed (%s)", type(exc).__name__)
         raise HTTPException(
             status_code=502,
-            detail=f"AI generation failed: {exc}",
+            detail="AI generation is temporarily unavailable.",
         ) from exc
 
 @router.post("/speech")
@@ -353,73 +341,8 @@ async def start_processing(
             )
         recent_jobs.clear(arxiv_id)
 
-    # Admission control — every accepted job spends real LLM + render money,
-    # and this endpoint is public on an open-source codebase, so each layer
-    # below assumes the previous one is being gamed:
-    #   1. durable daily cap (Postgres-backed: the hard spend ceiling) — checked
-    #      first so a capped day doesn't burn a human's single-use Turnstile token
-    #   2. proof-of-humanity (server-verified; direct API scripts never pass)
-    #   3. per-IP hourly + daily, then global sliding windows (in-memory),
-    #      peeked together and recorded only once every layer passes
-    ip = client_ip(http_request)
-    # Fingerprint first (the log queries extract it), then request forensics.
-    fingerprint = ip_fingerprint(ip)
+    fingerprint = await admit_processing(arxiv_id, request.turnstile_token, http_request, db)
     client_tag = f"{fingerprint} {request_context(http_request)}"
-
-    now = _utcnow_naive()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    started_today = await queries.count_jobs_created_since(db, day_start)
-    exhausted, retry_after = daily_cap_verdict(started_today, now)
-    if exhausted:
-        logger.warning(
-            "Daily new-paper cap reached (%d) — rejecting %s from client %s",
-            started_today, arxiv_id, client_tag,
-        )
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                "Daily capacity for new papers is used up. Already-visualized "
-                "papers are still available in Explore; new ones resume tomorrow."
-            ),
-            headers={"Retry-After": str(retry_after)},
-        )
-
-    # Durable global window (rolling, jobs-table-counted so every replica sees
-    # the same number). Before Turnstile for the same reason as the daily cap.
-    window_seconds = global_window_seconds()
-    started_in_window = await queries.count_jobs_created_since(db, now - timedelta(seconds=window_seconds))
-    saturated, retry_after = global_window_verdict(started_in_window)
-    if saturated:
-        logger.info(
-            "Rate limit denied: The service is at capacity for new papers right now (%d in %ds) (client %s)",
-            started_in_window, window_seconds, client_tag,
-        )
-        raise HTTPException(
-            status_code=429,
-            detail="The service is at capacity for new papers right now. Try again later.",
-            headers={"Retry-After": str(retry_after)},
-        )
-
-    verdict = await verify_turnstile_detailed(
-        request.turnstile_token, ip, expected_cdata=turnstile_cdata(arxiv_id),
-    )
-    if not verdict.ok:
-        logger.info("Turnstile check failed: %s (client %s)", verdict.reason, client_tag)
-        raise HTTPException(
-            status_code=403,
-            detail="Human verification failed. Reload the page and try again.",
-        )
-    if verdict.token_age_s is not None:
-        logger.info("Turnstile ok token_age=%.1fs (client %s)", verdict.token_age_s, client_tag)
-
-    enforce_all(
-        [
-            (per_ip_limiter, ip, "Rate limit reached for starting new papers. Try again later."),
-            (per_ip_daily_limiter, ip,
-             "You've started today's share of new papers from this address. Try again tomorrow."),
-        ],
-        client_tag=client_tag,
-    )
 
     # Create job in database
     job_id = await queries.create_job(db, arxiv_id)
@@ -509,7 +432,11 @@ async def start_processing_document(
     from ingestion.document_ingest import generate_document_id
     from jobs import process_document_job
 
-    doc_id = generate_document_id(request.title, request.url)
+    owner = _user.get("id") if _user else None
+    identity = json.dumps([generate_document_id(request.title, request.url), owner,
+                           request.content, [s.model_dump() for s in request.sections or []]], sort_keys=True)
+    doc_id = "doc_" + hashlib.sha256(identity.encode()).hexdigest()[:32]
+    await queries.reap_stale_jobs(db)
 
     existing_id = recent_jobs.get(doc_id)
     if existing_id is None:
@@ -526,10 +453,17 @@ async def start_processing_document(
             )
         recent_jobs.clear(doc_id)
 
+    await admit_processing(doc_id, request.turnstile_token, http_request, db)
+
     job_id = await queries.create_job(db, doc_id)
+    if await db.get(DocumentAccess, doc_id) is None:
+        db.add(DocumentAccess(document_id=doc_id, owner_id=owner, media_token=secrets.token_urlsafe(32)))
+    db.add(DocumentJobAccess(job_id=job_id, document_id=doc_id, owner_id=owner))
+    await db.commit()
     recent_jobs.put(doc_id, job_id)
 
     payload = {
+        "document_id": doc_id,
         "title": request.title,
         "source_type": request.source_type,
         "url": request.url,
@@ -548,13 +482,19 @@ async def start_processing_document(
     )
 
 @router.get("/status/{job_id}", response_model=StatusResponse)
-async def get_status(job_id: str, db: AsyncSession = Depends(get_db)):
+async def get_status(job_id: str, db: AsyncSession = Depends(get_db),
+                     user: dict | None = Depends(optional_user)):
     """
     Get the processing status of a job.
 
     Team 4 polls this endpoint to track progress.
     """
     job = await queries.get_job(db, job_id)
+    access = await db.get(DocumentJobAccess, job_id)
+    if access and not owns_document(access.owner_id, user):
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job and job.paper_id:
+        await document_access(db, job.paper_id, user)
 
     if job:
         # Build steps_completed from job progress
@@ -600,7 +540,8 @@ async def get_status(job_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/paper/{arxiv_id:path}", response_model=PaperResponse)
-async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
+async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db),
+                    user: dict | None = Depends(optional_user)):
     """
     Get a processed paper with all sections and visualizations.
 
@@ -617,6 +558,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
         job = await queries.get_job(db, base_id)
         if job and job.paper_id:
             paper = await queries.get_paper(db, job.paper_id)
+    access = await document_access(db, paper.id if paper else base_id, user)
     if paper and await queries.paper_is_stale(db, base_id):
         # Pre-fix ingest of the abstract page, not the paper. Reported as not
         # visualized so the reader offers "Start Processing", which re-ingests.
@@ -626,6 +568,11 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
         )
 
     if paper:
+        def video_url(v) -> str | None:
+            if access and v.video_url:
+                return f"/api/video/{v.id}?access_token={access.media_token}"
+            return v.video_url
+
         # Convert database models to response schemas
         sections = sorted(paper.sections, key=lambda s: s.order_index)
 
@@ -640,7 +587,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
         for v in ordered:
             if v.status == "complete" and v.video_url and v.section_id:
                 section_videos.setdefault(v.section_id, []).append(
-                    SectionVideo(viz_id=v.id, video_url=v.video_url, concept=v.concept or "")
+                    SectionVideo(viz_id=v.id, video_url=video_url(v), concept=v.concept or "")
                 )
 
         return PaperResponse(
@@ -671,7 +618,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
                     id=v.id,
                     section_id=v.section_id,
                     concept=v.concept,
-                    video_url=v.video_url,
+                    video_url=video_url(v),
                     status=VisualizationStatus(v.status),
                 )
                 for v in visible_viz
@@ -686,7 +633,7 @@ async def get_paper(arxiv_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/papers", response_model=PaperListResponse)
-async def list_papers(db: AsyncSession = Depends(get_db)):
+async def list_papers(db: AsyncSession = Depends(get_db), user: dict | None = Depends(optional_user)):
     """
     List all processed papers for the Explore gallery.
 
@@ -696,6 +643,12 @@ async def list_papers(db: AsyncSession = Depends(get_db)):
     papers and hide empty ones.
     """
     rows = await queries.list_paper_summaries(db)
+    access_rows = (await db.execute(select(DocumentAccess))).scalars().all()
+    accessible = {row.document_id for row in access_rows if owns_document(row.owner_id, user)}
+    known_documents = {row.document_id for row in access_rows}
+    rows = [row for row in rows if not is_document(row["paper_id"]) or
+            row["paper_id"] in accessible or
+            (owns_document(None, user) and row["paper_id"] not in known_documents)]
 
     def _status(row: dict) -> str:
         # Pre-fix abstract-only ingests: not a paper, whatever videos were
@@ -723,13 +676,16 @@ async def list_papers(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/video/{video_id}")
-async def get_video(video_id: str):
+async def get_video(video_id: str, access_token: str | None = None,
+                    db: AsyncSession = Depends(get_db), user: dict | None = Depends(optional_user)):
     """
     Get a rendered visualization video.
 
     Returns the actual video file if it exists locally,
     or redirects to the cloud URL (R2) if available.
     """
+    viz = await queries.get_visualization(db, video_id)
+    access = await document_access(db, viz.paper_id, user, access_token) if viz else None
     # Try local file first
     video_path = get_video_path(video_id)
     if video_path and video_path.exists():
@@ -738,6 +694,13 @@ async def get_video(video_id: str):
             media_type="video/mp4",
             filename=f"{video_id}.mp4"
         )
+
+    if access:
+        from rendering.storage import get_backend
+        data = await get_backend().load_video(video_id)
+        if data is not None:
+            return Response(content=data, media_type="video/mp4", headers={"Cache-Control": "private, no-store"})
+        raise HTTPException(status_code=404, detail="Video not found")
 
     # Try cloud URL (R2 mode)
     cloud_url = get_video_url(video_id)

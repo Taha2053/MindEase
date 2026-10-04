@@ -123,6 +123,7 @@ class ProcessDocumentRequest(BaseModel):
     sections: list[DocumentSectionInput] | None = Field(
         None, description="Pre-parsed sections from MindEase extension"
     )
+    turnstile_token: str | None = Field(None, max_length=4096)
 
 
 class RenderRequest(BaseModel):

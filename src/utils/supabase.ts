@@ -170,7 +170,7 @@ export async function deleteCloudData(): Promise<void> {
   const session = await getSession();
   if (!session) return;
   const { url, key } = config();
-  for (const table of ["learning_profiles", "session_history", "session_feedback"]) {
+  for (const table of ["learning_profiles", "session_history", "session_feedback", "session_folders", "media_assets"]) {
     const response = await fetch(`${url}/rest/v1/${table}?user_id=eq.${encodeURIComponent(session.user.id)}`, {
       method: "DELETE", headers: authHeaders(key, session.accessToken),
     });

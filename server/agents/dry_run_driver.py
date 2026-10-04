@@ -87,7 +87,8 @@ def _load_scene_classes(scene_path: str) -> list[type]:
 
 def main() -> int:
     scene_path = sys.argv[1]
-    scene_name = sys.argv[2] if len(sys.argv) > 2 else None
+    import_only = "--import-only" in sys.argv[2:]
+    scene_name = next((arg for arg in sys.argv[2:] if arg != "--import-only"), None)
     _prepare_manim()
     # BaseException, not Exception: generated code calling sys.exit() must be a
     # scene failure (fail closed), not a missing-sentinel harness fault (which
@@ -101,7 +102,8 @@ def main() -> int:
             print("MissingSceneError: No Scene class with construct() found", file=sys.stderr)
             print(SENTINEL_FAIL)
             return 1
-        scene_classes[0]().render()
+        if not import_only:
+            scene_classes[0]().render()
     except BaseException:
         traceback.print_exc()
         print(SENTINEL_FAIL)

@@ -202,6 +202,7 @@ async def _process_document_job_impl(job_id: str, document_payload: dict):
                 abstract=document_payload.get("abstract"),
                 content=document_payload.get("content"),
                 sections_input=document_payload.get("sections"),
+                document_id=document_payload.get("document_id"),
             )
 
             doc_id = structured_paper.meta.arxiv_id
@@ -652,7 +653,7 @@ async def _store_structured_paper(db, job_id: str, structured_paper: StructuredP
     stored_count = 0
     seen_ids = set()
     for i, section in enumerate(structured_paper.sections):
-        sid = section.id if section.id.startswith(f"{meta.arxiv_id}:") else f"{meta.arxiv_id}:{section.id}"
+        sid = section.id if section.id.startswith(f"{meta.arxiv_id}-") or section.id.startswith(f"{meta.arxiv_id}:") else f"{meta.arxiv_id}:{section.id}"
         if sid in seen_ids:
             sid = f"{sid}-{i}"
         seen_ids.add(sid)

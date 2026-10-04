@@ -16,7 +16,11 @@ Language for adaptedText: ${params.outputLanguage === "preferred" && params.base
 
 CRITICAL INSTRUCTIONS:
 1. Explain and adapt the content clearly for the student according to their profile.
+1a. LENGTH CONTROL: The adaptedText for each block MUST be approximately equal to or SHORTER than the source block. Do NOT pad, re-explain simple concepts repeatedly, or add conversational filler.
+1b. Write NATURAL, direct educational prose. Do NOT add formulaic "Recap:", "One-line recap:", "Quick recap:", or repetitive signposting to every single block.
+1c. Do not repeat the block's title as the first sentence.
 2. Do not destroy technical meaning, formulas, or key concepts.
+2a. When infoDensity is "concise", reduce word count by 30-50% compared to the original source block. Strip fluff and preserve key factual points.
 3. If a block contains [FORMULA]...[/FORMULA] tags, ensure those exact formulas are included in the adapted text.
 3a. Every concept must be a complete contiguous phrase copied verbatim from that block's original source text; never invent or truncate topic names.
 4. Return ONLY valid JSON matching this exact shape:
@@ -174,7 +178,7 @@ export async function classifyContent(title: string, snippet: string): Promise<"
   const boundedSnippet = snippet.slice(0, 2000);
   const prompt = `Classify this web page as exactly "educational" or "entertainment" based on its ACTUAL CONTENT, not just the title.
 
-Educational: tutorials, lectures, technical documentation, academic articles, research papers, textbooks, science explanations, mathematics, coding guides, history, language learning materials, scholarly content with substance.
+Educational: coursework, school assignments, spreadsheets, problem sets, study guides, tutorials, lectures, technical documentation, academic articles, research papers, textbooks, science explanations, mathematics, coding guides, history, language learning materials, scholarly content with substance, Google Classroom, Google Docs, educational tools and reference materials.
 Entertainment: social media feeds, comedy, music videos, vlogs, gaming content, gossip, sports highlights, shopping, news commentary, memes, reaction videos, celebrity content, lifestyle blogs without educational substance.
 
 IMPORTANT: A page with an educational-sounding title may still be entertainment. Judge by the body content. When uncertain, respond "entertainment".

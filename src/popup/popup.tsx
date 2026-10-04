@@ -45,8 +45,15 @@ function fmtDuration(ms: number): string {
 
 const DISTRACTION_DOMAINS = [
   "facebook.com", "twitter.com", "x.com", "instagram.com",
-  "tiktok.com", "reddit.com", "youtube.com", "netflix.com",
-  "twitch.tv", "whatsapp.com", "discord.com",
+  "tiktok.com", "reddit.com", "netflix.com",
+  "twitch.tv", "snapchat.com", "pinterest.com",
+];
+
+const LEARNING_DOMAINS = [
+  "classroom.google.com", "docs.google.com", "drive.google.com",
+  "wikipedia.org", "arxiv.org", "khanacademy.org", "coursera.org",
+  "edx.org", "notion.so", "canvas.", "blackboard.com", "moodle.",
+  "github.com", "stackoverflow.com", "scholar.google.com",
 ];
 
 /* ── Theme Toggle ── */
@@ -172,11 +179,14 @@ function TabList({
       <div className="section-title">Tabs in Session ({session.tabs.length})</div>
       <div className="tab-list">
         {session.tabs.map((tab) => {
-          const hostname = new URL(tab.url).hostname.replace("www.", "");
-          const isDistraction = DISTRACTION_DOMAINS.some((d) => hostname.includes(d));
+          let hostname = "";
+          try { hostname = new URL(tab.url).hostname.replace("www.", ""); } catch { hostname = tab.url; }
+          const isKnownLearning = LEARNING_DOMAINS.some((d) => hostname.includes(d));
+          const isDistraction = !isKnownLearning && (tab.category === "distraction" || DISTRACTION_DOMAINS.some((d) => hostname.includes(d)));
+          const isLearning = isKnownLearning || tab.category === "learning" || !isDistraction;
           const excluded = excludedTabs[tab.tabId] === true;
-          const badge = excluded ? "excluded" : isDistraction ? "distraction" : "included";
-          const label = excluded ? "Excluded" : isDistraction ? "Distraction" : "Included";
+          const badge = excluded ? "excluded" : isLearning ? "included" : "distraction";
+          const label = excluded ? "Excluded" : isLearning ? "Learning" : "Distraction";
           return (
             <div className="tab-row" key={tab.tabId}>
               <img

@@ -8,6 +8,7 @@ Automatically switches to PostgreSQL when DATABASE_URL environment variable is s
 import logging
 import os
 
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from .models import Base
@@ -20,18 +21,20 @@ if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 elif DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-else:
+elif not DATABASE_URL:
     # Local development fallback
     DATABASE_URL = "sqlite+aiosqlite:///./arxiviz.db"
+
+_url = make_url(DATABASE_URL)
+_memory_sqlite = _url.get_backend_name() == "sqlite" and _url.database in (None, "", ":memory:")
 
 # Create async engine
 engine = create_async_engine(
     DATABASE_URL,
     echo=os.getenv("ENVIRONMENT", "development") == "development",  # Log SQL in dev
-    # Additional pool settings for PostgreSQL (ignored for SQLite)
+    # In-memory SQLite uses StaticPool, which does not accept queue-pool options.
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    **({} if _memory_sqlite else {"pool_size": 5, "max_overflow": 10}),
 )
 
 # Session factory

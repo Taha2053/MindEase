@@ -29,7 +29,6 @@ export function createSourceBlocks(text: string, sourceId: string): SourceBlock[
     position,
   }));
 }
-
 export function batchSourceBlocks(blocks: SourceBlock[], maxChars = 18_000, maxBlocks = 6): SourceBlock[][] {
   const batches: SourceBlock[][] = [];
   let current: SourceBlock[] = [];
@@ -58,9 +57,10 @@ export function attachAnnotations(
     const id = (entry as Record<string, unknown>).id;
     return typeof id === "string" ? [[id, entry] as const] : [];
   }));
-  const orderedEntries = blocks.every(block => byId.has(block.id))
-    ? blocks.map(block => byId.get(block.id)!)
-    : entries;
+  if (byId.size !== blocks.length || !blocks.every(block => byId.has(block.id))) {
+    throw new Error("Annotation block identity or uniqueness does not match the source.");
+  }
+  const orderedEntries = blocks.map(block => byId.get(block.id)!);
   return blocks.map((block, index) => {
     const entry = orderedEntries[index];
     if (!entry || typeof entry !== "object") throw new Error("Invalid annotation block.");

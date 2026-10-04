@@ -29,6 +29,7 @@ export class SessionManager {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private suspendTimer: ReturnType<typeof setTimeout> | null = null;
   private endTimer: ReturnType<typeof setTimeout> | null = null;
+  private ending: Promise<void> | null = null;
 
   // Callbacks - set by background to wire into existing layers
   public onLayer2Signal: ((signal: SignalType, url: string, sectionId: string) => Promise<void>) | null = null;
@@ -53,23 +54,20 @@ export class SessionManager {
 
   private async restore(): Promise<boolean> {
     try {
-      const result = await browser.storage.local.get(STORAGE_KEYS.WORKSPACE);
-      const saved = result[STORAGE_KEYS.WORKSPACE] as WorkspaceSession | undefined;
+      const result = await browser.storage.local.get([STORAGE_KEYS.WORKSPACE]);
+      const raw = result[STORAGE_KEYS.WORKSPACE];
+      const saved = (raw && typeof raw === "object" ? raw : undefined) as WorkspaceSession | undefined;
       if (!saved || saved.state === "ended") return false;
 
       this.session = saved;
       const now = Date.now();
-      const inactiveTime = now - saved.lastActivityAt;
-
-      // Determine correct state based on total inactive time
-      if (inactiveTime >= IDLE_TO_PASSIVE_MS + PASSIVE_TO_SUSPENDED_MS) {
-        this.session.state = "suspended";
-        this.session.enteredSuspendedAt = now;
-        this.session.enteredPassiveAt = null;
-      } else if (inactiveTime >= IDLE_TO_PASSIVE_MS) {
-        this.session.state = "passive";
-        this.session.enteredPassiveAt = now;
-        this.session.enteredSuspendedAt = null;
+      const passiveAt = saved.lastActivityAt + IDLE_TO_PASSIVE_MS;
+      if (saved.state === "active" && now >= passiveAt) {
+        this.transitionToPassive(passiveAt);
+      }
+      const suspendedAt = (saved.enteredPassiveAt ?? passiveAt) + PASSIVE_TO_SUSPENDED_MS;
+      if (saved.state === "passive" && now >= suspendedAt) {
+        this.transitionToSuspended(suspendedAt);
       }
 
       this.startTimers();
@@ -99,22 +97,25 @@ export class SessionManager {
   }
 
   getTabs(): TabResource[] {
-    return this.session?.tabs ?? [];
+    return this.session ? [...(this.session.closedTabs ?? []), ...this.session.tabs] : [];
   }
 
   getHighlights(): HighlightNote[] {
-    if (!this.session) return [];
-    return this.session.tabs.flatMap(t => t.highlights);
+    return this.getTabs().flatMap(t => t.highlights);
   }
 
   getFocusSummary(): FocusSummary {
     if (!this.session) {
       return { totalTimeMs: 0, focusedTimeMs: 0, interruptionCount: 0, longestDistractionMs: 0, passiveTimeMs: 0, suspendedTimeMs: 0 };
     }
-    const now = Date.now();
+    const now = this.session.endTime ?? Date.now();
     const elapsed = now - this.session.startTime;
-    const passiveMs = this.session.totalPassiveDurationMs;
-    const suspendedMs = this.session.totalSuspendedDurationMs;
+    const passiveMs = this.session.totalPassiveDurationMs +
+      (this.session.state === "passive" && this.session.enteredPassiveAt !== null
+        ? now - this.session.enteredPassiveAt : 0);
+    const suspendedMs = this.session.totalSuspendedDurationMs +
+      (this.session.state === "suspended" && this.session.enteredSuspendedAt !== null
+        ? now - this.session.enteredSuspendedAt : 0);
     const focusedMs = elapsed - passiveMs - suspendedMs;
     return {
       totalTimeMs: this.session.endTime ? this.session.endTime - this.session.startTime : elapsed,
@@ -128,12 +129,12 @@ export class SessionManager {
 
   /* ─── Tab Management ─────────────────────────────────────────────────── */
 
-  async registerTab(tabId: number, url: string, sourceType: "pdf" | "video" | "website" | "lecture", title: string): Promise<void> {
+  async registerTab(tabId: number, url: string, sourceType: "pdf" | "video" | "website" | "lecture", title: string, category?: "learning" | "distraction"): Promise<void> {
+    if (this.ending) await this.ending;
     const now = Date.now();
 
     // Create session if none exists
     if (!this.session) {
-      const profile = { userId: "guest", learningStyle: "text", attentionSpan: "medium", anchorNeed: false, condition: "none", updatedAt: now };
       this.session = {
         sessionId: uuidv4(),
         userId: "guest",
@@ -158,6 +159,8 @@ export class SessionManager {
     const existing = this.session.tabs.find(t => t.tabId === tabId);
     if (existing) {
       existing.lastActiveAt = now;
+      if (category && existing.category !== category) existing.category = category;
+      if (title && !existing.title) existing.title = title;
       this.onActivity();
       return;
     }
@@ -167,6 +170,7 @@ export class SessionManager {
       url,
       title,
       sourceType,
+      category,
       joinedAt: now,
       lastActiveAt: now,
       highlights: [],
@@ -176,17 +180,17 @@ export class SessionManager {
     await this.persist();
   }
 
-  removeTab(tabId: number): void {
-    if (!this.session) return;
+  async removeTab(tabId: number): Promise<void> {
+    if (!this.session || this.session.state === "ended") return;
+    const tab = this.session.tabs.find(t => t.tabId === tabId);
+    if (!tab) return;
+    (this.session.closedTabs ??= []).push(tab);
     this.session.tabs = this.session.tabs.filter(t => t.tabId !== tabId);
-
-    // If no more tabs, end session immediately
     if (this.session.tabs.length === 0) {
-      this.endSession();
-      return;
+      await this.endSession();
+    } else {
+      await this.persist();
     }
-
-    this.persist();
   }
 
   /* ─── Activity ───────────────────────────────────────────────────────── */
@@ -266,52 +270,55 @@ export class SessionManager {
 
   /* ─── Session End ────────────────────────────────────────────────────── */
 
-  async endSession(): Promise<void> {
-    if (!this.session) return;
+  endSession(): Promise<void> {
+    if (this.ending) return this.ending;
+    if (!this.session || this.session.state === "ended") return Promise.resolve();
+    this.ending = this.finishSession().finally(() => {
+      this.session = null;
+      this.ending = null;
+    });
+    return this.ending;
+  }
 
+  private async finishSession(): Promise<void> {
+    const session = this.session!;
+    const focus = this.getFocusSummary();
+    session.totalPassiveDurationMs = focus.passiveTimeMs;
+    session.totalSuspendedDurationMs = focus.suspendedTimeMs;
+    session.enteredPassiveAt = null;
+    session.enteredSuspendedAt = null;
     this.recordTransition("ended");
-    this.session.state = "ended";
-    this.session.endTime = Date.now();
+    session.state = "ended";
+    session.endTime = Date.now();
     this.clearTimers();
     await this.persist();
 
     let reviewChunks: ContentChunk[] = [];
-    // Call Layer 3 endSession with workspace data
-    if (this.onLayer3EndSession) {
-      try {
-        const stored = await browser.storage.local.get(STORAGE_KEYS.SESSION_CHUNKS);
-        const chunks = (stored[STORAGE_KEYS.SESSION_CHUNKS] ?? []) as ContentChunk[];
-        reviewChunks = chunks;
-        const highlights = this.getHighlights();
-        const tabs = this.getTabs();
-        const focus = this.getFocusSummary();
-        await this.onLayer3EndSession(chunks, highlights, tabs, focus);
-      } catch {
-        const highlights = this.getHighlights();
-        const tabs = this.getTabs();
-        const focus = this.getFocusSummary();
-        await this.onLayer3EndSession(undefined, highlights, tabs, focus);
-      }
+    try {
+      const stored = await browser.storage.local.get(STORAGE_KEYS.SESSION_CHUNKS);
+      reviewChunks = (stored[STORAGE_KEYS.SESSION_CHUNKS] ?? []) as ContentChunk[];
+    } catch (error) {
+      console.warn("[MindEase] Could not load session source text:", error);
     }
     try {
       await browser.storage.local.set({
-        latestReviewChunks: { sessionId: this.session.sessionId, chunks: reviewChunks },
+        latestReviewChunks: { sessionId: session.sessionId, chunks: reviewChunks },
       });
       await browser.storage.local.remove(STORAGE_KEYS.SESSION_CHUNKS);
     } catch (error) {
       console.warn("[MindEase] Could not archive session source text:", error);
     }
-    // Call Layer 2 endSession
-    if (this.onLayer2EndSession) {
-      await this.onLayer2EndSession();
+    try {
+      await this.onLayer3EndSession?.(reviewChunks, this.getHighlights(), this.getTabs(), focus);
+    } finally {
+      await this.onLayer2EndSession?.();
     }
-
-    this.session = null;
   }
 
   /* ─── Reset ──────────────────────────────────────────────────────────── */
 
   async reset(): Promise<void> {
+    if (this.ending) await this.ending.catch(() => {});
     this.clearTimers();
     this.session = null;
     try {
@@ -326,46 +333,32 @@ export class SessionManager {
 
   /* ─── State Transitions (private) ────────────────────────────────────── */
 
-  private recordTransition(toState: SessionState): void {
+  private recordTransition(toState: SessionState, timestamp = Date.now()): void {
     if (!this.session) return;
     const fromState = this.session.state;
-    this.session.stateTransitions.push({ fromState, toState, timestamp: Date.now() });
+    this.session.stateTransitions.push({ fromState, toState, timestamp });
   }
 
-  private transitionToPassive(): void {
+  private transitionToPassive(at = Date.now()): void {
     if (!this.session || this.session.state !== "active") return;
-    this.recordTransition("passive");
+    this.recordTransition("passive", at);
     this.session.state = "passive";
-    this.session.enteredPassiveAt = Date.now();
-    this.persist();
+    this.session.enteredPassiveAt = at;
+    void this.persist();
+    this.startTimers();
   }
 
-  private transitionToSuspended(): void {
-    if (!this.session || this.session.state === "suspended" || this.session.state === "ended") return;
-
-    const now = Date.now();
-    this.recordTransition("suspended");
-
-    // Track time spent in previous state
-    if (this.session.state === "active" && this.session.enteredPassiveAt) {
-      // was active → passive transition already measured, but if we skip passive:
-    } else if (this.session.state === "passive" && this.session.enteredPassiveAt) {
-      this.session.totalPassiveDurationMs += now - this.session.enteredPassiveAt;
+  private transitionToSuspended(at = Date.now()): void {
+    if (!this.session || this.session.state !== "passive") return;
+    this.recordTransition("suspended", at);
+    if (this.session.enteredPassiveAt !== null) {
+      this.session.totalPassiveDurationMs += at - this.session.enteredPassiveAt;
     }
-
     this.session.state = "suspended";
-    this.session.enteredSuspendedAt = now;
-    this.persist();
-  }
-
-  private scheduleEndIfNoTabs(): void {
-    // Wait SUSPENDED_TO_ENDED_MS after last tab closed, then end
-    if (this.endTimer) clearTimeout(this.endTimer);
-    this.endTimer = setTimeout(() => {
-      if (this.session && this.session.tabs.length === 0) {
-        this.endSession();
-      }
-    }, SUSPENDED_TO_ENDED_MS);
+    this.session.enteredPassiveAt = null;
+    this.session.enteredSuspendedAt = at;
+    void this.persist();
+    this.startTimers();
   }
 
   /* ─── Timer Management ──────────────────────────────────────────────── */
@@ -381,17 +374,20 @@ export class SessionManager {
 
     // After IDLE_TO_PASSIVE_MS of no activity → passive
     if (this.session?.state === "active") {
-      this.idleTimer = setTimeout(() => this.transitionToPassive(), IDLE_TO_PASSIVE_MS);
+      const passiveAt = this.session.lastActivityAt + IDLE_TO_PASSIVE_MS;
+      this.idleTimer = setTimeout(() => this.transitionToPassive(passiveAt), Math.max(0, passiveAt - Date.now()));
     }
 
     // After PASSIVE_TO_SUSPENDED_MS in passive → suspended
     if (this.session?.state === "passive") {
-      const remaining = PASSIVE_TO_SUSPENDED_MS - (Date.now() - (this.session.enteredPassiveAt ?? this.session.lastActivityAt));
-      if (remaining > 0) {
-        this.suspendTimer = setTimeout(() => this.transitionToSuspended(), remaining);
-      } else {
-        this.transitionToSuspended();
-      }
+      const suspendedAt = (this.session.enteredPassiveAt ?? this.session.lastActivityAt) + PASSIVE_TO_SUSPENDED_MS;
+      this.suspendTimer = setTimeout(() => this.transitionToSuspended(suspendedAt), Math.max(0, suspendedAt - Date.now()));
+    }
+    if (this.session?.state === "suspended") {
+      const endedAt = (this.session.enteredSuspendedAt ?? Date.now()) + SUSPENDED_TO_ENDED_MS;
+      this.endTimer = setTimeout(() => {
+        void this.endSession().catch(error => console.warn("[MindEase] Automatic session end failed:", error));
+      }, Math.max(0, endedAt - Date.now()));
     }
   }
 

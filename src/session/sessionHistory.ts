@@ -1,4 +1,4 @@
-import { getStorageConfig, recordSessionFolder } from "@/utils/sessionStorageManager";
+import { getStorageConfig, recordSessionFolder, deleteSessionFolder } from "@/utils/sessionStorageManager";
 import type { VisualEntry, SessionFolderSummary } from "@/types";
 import browser from "webextension-polyfill";
 import type { SessionHistoryEntry, KeyConceptEntry, FocusMetrics, ResourceEntry, FullCognitiveProfile } from "@/types";
@@ -120,13 +120,19 @@ export async function saveSessionHistory(
   try {
     const cfg = await getStorageConfig();
     const cachedVisuals = await browser.storage.local.get(STORAGE_KEYS.VISUALS_CACHE);
-    const visualsList = ((cachedVisuals[STORAGE_KEYS.VISUALS_CACHE] as { entries?: VisualEntry[] })?.entries ?? []);
+    const startTime = endTime - durationMs;
+    const cache = cachedVisuals[STORAGE_KEYS.VISUALS_CACHE] as { entries?: VisualEntry[] } | undefined;
+    const visualsList: VisualEntry[] = (Array.isArray(cache?.entries) ? cache.entries : [])
+      .filter((visual: VisualEntry) => visual.generatedAt >= startTime && visual.generatedAt <= endTime);
     const cachedVideos = await browser.storage.local.get("mindease_saved_videos");
     const videosList = (cachedVideos.mindease_saved_videos ?? []) as Array<{ id: string; concept: string; video_url: string; title?: string }>;
+    const sessionVideos = videosList.filter(video =>
+      "savedAt" in video && typeof video.savedAt === "number" &&
+      video.savedAt >= startTime && video.savedAt <= endTime);
 
     const dateObj = new Date(endTime);
     const dateStr = dateObj.toISOString().slice(0, 10); // YYYY-MM-DD
-    const sessionNum = history.length + 1;
+    const sessionNum = history.length;
     const folderName = `${dateStr}_Session-${String(sessionNum).padStart(2, "0")}`;
 
     const folderSummary: SessionFolderSummary = {
@@ -140,7 +146,7 @@ export async function saveSessionHistory(
       focusScore,
       destination: cfg.destination,
       savedAt: endTime,
-      videos: videosList.map((v, i) => ({
+      videos: sessionVideos.map((v, i) => ({
         id: v.id,
         concept: v.concept || `Scene ${i + 1}`,
         filename: `videos/scene_${i + 1}.mp4`,
@@ -185,6 +191,7 @@ export async function updateSessionName(sessionId: string, newName: string): Pro
 }
 
 export async function deleteSessionEntry(sessionId: string): Promise<void> {
+  await deleteSessionFolder(sessionId);
   await deleteFeedback(sessionId);
   const result = await browser.storage.local.get(STORAGE_KEYS.SESSION_HISTORY);
   const history = (result[STORAGE_KEYS.SESSION_HISTORY] as SessionHistoryEntry[] | undefined) ?? [];

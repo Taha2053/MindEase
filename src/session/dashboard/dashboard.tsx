@@ -1416,7 +1416,11 @@ const Dashboard: FC = () => {
                 <article key={card.id}><h3>{card.concept}</h3><p>{card.content}</p></article>
               )}
               {(data.artifact?.needsReview?.length ?? 0) > 0 && <p>{data.artifact!.needsReview.length} areas need another look; see Review for details.</p>}
-              <button type="button" className="header-btn" onClick={handleExport}>Open complete review / Save as PDF</button>
+              <div className="summary-action-row">
+                <button type="button" className="btn-open-review" onClick={handleExport}>
+                  Open complete review / Save as PDF
+                </button>
+              </div>
             </section>
             <SectionFocus session={data.session} artifact={data.artifact} />
             <SessionFeedbackPanel key={data.feedbackSessionId} sessionId={data.feedbackSessionId} />

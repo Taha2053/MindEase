@@ -284,6 +284,7 @@ export interface TabResource {
   joinedAt: number;
   lastActiveAt: number;
   highlights: HighlightNote[];
+  category?: "learning" | "distraction";
 }
 
 export interface FocusSummary {
@@ -306,6 +307,7 @@ export interface WorkspaceSession {
   userId: string;
   state: SessionState;
   tabs: TabResource[];
+  closedTabs?: TabResource[]; // Retain studied resources and notes after their browser tabs close.
   startTime: number;
   endTime: number | null;
   lastActivityAt: number;

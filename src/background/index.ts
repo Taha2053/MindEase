@@ -297,7 +297,27 @@ setupLayer2Listeners();
 
 /* ── Tab close → notify SessionManager ──────────────────────────────────────── */
 browser.tabs.onRemoved.addListener(async (tabId) => {
-  sessionManager.removeTab(tabId);
+  await sessionReady;
+  await sessionManager.removeTab(tabId).catch(err => {
+    console.warn("[Background] Closing study tab failed:", err);
+  });
+});
+
+/* ── Tab update & activation → record activity and register active learning tabs ── */
+browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status === "complete" && tab.url && !tab.url.startsWith("chrome://") && !tab.url.startsWith("about:")) {
+    await sessionReady;
+    if (sessionManager.hasActiveSession()) {
+      sessionManager.onActivity();
+    }
+  }
+});
+
+browser.tabs.onActivated.addListener(async (activeInfo) => {
+  await sessionReady;
+  if (sessionManager.hasActiveSession()) {
+    sessionManager.onActivity();
+  }
 });
 
 /* ── Message router ──────────────────────────────────────────────────────────── */

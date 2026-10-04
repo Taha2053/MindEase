@@ -18,7 +18,7 @@ export function renderLatex(text: string): string {
       }
     })
     // Inline math: $...$ and \(...\)
-    .replace(/\$([^\s$][^$]*[^\s$])\$/g, (_, formula: string) => {
+    .replace(/\$([^\s$](?:[^$]*[^\s$])?)\$/g, (_, formula: string) => {
       try {
         return katex.renderToString(formula.trim(), { displayMode: false, throwOnError: false });
       } catch {

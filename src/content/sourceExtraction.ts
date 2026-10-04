@@ -6,6 +6,8 @@ const REMOVE_SELECTORS = [
   ".sidebar", ".infobox", ".metadata", ".ambox", ".hatnote", ".shortdescription",
   ".mw-authority-control", ".catlinks", ".printfooter", ".sistersitebox",
   ".vector-page-toolbar", ".vector-dropdown", ".uls-language-list",
+  ".reflist", ".references", "#references", "#further-reading", "#external-links",
+  ".refbegin", ".portal", ".citation",
   "button", "select", "input", "textarea",
 ].join(",");
 
@@ -53,8 +55,17 @@ export function extractReadingText(doc: Document = document): string {
     const title = normalizeBlockText(doc.querySelector("#firstHeading")?.textContent ?? doc.title);
     if (title) blocks.push("# " + title);
   }
+  let stopExtraction = false;
   clone.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, dt, dd, pre, blockquote, figcaption, table").forEach(element => {
-    if (element.parentElement?.closest("table, pre, blockquote")) return;
+    if (stopExtraction) return;
+    if (/^H[1-6]$/.test(element.tagName)) {
+      const headingText = (element.textContent ?? "").trim().toLowerCase();
+      if (["references", "see also", "further reading", "external links", "notes", "bibliography", "sources"].includes(headingText)) {
+        stopExtraction = true;
+        return;
+      }
+    }
+    if (element.parentElement?.closest("table, pre, blockquote, .reflist, .references")) return;
     if (!element.matches("li") && element.parentElement?.closest("li")) return;
     let content = element;
     if (element.matches("li")) {

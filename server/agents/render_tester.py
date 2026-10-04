@@ -9,7 +9,7 @@ Two validation modes (RENDER_TEST_EXECUTE env, default on):
   catches the runtime-error class that import testing structurally cannot:
   a production render died on ``if a.get_center() == b.get_center():`` (numpy
   truth-value ValueError) that only fires when construct() executes.
-- Import mode (legacy fallback): compile + import the module in-process.
+- Import mode: compile + import in the same isolated subprocess, without construct().
 
 Execution mode fails OPEN on harness trouble (driver crash without a verdict
 sentinel, or a TIMEOUT — under load the dry run starves for CPU, which says
@@ -18,8 +18,6 @@ block all videos because of its own infrastructure.
 """
 
 import asyncio
-import contextlib
-import importlib.util
 import logging
 import os
 import re
@@ -151,7 +149,7 @@ class RenderTester:
     async def test_render(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
         """
         Test Manim code by executing construct() in a dry-run subprocess
-        (or, with RENDER_TEST_EXECUTE=0, by importing it in-process).
+        (or, with RENDER_TEST_EXECUTE=0, only importing it in that subprocess).
 
         Args:
             code: The Manim Python code to test
@@ -161,10 +159,8 @@ class RenderTester:
             RenderTestOutput with success status and error details
         """
         validate = self._validate_by_execution if self.execute_mode else self._validate_by_import
-        # Execution mode: the subprocess enforces the real timeout, so the
-        # outer wait only guards the wrapper and gets a margin. Import mode has
-        # no inner timeout — the outer wait IS its documented 60s bound.
-        outer_timeout = self.timeout_seconds + 15 if self.execute_mode else self.timeout_seconds
+        # Both modes enforce the timeout in the child process.
+        outer_timeout = self.timeout_seconds + 15
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(validate, code, scene_class),
@@ -189,7 +185,7 @@ class RenderTester:
                 fix_suggestion=self.ERROR_FIXES.get(type(e).__name__, "Review the error and fix accordingly")
             )
 
-    def _validate_by_execution(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
+    def _validate_by_execution(self, code: str, scene_class: str | None = None, *, import_only: bool = False) -> RenderTestOutput:
         """Execute construct() in a dry-run subprocess (see dry_run_driver.py).
 
         Verdicts come from the driver's sentinels; a missing sentinel means
@@ -211,6 +207,8 @@ class RenderTester:
             # swaps it out; its __init__ only needs a key to exist.
             env["OPENAI_API_KEY"] = "dry-run-placeholder"
             cmd = [sys.executable, str(_DRIVER_PATH), str(scene_path)]
+            if import_only:
+                cmd.append("--import-only")
             if scene_class:
                 cmd.append(scene_class)
             try:
@@ -295,83 +293,8 @@ class RenderTester:
         )
     
     def _validate_by_import(self, code: str, scene_class: str | None = None) -> RenderTestOutput:
-        """
-        Validate code by attempting to import it as a Python module.
-        
-        This catches most runtime errors without actually rendering video.
-        """
-        syntax_error = self._check_syntax(code)
-        if syntax_error is not None:
-            return syntax_error
-
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(
-            mode='w',
-            suffix='.py',
-            delete=False,
-            encoding='utf-8'
-        ) as f:
-            f.write(code)
-            temp_path = Path(f.name)
-        
-        try:
-            # Try to import the module
-            spec = importlib.util.spec_from_file_location(
-                "test_manim_scene",
-                temp_path
-            )
-            if spec is None or spec.loader is None:
-                return RenderTestOutput(
-                    success=False,
-                    error_type="ImportError",
-                    error_message="Could not create module spec",
-                    fix_suggestion="Check that the code is valid Python"
-                )
-            
-            module = importlib.util.module_from_spec(spec)
-            
-            # Add to sys.modules temporarily to allow relative imports
-            sys.modules["test_manim_scene"] = module
-            
-            try:
-                spec.loader.exec_module(module)
-            except Exception as e:
-                # Parse the error for useful info
-                error_info = self._parse_error(e, code)
-                return RenderTestOutput(
-                    success=False,
-                    error_type=error_info["type"],
-                    error_message=error_info["message"],
-                    line_number=error_info.get("line"),
-                    fix_suggestion=error_info["suggestion"]
-                )
-            finally:
-                # Clean up sys.modules
-                sys.modules.pop("test_manim_scene", None)
-            
-            # Check if Scene class exists and has construct method
-            scene_classes = [
-                obj for name, obj in module.__dict__.items()
-                if isinstance(obj, type) and 
-                hasattr(obj, 'construct') and
-                name not in ('Scene', 'ThreeDScene', 'VoiceoverScene')
-            ]
-            
-            if not scene_classes:
-                return RenderTestOutput(
-                    success=False,
-                    error_type="MissingScene",
-                    error_message="No Scene class with construct() method found",
-                    fix_suggestion="Ensure code has a class that inherits from Scene with a construct(self) method"
-                )
-            
-            # Success!
-            return RenderTestOutput(success=True)
-            
-        finally:
-            # Clean up temp file
-            with contextlib.suppress(Exception):
-                temp_path.unlink()
+        """Import generated code without allowing it to mutate the API process."""
+        return self._validate_by_execution(code, scene_class, import_only=True)
     
     def _parse_error(self, error: Exception, code: str) -> dict[str, Any]:
         """Parse an exception to extract useful error information."""

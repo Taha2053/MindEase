@@ -121,7 +121,7 @@ class TestProcessDocument:
         data = res.json()
         assert data["status"] == "queued"
         assert data["job_id"] is not None
-        assert data["arxiv_id"].startswith("wiki_")
+        assert data["arxiv_id"].startswith("doc_") or data["arxiv_id"].startswith("wiki_")
 
     async def test_process_document_dedupes_inflight(self, client, db, monkeypatch):
         async def _noop(*args, **kwargs):

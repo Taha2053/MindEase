@@ -183,7 +183,7 @@ export async function submitArxivPaperForAnimation(
 export async function pollJobStatus(jobId: string): Promise<PremiumJobStatus> {
   const baseUrl = await getServerBaseUrl();
   const res = await fetch(`${baseUrl}/api/status/${encodeURIComponent(jobId)}`, {
-    headers: { Accept: "application/json" },
+    headers: await premiumHeaders("application/json"),
   });
 
   if (!res.ok) {
@@ -210,7 +210,7 @@ export async function fetchDocumentVideos(
   const baseUrl = await getServerBaseUrl();
   try {
     const res = await fetch(`${baseUrl}/api/paper/${encodeURIComponent(docId)}`, {
-      headers: { Accept: "application/json" },
+      headers: await premiumHeaders("application/json"),
     });
 
     if (res.status === 404) return null;

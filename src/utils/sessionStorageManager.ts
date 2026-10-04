@@ -37,16 +37,82 @@ export async function saveStorageConfig(update: Partial<StorageDestinationConfig
   return next;
 }
 
-/** Get all saved session folders (local or cloud). */
-export async function getSessionFolders(): Promise<SessionFolderSummary[]> {
+function isSessionFolder(value: unknown): value is SessionFolderSummary {
+  if (!value || typeof value !== "object") return false;
+  return "sessionId" in value && typeof value.sessionId === "string" &&
+    "sessionNumber" in value && typeof value.sessionNumber === "number" &&
+    "dateStr" in value && typeof value.dateStr === "string" &&
+    "folderName" in value && typeof value.folderName === "string" &&
+    "title" in value && typeof value.title === "string" &&
+    "durationMs" in value && typeof value.durationMs === "number" &&
+    "conceptCount" in value && typeof value.conceptCount === "number" &&
+    "focusScore" in value && typeof value.focusScore === "number" &&
+    "savedAt" in value && typeof value.savedAt === "number" &&
+    "destination" in value && (value.destination === "local" || value.destination === "supabase") &&
+    "videos" in value && Array.isArray(value.videos) &&
+    value.videos.every(v => v && typeof v.id === "string" && typeof v.concept === "string" &&
+      typeof v.filename === "string" && typeof v.videoUrl === "string") &&
+    "visuals" in value && Array.isArray(value.visuals) &&
+    value.visuals.every(v => v && typeof v.id === "string" && typeof v.concept === "string" &&
+      typeof v.filename === "string" && typeof v.dataUrl === "string") &&
+    "history" in value && !!value.history && typeof value.history === "object" &&
+    "topic" in value.history && typeof value.history.topic === "string" &&
+    "concepts" in value.history && Array.isArray(value.history.concepts) &&
+    value.history.concepts.every(c => typeof c === "string") &&
+    "timeSpentMinutes" in value.history && typeof value.history.timeSpentMinutes === "number" &&
+    "notesCount" in value.history && typeof value.history.notesCount === "number" &&
+    "summaryText" in value.history && typeof value.history.summaryText === "string";
+}
+
+async function localSessionFolders(): Promise<SessionFolderSummary[]> {
   const result = await browser.storage.local.get(STORAGE_KEYS.SESSION_FOLDERS);
-  const list = result[STORAGE_KEYS.SESSION_FOLDERS] as SessionFolderSummary[] | undefined;
-  return list ?? [];
+  const value = result[STORAGE_KEYS.SESSION_FOLDERS];
+  return Array.isArray(value) ? value.filter(isSessionFolder) : [];
+}
+
+/** Merge local archives with the signed-in account's cloud archives. */
+export async function getSessionFolders(): Promise<SessionFolderSummary[]> {
+  const folders = new Map((await localSessionFolders()).map(folder => [folder.sessionId, folder]));
+  try {
+    const session = await getSession();
+    const url = import.meta.env.VITE_SUPABASE_URL?.replace(/\/+$/, "");
+    const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    if (session && url && key) {
+      const response = await fetch(`${url}/rest/v1/session_folders?user_id=eq.${encodeURIComponent(session.user.id)}&select=summary`, {
+        headers: { apikey: key, Authorization: `Bearer ${session.accessToken}` },
+      });
+      if (!response.ok) throw new Error(`Cloud archive retrieval failed (${response.status}).`);
+      const rows: unknown = await response.json();
+      if (!Array.isArray(rows)) throw new Error("Cloud archive response is invalid.");
+      for (const row of rows) {
+        if (!row || !isSessionFolder(row.summary)) continue;
+        const previous = folders.get(row.summary.sessionId);
+        if (!previous || row.summary.savedAt > previous.savedAt) folders.set(row.summary.sessionId, row.summary);
+      }
+    }
+  } catch (error) {
+    console.warn("[MindEase] Cloud archives unavailable; showing local archives:", error);
+  }
+  return [...folders.values()].sort((a, b) => b.savedAt - a.savedAt);
+}
+
+export async function deleteSessionFolder(sessionId: string): Promise<void> {
+  const session = await getSession();
+  const url = import.meta.env.VITE_SUPABASE_URL?.replace(/\/+$/, "");
+  const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  if (session && url && key) {
+    const response = await fetch(`${url}/rest/v1/session_folders?user_id=eq.${encodeURIComponent(session.user.id)}&session_id=eq.${encodeURIComponent(sessionId)}`, {
+      method: "DELETE", headers: { apikey: key, Authorization: `Bearer ${session.accessToken}` },
+    });
+    if (!response.ok) throw new Error(`Cloud archive deletion failed (${response.status}).`);
+  }
+  const remaining = (await localSessionFolders()).filter(folder => folder.sessionId !== sessionId);
+  await browser.storage.local.set({ [STORAGE_KEYS.SESSION_FOLDERS]: remaining });
 }
 
 /** Save a newly finished session as a structured folder. */
 export async function recordSessionFolder(folder: SessionFolderSummary): Promise<void> {
-  const list = await getSessionFolders();
+  const list = await localSessionFolders();
   // Newest sessions first
   const existingIdx = list.findIndex((f) => f.sessionId === folder.sessionId);
   if (existingIdx >= 0) {
@@ -64,7 +130,7 @@ export async function recordSessionFolder(folder: SessionFolderSummary): Promise
         const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/+$/, "");
         const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
         if (url && key) {
-          await fetch(`${url}/rest/v1/session_folders?on_conflict=user_id,session_id`, {
+          const response = await fetch(`${url}/rest/v1/session_folders?on_conflict=user_id,session_id`, {
             method: "POST",
             headers: {
               apikey: key,
@@ -79,11 +145,12 @@ export async function recordSessionFolder(folder: SessionFolderSummary): Promise
               summary: folder,
               updated_at: new Date().toISOString(),
             }),
-          }).catch((err) => console.warn("[MindEase] Cloud folder sync error:", err));
+          });
+          if (!response.ok) throw new Error(`Cloud folder synchronization failed (${response.status}).`);
         }
       }
-    } catch {
-      // Non-blocking
+    } catch (error) {
+      console.warn("[MindEase] Archive saved locally but cloud synchronization failed:", error);
     }
   }
 }

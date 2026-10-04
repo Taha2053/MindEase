@@ -90,6 +90,21 @@ function shouldActivate(): ActivationResult {
   }
 
   if (url.endsWith(".pdf") || document.contentType === "application/pdf") return { decision: true, ambiguous: false };
+  // Fast-track known learning workspaces & documents
+  if (hostname.includes("classroom.google.com") ||
+      hostname.includes("docs.google.com") ||
+      hostname.includes("drive.google.com") ||
+      hostname.includes("notion.so") ||
+      hostname.includes("canvas.") ||
+      hostname.includes("blackboard.com") ||
+      hostname.includes("moodle.") ||
+      hostname.includes("wikipedia.org") ||
+      hostname.includes("arxiv.org") ||
+      hostname.includes("khanacademy.org") ||
+      hostname.includes("coursera.org") ||
+      hostname.includes("edx.org")) {
+    return { decision: true, ambiguous: false };
+  }
 
   const signals: boolean[] = [];
 
@@ -1523,6 +1538,96 @@ const OVERLAY_CSS = `
         border-radius: 2px;
         transition: width 0.5s ease;
       }
+      /* ── Suggested Resources Drawer & Popping Icon ── */
+      #mindease-resources-toggle { position: relative; }
+      #mindease-resources-toggle.has-suggestions { color: var(--accent); }
+      .mindease-drawer-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        z-index: 999;
+        backdrop-filter: blur(2px);
+        animation: mindeaseFade 0.2s ease;
+      }
+      .mindease-drawer {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: min(340px, 86%);
+        height: 100%;
+        background: var(--bg-surface);
+        border-left: 1px solid var(--border);
+        box-shadow: -8px 0 28px rgba(0,0,0,0.35);
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        animation: mindeaseSlideLeft 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      @keyframes mindeaseSlideLeft {
+        from { transform: translateX(100%); }
+        to { transform: translateX(0); }
+      }
+      @keyframes mindeaseFade {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      .drawer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-surface-alt);
+      }
+      .drawer-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 14px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .suggested-item-card {
+        background: var(--bg-base);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 14px;
+        transition: all 0.15s ease;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .suggested-item-card:hover {
+        border-color: var(--accent);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      }
+      .suggested-link {
+        font-weight: 700;
+        font-size: 0.85rem;
+        color: var(--accent);
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .suggested-link:hover { text-decoration: underline; }
+      .suggested-desc {
+        font-size: 0.74rem;
+        color: var(--text-dim);
+        line-height: 1.45;
+        margin: 0;
+      }
+      .suggested-badge {
+        display: inline-block;
+        font-size: 0.65rem;
+        font-weight: 600;
+        color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 12%, transparent);
+        padding: 2px 6px;
+        border-radius: 4px;
+        align-self: flex-start;
+      }
 
       /* ── Notes ── */
       .mindease-note-card {
@@ -2784,38 +2889,65 @@ function appendToOverlay(chunks: ContentChunk[]): void {
 }
 
 async function showRelatedResources(topics: string[], preference: "visual" | "text"): Promise<void> {
-  const panel = shadowById("mindease-related-resources");
-  if (!panel) return;
-  const heading = document.createElement("h3");
-  heading.textContent = "Explore related learning websites";
-  panel.replaceChildren(heading);
+  const drawerContent = shadowById("mindease-resources-drawer-content");
+  const toggleBtn = shadowById("mindease-resources-toggle");
+  const badge = shadowById("mindease-resources-badge");
+  if (!drawerContent || !toggleBtn) return;
+
   const validTopics = topics.filter(topic => topic.length >= 3 && topic.length <= 90);
-  if (!validTopics.length) return;
+  if (!validTopics.length) {
+    drawerContent.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">No related topics identified on this page.</p>`;
+    return;
+  }
   try {
     const reply = await browser.runtime.sendMessage({
       type: "RELATED_RESOURCES",
       payload: { topics: validTopics.slice(0, 3), preference, sourceUrl: location.href },
     }) as { resources?: Array<{ title: string; url: string; description: string; reason: string }> };
-    if (!panel.isConnected) return;
-    const list = document.createElement("ul");
-    for (const resource of reply?.resources ?? []) {
-      const url = new URL(resource.url);
-      if (url.protocol !== "https:") continue;
-      const item = document.createElement("li");
+    if (!drawerContent.isConnected) return;
+    
+    const resources = (reply?.resources ?? []).filter(r => {
+      try { return new URL(r.url).protocol === "https:"; } catch { return false; }
+    });
+
+    if (!resources.length) {
+      drawerContent.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">No related educational websites found for this topic.</p>`;
+      return;
+    }
+
+    // Show popping indicator badge on the header globe icon
+    if (badge) badge.style.display = "block";
+    toggleBtn.classList.add("has-suggestions");
+    toggleBtn.title = `Explore ${resources.length} suggested learning website(s)`;
+
+    drawerContent.replaceChildren();
+    for (const resource of resources) {
+      const card = document.createElement("div");
+      card.className = "suggested-item-card";
+
       const link = document.createElement("a");
-      link.href = url.href;
+      link.href = resource.url;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
-      link.textContent = resource.title;
-      const detail = document.createElement("p");
-      detail.textContent = `${resource.description} ${resource.reason}`;
-      item.append(link, detail);
-      list.append(item);
+      link.className = "suggested-link";
+      link.innerHTML = `<span>${resource.title}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+
+      const desc = document.createElement("p");
+      desc.className = "suggested-desc";
+      desc.textContent = resource.description || resource.reason;
+
+      if (resource.reason && resource.description) {
+        const badgeEl = document.createElement("span");
+        badgeEl.className = "suggested-badge";
+        badgeEl.textContent = resource.reason.includes("illustration") ? "Illustrated" : "Recommended";
+        card.append(link, desc, badgeEl);
+      } else {
+        card.append(link, desc);
+      }
+      drawerContent.append(card);
     }
-    if (list.childElementCount) panel.append(list);
-    else panel.remove();
-  } catch {
-    panel.remove();
+  } catch (err) {
+    drawerContent.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">Could not retrieve website suggestions.</p>`;
   }
 }
 
@@ -2933,6 +3065,7 @@ function injectOverlay(
       <div id="mindease-controls">
         <button class="mindease-ctrl-btn" id="mindease-font-down" title="Decrease text size" aria-label="Decrease text size">A−</button>
         <button class="mindease-ctrl-btn" id="mindease-font-up" title="Increase text size" aria-label="Increase text size">A+</button>
+        <button class="mindease-ctrl-btn" id="mindease-resources-toggle" title="Explore suggested websites" aria-label="Explore suggested websites">${iconHTML("globe")}<span id="mindease-resources-badge" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent)"></span></button>
         <button class="mindease-ctrl-btn" id="mindease-tts-btn" title="Read content aloud" aria-label="Read content aloud">${iconHTML("volume-2")}</button>
         <button class="mindease-ctrl-btn" id="mindease-theme-toggle" title="Toggle theme" aria-label="Toggle theme">${_theme === "light" ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>' : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>'}</button>
         <button class="mindease-ctrl-btn" id="mindease-minimize" title="Minimize" aria-label="Minimize panel">&minus;</button>
@@ -2971,7 +3104,19 @@ function injectOverlay(
       </div>
 
       <div id="mindease-visuals-grid" class="visuals-grid" aria-live="polite"></div>
-      <section id="mindease-related-resources" aria-label="Related learning websites" style="padding:16px"></section>
+      <div id="mindease-resources-drawer-backdrop" class="mindease-drawer-backdrop" style="display:none"></div>
+      <aside id="mindease-resources-drawer" class="mindease-drawer" aria-label="Suggested learning websites" style="display:none">
+        <div class="drawer-header">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="color:var(--accent)">${iconHTML("globe")}</span>
+            <h3 style="margin:0;font-size:0.92rem;font-weight:700;color:var(--text-primary)">Suggested Learning</h3>
+          </div>
+          <button id="mindease-resources-drawer-close" class="mindease-ctrl-btn" aria-label="Close suggestions">${iconHTML("x")}</button>
+        </div>
+        <div class="drawer-body" id="mindease-resources-drawer-content">
+          <p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">Searching for related educational resources&hellip;</p>
+        </div>
+      </aside>
     </div>
 
     <div id="mindease-footer">
@@ -3097,6 +3242,45 @@ function injectOverlay(
   /* ── End Session ── */
   shadowById("mindease-end-session")?.addEventListener("click", () => {
     browser.runtime.sendMessage({ type: "SESSION_END" }).catch(() => {});
+  });
+
+  /* ── Suggested Resources Drawer Toggling ── */
+  const resourcesToggle = shadowById("mindease-resources-toggle");
+  const resourcesDrawer = shadowById("mindease-resources-drawer");
+  const resourcesBackdrop = shadowById("mindease-resources-drawer-backdrop");
+  const resourcesClose = shadowById("mindease-resources-drawer-close");
+  const resourcesBadge = shadowById("mindease-resources-badge");
+
+  const openDrawer = () => {
+    if (resourcesDrawer && resourcesBackdrop) {
+      resourcesDrawer.style.display = "flex";
+      resourcesBackdrop.style.display = "block";
+      if (resourcesBadge) resourcesBadge.style.display = "none";
+    }
+  };
+
+  const closeDrawer = () => {
+    if (resourcesDrawer && resourcesBackdrop) {
+      resourcesDrawer.style.display = "none";
+      resourcesBackdrop.style.display = "none";
+    }
+  };
+
+  resourcesToggle?.addEventListener("click", () => {
+    if (resourcesDrawer?.style.display === "flex") {
+      closeDrawer();
+    } else {
+      openDrawer();
+    }
+  });
+
+  resourcesClose?.addEventListener("click", closeDrawer);
+  resourcesBackdrop?.addEventListener("click", closeDrawer);
+  overlay.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && resourcesDrawer?.style.display === "flex") {
+      e.stopPropagation();
+      closeDrawer();
+    }
   });
 
   /* ── Generate Visuals (via background to bypass host CSP) ── */

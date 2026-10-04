@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 
 from ingestion.pdf_parser import parse_pdf
 from ingestion.section_extractor import extract_sections
+from ingestion.remote_document import fetch_public_document
 from models.paper import (
     ArxivPaperMeta,
     Equation,
@@ -48,12 +49,13 @@ async def ingest_document(
     abstract: str | None = None,
     content: str | None = None,
     sections_input: list[dict[str, Any]] | None = None,
+    document_id: str | None = None,
 ) -> StructuredPaper:
     """
     Ingest a document from pre-parsed sections, raw markdown/text, or remote URL.
     Returns a StructuredPaper compatible with the multi-agent Manim generation pipeline.
     """
-    doc_id = generate_document_id(title, url)
+    doc_id = document_id or generate_document_id(title, url)
     logger.info("Ingesting document %s (title=%r, type=%s)", doc_id, title, source_type)
 
     sections: list[Section] = []
@@ -96,23 +98,18 @@ async def ingest_document(
             )
 
     # Case 2: Remote PDF document URL
-    elif url and (url.lower().endswith(".pdf") or source_type == "pdf"):
+    elif url and not content and (url.lower().endswith(".pdf") or source_type == "pdf"):
         logger.info("Fetching remote PDF from %s", url)
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+            resp = await fetch_public_document(client, url)
             parsed_content = parse_pdf(resp.content)
             sections = extract_sections(parsed_content)
 
     # Case 3: Remote Wikipedia or Web Article
     elif url and not content:
         logger.info("Fetching web article from %s", url)
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            resp = await client.get(
-                url,
-                headers={"User-Agent": "MindEase-Research-Visualizer/1.0 (Educational)"},
-            )
-            resp.raise_for_status()
+        async with httpx.AsyncClient(timeout=20.0, trust_env=False) as client:
+            resp = await fetch_public_document(client, url)
             soup = BeautifulSoup(resp.text, "lxml" if "lxml" in BeautifulSoup.__dict__ else "html.parser")
 
             # Extract clean title if empty
@@ -143,7 +140,7 @@ async def ingest_document(
                         if element.name in ["h1", "h2", "h3"]:
                             if current_lines:
                                 text_body = "\n\n".join(current_lines).strip()
-                                if len(text_body) > 80:
+                                if text_body:
                                     sections.append(
                                         Section(
                                             id=f"sec-{len(sections) + 1}",
@@ -164,7 +161,7 @@ async def ingest_document(
                     # Append trailing section
                     if current_lines:
                         text_body = "\n\n".join(current_lines).strip()
-                        if len(text_body) > 80:
+                        if text_body:
                             sections.append(
                                 Section(
                                     id=f"sec-{len(sections) + 1}",
@@ -237,17 +234,9 @@ async def ingest_document(
                 )
             )
 
-    # Ensure at least one section exists
+    sections = [section for section in sections if section.content.strip()]
     if not sections:
-        sections.append(
-            Section(
-                id="sec-1",
-                title=title or "Overview",
-                level=1,
-                content=abstract or "Educational content overview.",
-                summary=abstract or "Educational content overview.",
-            )
-        )
+        raise ValueError("No readable source text was found in this document.")
 
     # Build paper meta
     meta = ArxivPaperMeta(

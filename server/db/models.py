@@ -15,6 +15,20 @@ from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
+class DocumentAccess(Base):
+    """Ownership and revocable media capability for non-public source documents."""
+    __tablename__ = "document_access"
+    document_id = Column(String, primary_key=True)
+    owner_id = Column(String, nullable=True, index=True)
+    media_token = Column(String, nullable=False)
+
+
+class DocumentJobAccess(Base):
+    __tablename__ = "document_job_access"
+    job_id = Column(String, primary_key=True)
+    document_id = Column(String, nullable=False, index=True)
+    owner_id = Column(String, nullable=True)
+
 
 class Paper(Base):
     """ArXiv paper metadata."""

@@ -13,7 +13,7 @@ async def test_documents_with_identical_local_section_ids_are_both_stored():
         await connection.run_sync(Base.metadata.create_all)
     async with async_sessionmaker(engine, expire_on_commit=False)() as db:
         for paper_id in ("first", "second"):
-            paper = StructuredPaper(meta=ArxivPaperMeta(arxiv_id=paper_id, title=paper_id, authors=[], abstract=""), sections=[SourceSection(id="sec-1", title="Overview", content="Original material", level=1)])
+            paper = StructuredPaper(meta=ArxivPaperMeta(arxiv_id=paper_id, title=paper_id, authors=[], abstract="", pdf_url=f"https://example.org/{paper_id}.pdf"), sections=[SourceSection(id="sec-1", title="Overview", content="Original material", level=1)])
             await _store_structured_paper(db, "missing-job", paper)
             assert paper.sections[0].id == f"{paper_id}:sec-1"
         sections = (await db.execute(select(Section))).scalars().all()

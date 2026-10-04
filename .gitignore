@@ -7,6 +7,7 @@ dist/
 PAPER_ANALYSIS_AND_MEETING_BRIEF.md
 PAPER_ANALYSIS_AND_MEETING_BRIEF.pdf
 *.pdf
+summary.md
 docs/
 arXivisual/
 server/.venv/

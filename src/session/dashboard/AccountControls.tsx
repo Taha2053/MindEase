@@ -13,7 +13,7 @@ import {
   type AuthSession,
   type SyncPreferences,
 } from "@/utils/supabase";
-import { UserCheck, Shield, Cloud, LogIn, UserPlus, LogOut, Trash2, RefreshCw } from "lucide-react";
+import { UserCheck, Shield, Cloud, LogIn, UserPlus, LogOut, Trash2, RefreshCw, Lock, X, Loader2 } from "lucide-react";
 
 export function AccountControls({ compact }: { compact?: boolean }) {
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -23,12 +23,12 @@ export function AccountControls({ compact }: { compact?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
-
+  const [showModal, setShowModal] = useState(false);
   const refreshAuth = () => {
     void Promise.all([getSession(), loadSyncPreferences()]).then(([auth, sync]) => {
       setSession(auth);
       setPreferences(sync);
-    });
+    }).catch(error => setStatus(error instanceof Error ? error.message : "Could not load account."));
   };
 
   useEffect(() => {
@@ -88,20 +88,113 @@ export function AccountControls({ compact }: { compact?: boolean }) {
 
   if (!session) {
     return (
-      <div className={`mindease-account-box ${compact ? "is-compact" : ""}`}>
-        <div className="account-box-head">
-          <div className="account-icon-badge">
-            <Cloud size={16} />
+      <>
+        <div className={`mindease-account-box ${compact ? "is-compact" : ""}`}>
+          <div className="account-box-head">
+            <div className="account-icon-badge">
+              <Cloud size={16} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <span className="account-user-tag">Storage Status</span>
+              <h4 className="account-box-title">Running in Device-Local Mode</h4>
+              <p className="account-box-sub">
+                Your lessons, videos, and settings are preserved privately on this device. Sign in or connect Supabase Cloud if you wish to synchronize across machines.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn-acc-primary"
+              style={{ whiteSpace: "nowrap", flex: "none" }}
+              onClick={() => {
+                setShowModal(true);
+                setStatus("");
+              }}
+            >
+              <LogIn size={14} />
+              <span>Connect Cloud</span>
+            </button>
           </div>
-          <div style={{ flex: 1 }}>
-            <span className="account-user-tag">Storage Status</span>
-            <h4 className="account-box-title">Running in Device-Local Mode</h4>
-            <p className="account-box-sub">
-              Your lessons, videos, and settings are preserved privately on this device. Sign in or connect Supabase Cloud if you wish to synchronize across machines.
-            </p>
-          </div>
+          {status && <p role="status" style={{ margin: "4px 0 0", fontSize: "0.8rem", color: "var(--text-dim)" }}>{status}</p>}
         </div>
-      </div>
+
+        {showModal && (
+          <div className="auth-modal-backdrop" onClick={() => setShowModal(false)}>
+            <div className="auth-modal-card" onClick={(e) => e.stopPropagation()}>
+              <div className="auth-modal-header">
+                <div className="auth-modal-title">
+                  <div className="auth-icon-wrap">
+                    <Lock size={16} />
+                  </div>
+                  <div>
+                    <h4>{isSignUp ? "Create MindEase Account" : "Sign In to MindEase"}</h4>
+                    <p>Connect Supabase Cloud to sync your learning profile and review folders.</p>
+                  </div>
+                </div>
+                <button type="button" className="auth-modal-close" onClick={() => setShowModal(false)} aria-label="Close">
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={(e) => void handleSubmit(e).then(() => setShowModal(false))} className="auth-modal-form">
+                <div className="auth-field">
+                  <label htmlFor="acc-modal-email">Email Address</label>
+                  <input
+                    id="acc-modal-email"
+                    type="email"
+                    required
+                    placeholder="name@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="email"
+                  />
+                </div>
+
+                <div className="auth-field">
+                  <label htmlFor="acc-modal-pass">Password</label>
+                  <input
+                    id="acc-modal-pass"
+                    type="password"
+                    required
+                    minLength={6}
+                    placeholder="Minimum 6 characters"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete={isSignUp ? "new-password" : "current-password"}
+                  />
+                </div>
+
+                {status && <div className="auth-error-msg">{status}</div>}
+
+                <div className="auth-modal-actions">
+                  <button
+                    type="submit"
+                    disabled={busy}
+                    className="btn-acc-primary"
+                    onClick={() => setIsSignUp(false)}
+                  >
+                    {busy && !isSignUp ? <Loader2 size={13} className="spin" /> : <LogIn size={13} />}
+                    <span>Sign In</span>
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={busy || !email || password.length < 6}
+                    className="btn-acc-secondary"
+                    onClick={() => setIsSignUp(true)}
+                  >
+                    {busy && isSignUp ? <Loader2 size={13} className="spin" /> : <UserPlus size={13} />}
+                    <span>Create Account</span>
+                  </button>
+                </div>
+
+                <button type="button" className="auth-fallback-btn" onClick={() => setShowModal(false)}>
+                  Cancel &mdash; continue locally
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </>
     );
   }
 

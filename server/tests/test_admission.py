@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.requests import Request
 
 import api.routes as routes_module
+import api.admission as admission_module
 import api.throttle as throttle
 import api.turnstile as turnstile
 from api.routes import router
@@ -201,7 +202,7 @@ async def test_turnstile_accepts_verified_token(client, monkeypatch):
         assert expected_cdata in ("1706_03762", "1810_04805")  # token bound to the paper
         return turnstile.TurnstileVerdict(token == "good-token", None, 12.0)
 
-    monkeypatch.setattr(routes_module, "verify_turnstile_detailed", fake_verify)
+    monkeypatch.setattr(admission_module, "verify_turnstile_detailed", fake_verify)
     ok = await client.post("/api/process", json={"arxiv_id": "1706.03762", "turnstile_token": "good-token"})
     bad = await client.post("/api/process", json={"arxiv_id": "1810.04805", "turnstile_token": "forged"})
     assert ok.status_code == 200

@@ -112,7 +112,7 @@ export async function loadTtsSettings(): Promise<TtsSettings> {
   try {
     const res = await browser.storage.local.get(STORAGE_KEYS.TTS_SETTINGS);
     const saved = res[STORAGE_KEYS.TTS_SETTINGS] as Partial<TtsSettings> | undefined;
-    _cachedSettings = { ...DEFAULT_TTS_SETTINGS, ...saved, provider: "azure" };
+    _cachedSettings = { ...DEFAULT_TTS_SETTINGS, ...saved };
   } catch {
     _cachedSettings = { ...DEFAULT_TTS_SETTINGS };
   }
