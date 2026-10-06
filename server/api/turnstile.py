@@ -23,7 +23,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
-_DEFAULT_HOSTNAMES = "arxivisual.org,www.arxivisual.org,localhost"
+_DEFAULT_HOSTNAMES = "localhost"
 
 # The widget mints every token with this action and the paper id as cData
 # (frontend/components/TurnstileWidget.tsx mirrors both), so a token is only
@@ -58,7 +58,7 @@ def _allowed_hostnames() -> set[str]:
     if raw is None:
         raw = _DEFAULT_HOSTNAMES
         if os.getenv("ENVIRONMENT", "development").lower() == "production":
-            raw = raw.replace(",localhost", "")
+            raw = ""
     return {h.strip() for h in raw.split(",") if h.strip()}
 
 

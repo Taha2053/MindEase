@@ -24,6 +24,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { ApiKeyModal } from "./ApiKeyModal";
+import { TabList } from "./TabList";
 import { hasRequiredKeys } from "@/utils/apiKeyManager";
 import type { TtsSettings } from "@/types";
 import {
@@ -43,18 +44,6 @@ function fmtDuration(ms: number): string {
   return `${sec}s`;
 }
 
-const DISTRACTION_DOMAINS = [
-  "facebook.com", "twitter.com", "x.com", "instagram.com",
-  "tiktok.com", "reddit.com", "netflix.com",
-  "twitch.tv", "snapchat.com", "pinterest.com",
-];
-
-const LEARNING_DOMAINS = [
-  "classroom.google.com", "docs.google.com", "drive.google.com",
-  "wikipedia.org", "arxiv.org", "khanacademy.org", "coursera.org",
-  "edx.org", "notion.so", "canvas.", "blackboard.com", "moodle.",
-  "github.com", "stackoverflow.com", "scholar.google.com",
-];
 
 /* ── Theme Toggle ── */
 
@@ -163,54 +152,6 @@ function SessionBar({
   );
 }
 
-/* ── Tab List ── */
-
-function TabList({
-  session, excludedTabs, onToggle,
-}: {
-  session: WorkspaceSession;
-  excludedTabs: Record<number, boolean>;
-  onToggle: (tabId: number) => void;
-}) {
-  if (!session.tabs || session.tabs.length === 0) return null;
-
-  return (
-    <>
-      <div className="section-title">Tabs in Session ({session.tabs.length})</div>
-      <div className="tab-list">
-        {session.tabs.map((tab) => {
-          let hostname = "";
-          try { hostname = new URL(tab.url).hostname.replace("www.", ""); } catch { hostname = tab.url; }
-          const isKnownLearning = LEARNING_DOMAINS.some((d) => hostname.includes(d));
-          const isDistraction = !isKnownLearning && (tab.category === "distraction" || DISTRACTION_DOMAINS.some((d) => hostname.includes(d)));
-          const isLearning = isKnownLearning || tab.category === "learning" || !isDistraction;
-          const excluded = excludedTabs[tab.tabId] === true;
-          const badge = excluded ? "excluded" : isLearning ? "included" : "distraction";
-          const label = excluded ? "Excluded" : isLearning ? "Learning" : "Distraction";
-          return (
-            <div className="tab-row" key={tab.tabId}>
-              <img
-                className="tab-favicon"
-                src={`https://www.google.com/s2/favicons?domain=${hostname}&sz=16`}
-                alt=""
-                loading="lazy"
-              />
-              <span className="tab-title">{tab.title || hostname}</span>
-              <span className={`tab-badge ${badge}`}>{label}</span>
-              <button
-                className={`tab-toggle ${excluded ? "" : "on"}`}
-                onClick={() => onToggle(tab.tabId)}
-                title={excluded ? "Click to include" : "Click to exclude"}
-              >
-                {excluded ? <Circle size={12} /> : <CircleCheck size={12} />}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
 
 /* ── Stats Row ── */
 
@@ -622,6 +563,7 @@ function App() {
   const [theme, setTheme] = useState<"dark" | "light">("light");
   const [profile, setProfile] = useState<FullCognitiveProfile | undefined>();
   const [workspace, setWorkspace] = useState<WorkspaceSession | null>(null);
+  const [openTabs, setOpenTabs] = useState<browser.Tabs.Tab[]>([]);
   const [extActive, setExtActive] = useState(false);
   const [stats, setStats] = useState<SessionStats>({
     engagedSections: [], skippedSections: [],
@@ -631,6 +573,7 @@ function App() {
   const [excludedTabs, setExcludedTabs] = useState<Record<number, boolean>>({});
   const [explanations, setExplanations] = useState<AdaptationExplanation[]>([]);
   const [loading, setLoading] = useState(false);
+  const [sessionError, setSessionError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [accountStep, setAccountStep] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -663,6 +606,7 @@ function App() {
       STORAGE_KEYS.EXTENSION_ACTIVE, STORAGE_KEYS.WORKSPACE,
       STORAGE_KEYS.EXCLUDED_TABS, "mindease_account_prompt",
     ]);
+    setOpenTabs(await browser.tabs.query({}));
 
     setProfile(results[STORAGE_KEYS.PROFILE] as FullCognitiveProfile | undefined);
     setWorkspace((results[STORAGE_KEYS.WORKSPACE] as WorkspaceSession | undefined) ?? null);
@@ -707,63 +651,80 @@ function App() {
   }, [load]);
 
   useEffect(() => {
+    const refreshTabs = () => { void load().catch(error => setSessionError(String(error))); };
+    browser.tabs.onCreated.addListener(refreshTabs);
+    browser.tabs.onRemoved.addListener(refreshTabs);
+    browser.tabs.onUpdated.addListener(refreshTabs);
+    return () => {
+      browser.tabs.onCreated.removeListener(refreshTabs);
+      browser.tabs.onRemoved.removeListener(refreshTabs);
+      browser.tabs.onUpdated.removeListener(refreshTabs);
+    };
+  }, [load]);
+
+  useEffect(() => {
     const changed = (changes: Record<string, unknown>, area: string) => {
-      if (area === "local" && (STORAGE_KEYS.PROFILE in changes || STORAGE_KEYS.WORKSPACE in changes)) void load();
+      if (area === "local" && [STORAGE_KEYS.PROFILE, STORAGE_KEYS.WORKSPACE, STORAGE_KEYS.EXTENSION_ACTIVE, STORAGE_KEYS.EXCLUDED_TABS, STORAGE_KEYS.AUTH_SESSION].some(key => key in changes)) void load();
     };
     browser.storage.onChanged.addListener(changed);
     return () => browser.storage.onChanged.removeListener(changed);
   }, [load]);
 
-  const handleStart = useCallback(async () => {
+  const changeSession = useCallback(async (active: boolean) => {
     setLoading(true);
-    await browser.storage.local.set({
-      [STORAGE_KEYS.EXTENSION_ACTIVE]: true,
-      [STORAGE_KEYS.WORKSPACE]: null,
-      [STORAGE_KEYS.EXCLUDED_TABS]: {},
-      [STORAGE_KEYS.NOTES]: null,
-      [STORAGE_KEYS.SESSION_CHUNKS]: [],
-    });
-    await browser.runtime.sendMessage({ type: "SESSION_STATE_CHANGED", payload: { active: true } }).catch(() => {});
-    const tabs = await browser.tabs.query({});
-    for (const tab of tabs) {
-      if (tab.id) browser.tabs.sendMessage(tab.id, { type: "EXTENSION_STATE_CHANGED", active: true }).catch(() => {});
+    setSessionError("");
+    try {
+      const reply = await browser.runtime.sendMessage(active
+        ? { type: "SESSION_STATE_CHANGED", payload: { active: true } }
+        : { type: "SESSION_END" }) as { received?: boolean; error?: string } | undefined;
+      if (!reply?.received) throw new Error(reply?.error || "The background did not acknowledge the session change.");
+      setNow(Date.now());
+      await load();
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
     }
-    setExtActive(true);
-    setWorkspace(null);
-    setNow(Date.now());
-    // re-fetch after background sets up workspace
-    setTimeout(() => { load().then(() => setLoading(false)); }, 300);
   }, [load]);
+  const handleStart = () => changeSession(true);
+  const handleStop = () => changeSession(false);
 
-  const handleStop = useCallback(async () => {
-    setLoading(true);
-    await browser.storage.local.set({ [STORAGE_KEYS.EXTENSION_ACTIVE]: false });
-    await browser.runtime.sendMessage({ type: "SESSION_END" }).catch(() => {});
-    const tabs = await browser.tabs.query({});
-    for (const tab of tabs) {
-      if (tab.id) browser.tabs.sendMessage(tab.id, { type: "EXTENSION_STATE_CHANGED", active: false }).catch(() => {});
-    }
-    setExtActive(false);
-    setWorkspace(null);
-    load().then(() => setLoading(false));
-  }, [load]);
-
-  const handleResume = useCallback(async () => {
-    await browser.runtime.sendMessage({ type: "SESSION_STATE_CHANGED", payload: { active: true } }).catch(() => {});
-    setNow(Date.now());
-    setTimeout(() => load(), 200);
-  }, [load]);
+  const handleResume = () => changeSession(true);
 
   const handleTabToggle = useCallback(async (tabId: number) => {
-    const next = { ...excludedTabs };
-    if (next[tabId]) {
-      delete next[tabId];
+    const mutate = async () => {
+      const res = await browser.storage.local.get([
+        STORAGE_KEYS.EXCLUDED_TABS,
+        STORAGE_KEYS.WORKSPACE,
+        STORAGE_KEYS.EXTENSION_ACTIVE,
+      ]);
+      const currentMap = { ...((res[STORAGE_KEYS.EXCLUDED_TABS] as Record<number, boolean> | undefined) || {}) };
+      const ws = res[STORAGE_KEYS.WORKSPACE] as WorkspaceSession | undefined;
+      const isExtActive = res[STORAGE_KEYS.EXTENSION_ACTIVE] === true;
+
+      const liveTab = await browser.tabs.get(tabId);
+      const tab = ws?.tabs?.find(t => t.tabId === tabId && t.url === liveTab.url);
+      const hasOverride = typeof currentMap[tabId] === "boolean";
+      const isDistraction = tab?.category === "distraction";
+      const currentlyIncluded = hasOverride ? !currentMap[tabId] : !isDistraction;
+      const nextIncluded = !currentlyIncluded;
+      currentMap[tabId] = !nextIncluded;
+
+      await browser.storage.local.set({ [STORAGE_KEYS.EXCLUDED_TABS]: currentMap });
+      setExcludedTabs(currentMap);
+
+      await browser.tabs.sendMessage(tabId, {
+        type: "EXTENSION_STATE_CHANGED",
+        active: isExtActive,
+      }).catch(() => {});
+    };
+
+    if (typeof navigator !== "undefined" && navigator.locks?.request) {
+      await navigator.locks.request("mindease-excluded-tabs", mutate);
     } else {
-      next[tabId] = true;
+      await mutate();
     }
-    setExcludedTabs(next);
-    await browser.storage.local.set({ [STORAGE_KEYS.EXCLUDED_TABS]: next });
-  }, [excludedTabs]);
+  }, []);
 
   const handleEditProfile = useCallback(() => {
     browser.tabs.create({ url: browser.runtime.getURL("src/session/dashboard/dashboard.html#profile"), active: true });
@@ -779,7 +740,6 @@ function App() {
   }, []);
 
   if (!loaded) return <div className="body-wrap" role="status">Loading preferences…</div>;
-  if (!profile) return <NoProfile onStart={handleStartOnboarding} />;
   if (accountStep) return (
     <div className="account-onboarding">
       <AccountControls compact />
@@ -799,29 +759,25 @@ function App() {
         onThemeToggle={setTheme}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
-      {!hasKeys && (
-        <div
-          className="api-alert-banner"
-          onClick={() => setIsSettingsOpen(true)}
-          title="Click to configure your API key"
-        >
-          <AlertCircle size={14} />
-          <span>API Key needed for AI restructuring</span>
-          <span className="api-alert-action">Enter Key &rarr;</span>
-        </div>
-      )}
       <div className="body-wrap">
-        <SessionBar
+        {sessionError && <p role="alert">{sessionError}</p>}
+        {profile && <SessionBar
           session={workspace}
           extActive={extActive}
           now={now}
           onStart={handleStart}
           onStop={handleStop}
           onResume={handleResume}
-        />
+        />}
 
-        {profile && extActive && workspace && (
-          <TabList session={workspace} excludedTabs={excludedTabs} onToggle={handleTabToggle} />
+        {profile && extActive && workspace?.state === "active" && (
+          <TabList tabs={openTabs} session={workspace} excludedTabs={excludedTabs}
+            onReadPdf={tab => {
+              const query = new URLSearchParams({ source: tab.url ?? "", tab: String(tab.id) });
+              void browser.tabs.create({ url: browser.runtime.getURL(`src/session/dashboard/dashboard.html#reader?${query}`) })
+                .catch(error => setSessionError(String(error)));
+            }}
+            onToggle={tabId => { void handleTabToggle(tabId).catch(error => setSessionError(String(error))); }} />
         )}
 
         {profile ? (

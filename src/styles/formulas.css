@@ -1,0 +1,15 @@
+@import "katex/dist/katex.min.css";
+
+.katex-display {
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 1em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+:not(.katex-display) > .katex {
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0.12em 0.3em;
+}

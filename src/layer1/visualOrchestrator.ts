@@ -6,9 +6,10 @@
 
 import { v4 as uuidv4 } from "uuid";
 import browser from "webextension-polyfill";
-import type { VisualEntry, VisualsCache, TransformationParams, ContentChunk } from "@/types";
+import type { VisualEntry, VisualsCache, TransformationParams, ContentChunk, SessionFolderSummary } from "@/types";
 import { STORAGE_KEYS } from "@/types";
-import { generateNapkinVisuals, generateNapkinVisualFromContent, type NapkinOptions } from "./napkinClient";
+import { generateNapkinVisualFromContent } from "./napkinClient";
+import { recordSessionFolder } from "@/utils/sessionStorageManager";
 
 /* ── Cache helpers ──────────────────────────────────────────────── */
 
@@ -27,7 +28,7 @@ const MAX_CACHE_BYTES = 8 * 1024 * 1024;
 function pruneVisualsCache(entries: VisualEntry[]): VisualEntry[] {
   const unique = new Map<string, VisualEntry>();
   for (const entry of [...entries].sort((a, b) => b.generatedAt - a.generatedAt)) {
-    const key = `${entry.source}:${entry.concept.trim().toLowerCase()}`;
+    const key = entry.id;
     if (!unique.has(key)) unique.set(key, entry);
   }
 
@@ -42,57 +43,27 @@ function pruneVisualsCache(entries: VisualEntry[]): VisualEntry[] {
   return retained;
 }
 
-async function saveVisualsCache(cache: VisualsCache): Promise<void> {
-  cache.entries = pruneVisualsCache(cache.entries);
-  await browser.storage.local.set({ [STORAGE_KEYS.VISUALS_CACHE]: cache });
-}
-
-/**
- * Generate visuals for a set of concepts.
- * Called after content transformation when useVisualAnchors is true.
- *
- * Returns VisualEntry[] ready to be sent to the content script.
- */
-export async function generateVisualsForConcepts(
-  concepts: string[],
-  params: TransformationParams,
-  force = false,
-): Promise<VisualEntry[]> {
-  if (concepts.length === 0) return [];
-  if (!params.useVisualAnchors && !force) return [];
-
-  // Deduplicate and trim
-  const uniqueConcepts = [...new Set(concepts.map((c) => c.trim()).filter(Boolean))];
-  if (uniqueConcepts.length === 0) return [];
-
-  const now = Date.now();
-  const entries: VisualEntry[] = [];
-
-  // 1. Napkin diagrams for all concepts
-  const napkinOptions = mapToNapkinOptions(params);
-  const napkinResults = await generateNapkinVisuals(uniqueConcepts.slice(0, 5), napkinOptions);
-
-  for (const nr of napkinResults) {
-    entries.push({
-      id: uuidv4(),
-      concept: nr.concept,
-      source: "napkin",
-      format: nr.format,
-      dataUrl: nr.dataUrl,
-      width: nr.width,
-      height: nr.height,
-      generatedAt: now,
-      expiresAt: now + 25 * 60 * 1000,
+async function saveVisuals(entries: VisualEntry[], ownerId: string | null): Promise<void> {
+  await navigator.locks.request("mindease-visuals", async () => {
+    const auth = await browser.storage.local.get(STORAGE_KEYS.AUTH_SESSION);
+    if (((auth[STORAGE_KEYS.AUTH_SESSION] as { user?: { id?: string } } | undefined)?.user?.id ?? null) !== ownerId) return;
+    const cache = await loadVisualsCache();
+    await browser.storage.local.set({
+      [STORAGE_KEYS.VISUALS_CACHE]: { entries: pruneVisualsCache([...entries, ...cache.entries]), updatedAt: Date.now() },
     });
-  }
-
-  // Cache results
-  const cache = await loadVisualsCache();
-  cache.entries.push(...entries);
-  cache.updatedAt = now;
-  await saveVisualsCache(cache);
-
-  return entries;
+    const sessionId = entries[0]?.sessionId;
+    if (!sessionId) return;
+    const stored = await browser.storage.local.get(STORAGE_KEYS.SESSION_FOLDERS);
+    const folder = (stored[STORAGE_KEYS.SESSION_FOLDERS] as SessionFolderSummary[] | undefined)
+      ?.find(item => item.sessionId === sessionId && (item.ownerAccountId ?? null) === ownerId);
+    if (!folder) return;
+    const merged = new Map(folder.visuals.map(item => [item.id, item]));
+    for (const visual of entries) merged.set(visual.id, {
+      id: visual.id, concept: visual.concept,
+      filename: `visuals/${visual.id}.${visual.format}`, dataUrl: visual.dataUrl,
+    });
+    await recordSessionFolder({ ...folder, visuals: [...merged.values()], savedAt: Date.now() });
+  });
 }
 
 /**
@@ -105,8 +76,13 @@ export async function generateVisualsFromChunks(
   force = false,
   onVisual?: (entries: VisualEntry[]) => Promise<void>,
   learnerProfile?: object,
+  sessionId?: string,
 ): Promise<VisualEntry[]> {
   if (!chunks.length || (!params.useVisualAnchors && !force)) return [];
+  const context = await browser.storage.local.get([STORAGE_KEYS.AUTH_SESSION, STORAGE_KEYS.WORKSPACE]);
+  const ownerId = (context[STORAGE_KEYS.AUTH_SESSION] as { user?: { id?: string } } | undefined)?.user?.id ?? null;
+  const workspace = context[STORAGE_KEYS.WORKSPACE] as { state?: string; sessionId?: string } | undefined;
+  const archiveId = sessionId ?? (workspace?.state !== "ended" ? workspace?.sessionId : undefined);
   const entries: VisualEntry[] = [];
   const errors: string[] = [];
   for (const chunk of chunks.slice(0, 5)) {
@@ -115,57 +91,17 @@ export async function generateVisualsFromChunks(
       const result = await generateNapkinVisualFromContent(chunk.sourceText || chunk.text, label,
         { learnerProfile: { ...params, ...learnerProfile, diagramPlan: chunk.visualPrompt } });
       const now = Date.now();
-      entries.push({ id: uuidv4(), sourceBlockId: chunk.id, concept: result.concept, source: "napkin", format: result.format,
+      entries.push({ id: uuidv4(), sessionId: archiveId, sourceBlockId: chunk.id, concept: result.concept, source: "napkin", format: result.format,
         dataUrl: result.dataUrl, width: result.width, height: result.height,
         generatedAt: now, expiresAt: now + 24 * 60 * 60 * 1000 });
+      await saveVisuals([entries[entries.length - 1]], ownerId);
       if (onVisual) await onVisual([...entries]);
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
   }
   if (!entries.length && errors.length) throw new Error(errors[0]);
-  const cache = await loadVisualsCache();
-  cache.entries.push(...entries);
-  cache.updatedAt = Date.now();
-  await saveVisualsCache(cache);
   return entries;
 }
 
-/**
- * Map cognitive profile to Napkin visual generation options.
- */
-function mapToNapkinOptions(params: TransformationParams): NapkinOptions {
-  const opts: NapkinOptions = {};
-
-  // Style: formal for high simplification, colorful for visual-heavy
-  if (params.simplificationLevel >= 2) {
-    opts.style = "formal";
-    opts.visualQuery = "flowchart";
-    opts.orientation = "horizontal";
-  } else if (params.useVisualAnchors) {
-    opts.style = "colorful";
-    opts.visualQuery = "mindmap";
-    opts.orientation = "auto";
-  } else {
-    opts.style = "casual";
-    opts.visualQuery = "timeline";
-    opts.orientation = "vertical";
-  }
-
-  opts.sortStrategy = "relevance";
-
-  return opts;
-}
-
-/**
- * Get cached visuals for specific concepts (avoid re-generation).
- */
-export async function getCachedVisuals(concepts: string[]): Promise<VisualEntry[]> {
-  const cache = await loadVisualsCache();
-  const now = Date.now();
-
-  return cache.entries.filter(
-    (e) => concepts.includes(e.concept) && e.expiresAt > now,
-  );
-}
 

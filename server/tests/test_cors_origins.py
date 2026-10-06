@@ -9,12 +9,6 @@ import pytest
 from api.cors import EXTENSION_ORIGIN_REGEX, DEFAULT_ORIGINS, allowed_origins, canonical_origin
 
 
-def test_defaults_when_env_unset(monkeypatch):
-    monkeypatch.delenv("CORS_EXTRA_ORIGINS", raising=False)
-    assert allowed_origins() == list(DEFAULT_ORIGINS)
-    assert "https://arxivisual.org" in DEFAULT_ORIGINS
-    assert "https://www.arxivisual.org" in DEFAULT_ORIGINS
-    assert "http://localhost:3000" in DEFAULT_ORIGINS
 
 
 @pytest.mark.parametrize("origin", [
@@ -35,14 +29,14 @@ def test_extension_origin_pattern_rejects_other_origins(origin):
 def test_extra_origins_appended_trimmed_and_deduped(monkeypatch):
     monkeypatch.setenv(
         "CORS_EXTRA_ORIGINS",
-        " https://arxivisual-web.example.azurecontainerapps.io/ ,, https://arxivisual.org , http://localhost:3001",
+        " https://study.example.org/ ,, http://localhost:5173 , http://localhost:3001",
     )
     origins = allowed_origins()
     assert origins[: len(DEFAULT_ORIGINS)] == list(DEFAULT_ORIGINS)
     # trailing slash stripped (an Origin header never carries one), blanks
     # dropped, a duplicate of a default not repeated
     assert origins[len(DEFAULT_ORIGINS) :] == [
-        "https://arxivisual-web.example.azurecontainerapps.io",
+        "https://study.example.org",
         "http://localhost:3001",
     ]
 

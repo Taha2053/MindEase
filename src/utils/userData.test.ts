@@ -15,4 +15,31 @@ describe("learner data controls", () => {
     expect(keys).not.toContain("mindease_theme");
     expect(keys).not.toContain(STORAGE_KEYS.API_KEYS);
   });
+  it("includes deleted session ids and video draft in personal data keys for account isolation", () => {
+    const keys = personalDataKeys({
+      mindease_deleted_session_ids: ["s1"],
+      mindease_video_draft: { id: "d1" },
+      mindease_theme: "dark",
+    });
+    expect(keys).toEqual(expect.arrayContaining(["mindease_deleted_session_ids", "mindease_video_draft"]));
+    expect(keys).not.toContain("mindease_theme");
+  });
+  it("excludes other accounts' session folders from export while preserving legacy and owned folders", () => {
+    const exported = sanitizeUserData({
+      [STORAGE_KEYS.AUTH_SESSION]: { user: { id: "user_a" } },
+      [STORAGE_KEYS.API_KEYS]: { openAiApiKey: "secret" },
+      [STORAGE_KEYS.SESSION_FOLDERS]: [
+        { folderName: "folder_a", ownerAccountId: "user_a" },
+        { folderName: "folder_b", ownerAccountId: "user_b" },
+        { folderName: "folder_legacy" },
+      ],
+    });
+    expect(exported).not.toHaveProperty(STORAGE_KEYS.AUTH_SESSION);
+    expect(exported).not.toHaveProperty(STORAGE_KEYS.API_KEYS);
+    const folders = exported[STORAGE_KEYS.SESSION_FOLDERS] as Array<{ folderName: string; ownerAccountId?: string }>;
+    expect(folders).toEqual([
+      { folderName: "folder_a", ownerAccountId: "user_a" },
+      { folderName: "folder_legacy" },
+    ]);
+  });
 });

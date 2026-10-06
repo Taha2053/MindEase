@@ -43,14 +43,6 @@ def _get_nvidia_api_key() -> str:
     ).strip()
 
 
-def _get_mistral_api_key() -> str:
-    """Extract Mistral API key from MISTRAL_API_KEY or VITE_MISTRAL_API_KEY."""
-    return (
-        os.environ.get("MISTRAL_API_KEY")
-        or os.environ.get("VITE_MISTRAL_API_KEY")
-        or ""
-    ).strip()
-
 
 def _get_deepseek_api_key() -> str:
     return os.environ.get("DEEPSEEK_API_KEY", "").strip()
@@ -76,13 +68,6 @@ def _require_nvidia_env() -> None:
         )
 
 
-def _require_mistral_env() -> None:
-    if not _get_mistral_api_key():
-        raise RuntimeError(
-            "LLM_PROVIDER=mistral but Mistral API key is not set. "
-            "Please set MISTRAL_API_KEY or VITE_MISTRAL_API_KEY in .env."
-        )
-
 
 def _require_deepseek_env() -> None:
     if not _get_deepseek_api_key():
@@ -105,56 +90,53 @@ def _require_dedalus_env() -> None:
 
 def _detect_provider() -> str:
     """Resolve the LLM provider from env: LLM_PROVIDER wins, else auto-detect.
-    Priority order: OpenAI -> Azure -> NVIDIA (Kimi-k3) -> Mistral -> Dedalus.
+    Priority order: DeepSeek -> OpenAI -> Azure -> NVIDIA (Kimi-k3) -> Dedalus.
     """
     explicit = os.environ.get("LLM_PROVIDER", "").strip().lower()
-    if explicit in ("openai", "azure", "nvidia", "nvd", "deepseek", "mistral", "dedalus"):
-        if explicit == "openai":
+    if explicit in ("deepseek", "openai", "azure", "nvidia", "nvd", "dedalus"):
+        if explicit == "deepseek":
+            _require_deepseek_env()
+        elif explicit == "openai":
             _require_openai_env()
         elif explicit == "azure":
             _require_azure_env()
         elif explicit in ("nvidia", "nvd"):
             _require_nvidia_env()
             return "nvidia"
-        elif explicit == "mistral":
-            _require_mistral_env()
-        elif explicit == "deepseek":
-            _require_deepseek_env()
         elif explicit == "dedalus":
             _require_dedalus_env()
         return explicit
     if explicit:
         raise RuntimeError(
-            f"Unknown LLM_PROVIDER={explicit!r}. Use 'openai', 'azure', 'nvidia', 'deepseek', 'mistral', or 'dedalus'."
+            f"Unknown LLM_PROVIDER={explicit!r}. Use 'deepseek', 'openai', 'azure', 'nvidia', or 'dedalus'."
         )
 
-    # 1. Primary: Direct OpenAI (OPENAI_API_KEY)
+    # 1. Primary default when configured: DeepSeek (DEEPSEEK_API_KEY)
+    if _get_deepseek_api_key():
+        return "deepseek"
+
+    # 2. Direct OpenAI (OPENAI_API_KEY)
     if os.environ.get("OPENAI_API_KEY"):
         return "openai"
 
-    # 2. Azure OpenAI (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT)
+    # 3. Azure OpenAI (AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT)
     if os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"):
         return "azure"
 
-    # 3. Backup 1: NVIDIA (NVIDIA_API_KEY / NVD_API_KEY / VITE_NVD_API_KEY)
+    # 4. Backup: NVIDIA (NVIDIA_API_KEY / NVD_API_KEY / VITE_NVD_API_KEY)
     if _get_nvidia_api_key():
         return "nvidia"
-
-    # 4. Backup 2: Mistral AI (MISTRAL_API_KEY / VITE_MISTRAL_API_KEY)
-    if _get_mistral_api_key():
-        return "mistral"
 
     # 5. Legacy fallback: Dedalus
     if os.environ.get("DEDALUS_API_KEY"):
         return "dedalus"
 
     raise RuntimeError(
-        "No LLM provider configured. Please set OPENAI_API_KEY (primary), "
-        "AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT, "
-        "VITE_NVD_API_KEY / NVIDIA_API_KEY (backup 1), or "
-        "VITE_MISTRAL_API_KEY / MISTRAL_API_KEY (backup 2)."
+        "No LLM provider configured. Please set DEEPSEEK_API_KEY (primary), "
+        "OPENAI_API_KEY, "
+        "AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT, or "
+        "VITE_NVD_API_KEY / NVIDIA_API_KEY (backup)."
     )
-
 
 def get_provider() -> str:
     """Get the current provider name (validates env on every call)."""
@@ -286,13 +268,6 @@ def _get_openai_sync_client():
     return _openai_sync_client
 
 
-# ---------------------------------------------------------------------------
-# Mistral AI (backup provider)
-# ---------------------------------------------------------------------------
-
-_mistral_async_client = None
-_mistral_sync_client = None
-
 _deepseek_async_client = None
 _deepseek_sync_client = None
 
@@ -322,36 +297,6 @@ def _get_deepseek_sync_client():
             timeout=_DEEPSEEK_CLIENT_TIMEOUT,
         )
     return _deepseek_sync_client
-
-
-def _get_mistral_client():
-    global _mistral_async_client  # noqa: PLW0603 — lazy singleton cache
-    if _mistral_async_client is None:
-        key = _get_mistral_api_key()
-        if not key:
-            raise RuntimeError("Mistral API key not set (checked MISTRAL_API_KEY, VITE_MISTRAL_API_KEY)")
-        _, AsyncOpenAI = _openai_classes()
-        _mistral_async_client = AsyncOpenAI(
-            base_url=os.environ.get("MISTRAL_API_BASE", "https://api.mistral.ai/v1"),
-            api_key=key,
-            timeout=300.0,
-        )
-    return _mistral_async_client
-
-
-def _get_mistral_sync_client():
-    global _mistral_sync_client  # noqa: PLW0603 — lazy singleton cache
-    if _mistral_sync_client is None:
-        key = _get_mistral_api_key()
-        if not key:
-            raise RuntimeError("Mistral API key not set (checked MISTRAL_API_KEY, VITE_MISTRAL_API_KEY)")
-        OpenAI, _ = _openai_classes()
-        _mistral_sync_client = OpenAI(
-            base_url=os.environ.get("MISTRAL_API_BASE", "https://api.mistral.ai/v1"),
-            api_key=key,
-            timeout=300.0,
-        )
-    return _mistral_sync_client
 
 
 # ---------------------------------------------------------------------------
@@ -440,17 +385,13 @@ def _resolve_model_for_provider(provider: str, requested_model: str | None) -> s
     if provider == "azure":
         return _azure_model(requested_model)
     if provider == "openai":
-        if requested_model and not requested_model.startswith(("claude", "moonshot", "mistral", "codestral", "anthropic")):
+        if requested_model and not requested_model.startswith(("claude", "moonshot", "anthropic")):
             return requested_model
         return os.environ.get("OPENAI_MODEL", "gpt-4o")
     if provider == "nvidia":
         if requested_model and requested_model.startswith("moonshotai/"):
             return requested_model
         return os.environ.get("NVIDIA_MODEL", DEFAULT_NVIDIA_MODEL)
-    if provider == "mistral":
-        if requested_model and (requested_model.startswith("mistral") or requested_model.startswith("codestral")):
-            return requested_model
-        return os.environ.get("MISTRAL_MODEL", "codestral-latest")
     if provider == "deepseek":
         return os.environ.get("DEEPSEEK_MODEL", "deepseek-reasoner")
     if provider == "dedalus":
@@ -471,8 +412,6 @@ def _is_provider_configured(provider: str) -> bool:
         return bool(os.environ.get("AZURE_OPENAI_API_KEY") and os.environ.get("AZURE_OPENAI_ENDPOINT"))
     if provider == "nvidia":
         return bool(_get_nvidia_api_key())
-    if provider == "mistral":
-        return bool(_get_mistral_api_key())
     if provider == "deepseek":
         return bool(_get_deepseek_api_key())
     if provider == "dedalus":
@@ -483,9 +422,9 @@ def _is_provider_configured(provider: str) -> bool:
 def _get_fallback_chain(primary_provider: str) -> list[str]:
     """
     Build ordered provider chain: primary -> backups in priority order.
-    Fallback contract: OpenAI -> NVIDIA (Kimi-k3) -> Mistral -> Dedalus.
+    Fallback contract: DeepSeek -> OpenAI -> Azure -> NVIDIA (Kimi-k3) -> Dedalus.
     """
-    priority_order = ["openai", "azure", "nvidia", "mistral", "dedalus"]
+    priority_order = ["deepseek", "openai", "azure", "nvidia", "dedalus"]
 
     chain = [primary_provider]
     for p in priority_order:
@@ -493,7 +432,6 @@ def _get_fallback_chain(primary_provider: str) -> list[str]:
             chain.append(p)
 
     return chain
-
 
 def _configured_role_chain(preferred: tuple[str, ...]) -> list[str]:
     """Return only configured providers, preserving a role's declared order."""
@@ -524,16 +462,13 @@ async def _execute_provider_call(
     name: str | None,
     json_mode: bool,
 ) -> str:
-    if provider in ("openai", "deepseek", "mistral", "nvidia"):
+    if provider in ("openai", "deepseek", "nvidia"):
         if provider == "openai":
             client = _get_openai_client()
         elif provider == "nvidia":
             client = _get_nvidia_client()
-        elif provider == "deepseek":
-            client = _get_deepseek_client()
         else:
-            client = _get_mistral_client()
-
+            client = _get_deepseek_client()
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -614,16 +549,13 @@ def _execute_provider_call_sync(
     name: str | None,
     json_mode: bool,
 ) -> str:
-    if provider in ("openai", "deepseek", "mistral", "nvidia"):
+    if provider in ("openai", "deepseek", "nvidia"):
         if provider == "openai":
             client = _get_openai_sync_client()
         elif provider == "nvidia":
             client = _get_nvidia_sync_client()
-        elif provider == "deepseek":
-            client = _get_deepseek_sync_client()
         else:
-            client = _get_mistral_sync_client()
-
+            client = _get_deepseek_sync_client()
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -705,7 +637,7 @@ async def call_llm(
     providers: tuple[str, ...] | None = None,
 ) -> str:
     """Async LLM call routed through the configured provider with automatic fallback:
-    OpenAI -> NVIDIA (Kimi-k3) -> Mistral -> Dedalus.
+    DeepSeek -> OpenAI -> NVIDIA (Kimi-k3) -> Dedalus.
     """
     primary_provider = get_provider() if providers is None else None
     chain = _get_fallback_chain(primary_provider) if primary_provider else _configured_role_chain(providers)
@@ -765,7 +697,7 @@ def call_llm_sync(
     providers: tuple[str, ...] | None = None,
 ) -> str:
     """Sync LLM call routed through the configured provider with automatic fallback:
-    OpenAI -> NVIDIA (Kimi-k3) -> Mistral -> Dedalus.
+    DeepSeek -> OpenAI -> NVIDIA (Kimi-k3) -> Dedalus.
     """
     primary_provider = get_provider() if providers is None else None
     chain = _get_fallback_chain(primary_provider) if primary_provider else _configured_role_chain(providers)
@@ -923,8 +855,6 @@ class BaseAgent:
             print(f"☁️  Azure OpenAI → {_azure_model(self.model)}")
         elif self._provider == "nvidia":
             print(f"⚡ NVIDIA NIM → {self.model}")
-        elif self._provider == "mistral":
-            print(f"🌪️ Mistral AI → {self.model}")
         elif self._provider == "openai":
             print(f"🟢 Direct OpenAI → {self.model}")
         else:

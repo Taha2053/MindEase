@@ -1,21 +1,11 @@
-"""Browser origins allowed to call the API.
-
-The production hosts are fixed; ``CORS_EXTRA_ORIGINS`` (comma-separated) adds
-more by configuration — the frontend Container App's own
-``azurecontainerapps.io`` FQDN, a staging host — so admitting a new frontend
-never needs a code change and API redeploy.
-"""
+"""Allowed extension and local origins, plus explicitly configured hosted surfaces."""
 
 import os
 from urllib.parse import urlsplit
 
 DEFAULT_ORIGINS: tuple[str, ...] = (
-    "https://arxivisual.org",
-    "https://www.arxivisual.org",
-    "http://localhost:3000",  # local frontend dev (legacy Next.js default)
     "http://localhost:5173",  # vite dev (chrome/firefox)
     "http://localhost:8000",  # local api / swagger
-    "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:8000",
 )

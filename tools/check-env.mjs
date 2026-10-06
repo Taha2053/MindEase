@@ -35,9 +35,8 @@ const check = (name, entries, location) => {
 };
 
 console.log("Configuration names and presence only; no credential values are printed.");
-for (const name of ["VITE_MISTRAL_API_KEY", "VITE_NAPKIN_API_KEY", "VITE_OCR_SPACE_API_KEY"]) {
-  check(name, extension, ".env");
-}
+for (const name of ["VITE_PREMIUM_API_URL"]) check(name, extension, ".env");
+console.log("Personal DeepSeek, Napkin and OCR keys can be entered in extension Settings; provider secrets need not be bundled.");
 console.log("Cloud authentication requires deployed Supabase tables and policies as well as credentials.");
 for (const name of ["VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY"]) {
   check(name, extension, ".env");
@@ -45,7 +44,7 @@ for (const name of ["VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY"]) {
     console.log(`Move ${name} from server/.env to .env for Vite to load it.`);
   }
 }
-for (const name of ["MISTRAL_API_KEY", "SUPABASE_URL", "SUPABASE_SECRET_KEY", "DEEPSEEK_API_KEY", "AZURE_SPEECH_KEY", "AZURE_SPEECH_REGION"]) {
+for (const name of ["SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "DEEPSEEK_API_KEY", "NAPKIN_API_KEY", "AZURE_SPEECH_KEY", "AZURE_SPEECH_REGION"]) {
   check(name, server, "server/.env");
 }
 for (const [location, entries] of [[".env", extension], ["server/.env", server]]) {

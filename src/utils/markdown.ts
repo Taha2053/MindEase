@@ -2,7 +2,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import katex from "katex";
 import browser from "webextension-polyfill";
-import katexStyles from "katex/dist/katex.min.css?url";
+import katexStyles from "@/styles/formulas.css?url";
 
 /** Render untrusted lesson text, keeping TeX outside Markdown's escape processing. */
 export const renderMarkdown = (source: string): string => {

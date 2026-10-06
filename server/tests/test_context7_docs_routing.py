@@ -17,10 +17,8 @@ from agents import context7_docs
 @pytest.fixture(autouse=True)
 def _no_provider(monkeypatch):
     # No LLM provider configured -> base.get_provider() would raise RuntimeError.
-    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
-    monkeypatch.delenv("VITE_MISTRAL_API_KEY", raising=False)
     monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     monkeypatch.delenv("NVD_API_KEY", raising=False)
     monkeypatch.delenv("VITE_NVD_API_KEY", raising=False)

@@ -57,7 +57,7 @@ export class SessionManager {
       const result = await browser.storage.local.get([STORAGE_KEYS.WORKSPACE]);
       const raw = result[STORAGE_KEYS.WORKSPACE];
       const saved = (raw && typeof raw === "object" ? raw : undefined) as WorkspaceSession | undefined;
-      if (!saved || saved.state === "ended") return false;
+      if (!saved || (saved.state === "ended" && !saved.archivePending)) return false;
 
       this.session = saved;
       const now = Date.now();
@@ -127,45 +127,88 @@ export class SessionManager {
     };
   }
 
+  startWorkspace(userId: string = "guest"): WorkspaceSession {
+    if (this.session?.archivePending) throw new Error("Retry ending the previous session before starting another.");
+    if (this.session && this.session.state !== "ended") return this.session;
+    const now = Date.now();
+    this.session = {
+      sessionId: uuidv4(),
+      userId,
+      state: "active",
+      tabs: [],
+      startTime: now,
+      endTime: null,
+      lastActivityAt: now,
+      enteredPassiveAt: null,
+      enteredSuspendedAt: null,
+      totalActiveDurationMs: 0,
+      totalPassiveDurationMs: 0,
+      totalSuspendedDurationMs: 0,
+      interruptionCount: 0,
+      longestDistractionMs: 0,
+      distractionStart: null,
+      stateTransitions: [{ fromState: "ended", toState: "active", timestamp: now }],
+    };
+    this.clearTimers();
+    this.startTimers();
+    void this.persist();
+    return this.session;
+  }
+
   /* ─── Tab Management ─────────────────────────────────────────────────── */
 
-  async registerTab(tabId: number, url: string, sourceType: "pdf" | "video" | "website" | "lecture", title: string, category?: "learning" | "distraction"): Promise<void> {
+  async registerTab(
+    tabId: number,
+    url: string,
+    sourceType: "pdf" | "video" | "website" | "lecture",
+    title: string,
+    category?: "learning" | "distraction",
+    isActive: boolean = false,
+  ): Promise<void> {
     if (this.ending) await this.ending;
     const now = Date.now();
 
-    // Create session if none exists
-    if (!this.session) {
-      this.session = {
-        sessionId: uuidv4(),
-        userId: "guest",
-        state: "active",
-        tabs: [],
-        startTime: now,
-        endTime: null,
-        lastActivityAt: now,
-        enteredPassiveAt: null,
-        enteredSuspendedAt: null,
-        totalActiveDurationMs: 0,
-        totalPassiveDurationMs: 0,
-        totalSuspendedDurationMs: 0,
-        interruptionCount: 0,
-        longestDistractionMs: 0,
-        distractionStart: null,
-        stateTransitions: [],
-      };
-    }
+    const workspace = this.session ?? this.startWorkspace();
+    if (workspace.state === "ended") return;
 
-    // Don't register if already present
-    const existing = this.session.tabs.find(t => t.tabId === tabId);
-    if (existing) {
-      existing.lastActiveAt = now;
+    // Check if tab already exists
+    const existingIndex = workspace.tabs.findIndex(t => t.tabId === tabId);
+    if (existingIndex !== -1) {
+      const existing = workspace.tabs[existingIndex];
+      // On existing tab URL change archive old tab with notes in closedTabs, replace with new resource and persist
+      if (existing.url !== url) {
+        (workspace.closedTabs ??= []).push(existing);
+        workspace.tabs[existingIndex] = {
+          tabId,
+          url,
+          title: title || existing.title,
+          sourceType,
+          category,
+          joinedAt: now,
+          lastActiveAt: now,
+          highlights: [],
+        };
+        if (isActive) {
+          this.onActivity();
+        }
+        await this.persist();
+        return;
+      }
+
+      // Same URL: update metadata
+      if (isActive) {
+        existing.lastActiveAt = now;
+      }
       if (category && existing.category !== category) existing.category = category;
       if (title && !existing.title) existing.title = title;
-      this.onActivity();
+      if (isActive) {
+        this.onActivity();
+      }
+      await this.persist();
       return;
     }
 
-    this.session.tabs.push({
+    workspace.tabs.push({
       tabId,
       url,
       title,
@@ -176,8 +219,19 @@ export class SessionManager {
       highlights: [],
     });
 
-    this.onActivity();
+    if (isActive) {
+      this.onActivity();
+    }
     await this.persist();
+  }
+
+  async updateTabCategory(tabId: number, category: "learning" | "distraction"): Promise<void> {
+    if (!this.session || this.session.state === "ended") return;
+    const tab = this.session.tabs.find(t => t.tabId === tabId) ?? this.session.closedTabs?.find(t => t.tabId === tabId);
+    if (tab && tab.category !== category) {
+      tab.category = category;
+      await this.persist();
+    }
   }
 
   async removeTab(tabId: number): Promise<void> {
@@ -272,9 +326,10 @@ export class SessionManager {
 
   endSession(): Promise<void> {
     if (this.ending) return this.ending;
-    if (!this.session || this.session.state === "ended") return Promise.resolve();
-    this.ending = this.finishSession().finally(() => {
+    if (!this.session || (this.session.state === "ended" && !this.session.archivePending)) return Promise.resolve();
+    this.ending = this.finishSession().then(() => {
       this.session = null;
+    }).finally(() => {
       this.ending = null;
     });
     return this.ending;
@@ -283,36 +338,37 @@ export class SessionManager {
   private async finishSession(): Promise<void> {
     const session = this.session!;
     const focus = this.getFocusSummary();
-    session.totalPassiveDurationMs = focus.passiveTimeMs;
-    session.totalSuspendedDurationMs = focus.suspendedTimeMs;
-    session.enteredPassiveAt = null;
-    session.enteredSuspendedAt = null;
-    this.recordTransition("ended");
-    session.state = "ended";
-    session.endTime = Date.now();
-    this.clearTimers();
-    await this.persist();
-
-    let reviewChunks: ContentChunk[] = [];
-    try {
-      const stored = await browser.storage.local.get(STORAGE_KEYS.SESSION_CHUNKS);
-      reviewChunks = (stored[STORAGE_KEYS.SESSION_CHUNKS] ?? []) as ContentChunk[];
-    } catch (error) {
-      console.warn("[MindEase] Could not load session source text:", error);
+    if (!session.archivePending) {
+      session.totalPassiveDurationMs = focus.passiveTimeMs;
+      session.totalSuspendedDurationMs = focus.suspendedTimeMs;
+      session.enteredPassiveAt = null;
+      session.enteredSuspendedAt = null;
+      this.recordTransition("ended");
+      session.state = "ended";
+      session.endTime = Date.now();
+      session.archivePending = true;
     }
+    this.clearTimers();
+    await browser.storage.local.set({ [STORAGE_KEYS.WORKSPACE]: session });
+
+    const stored = await browser.storage.local.get(STORAGE_KEYS.SESSION_CHUNKS);
+    const reviewChunks = (stored[STORAGE_KEYS.SESSION_CHUNKS] ?? []) as ContentChunk[];
+    await browser.storage.local.set({
+      latestReviewChunks: { sessionId: session.sessionId, chunks: reviewChunks },
+    });
+    await this.onLayer3EndSession?.(reviewChunks, this.getHighlights(), this.getTabs(), focus);
+    await this.onLayer2EndSession?.();
+    session.archivePending = false;
     try {
       await browser.storage.local.set({
-        latestReviewChunks: { sessionId: session.sessionId, chunks: reviewChunks },
+        [STORAGE_KEYS.WORKSPACE]: session,
+        [STORAGE_KEYS.EXTENSION_ACTIVE]: false,
       });
-      await browser.storage.local.remove(STORAGE_KEYS.SESSION_CHUNKS);
     } catch (error) {
-      console.warn("[MindEase] Could not archive session source text:", error);
+      session.archivePending = true;
+      throw error;
     }
-    try {
-      await this.onLayer3EndSession?.(reviewChunks, this.getHighlights(), this.getTabs(), focus);
-    } finally {
-      await this.onLayer2EndSession?.();
-    }
+    await browser.storage.local.remove(STORAGE_KEYS.SESSION_CHUNKS);
   }
 
   /* ─── Reset ──────────────────────────────────────────────────────────── */

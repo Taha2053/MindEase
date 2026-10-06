@@ -2,7 +2,6 @@ import { useState, useEffect, type FC } from "react";
 import {
   loadApiKeys,
   saveApiKeys,
-  testMistralKey,
   testPremiumServer,
 } from "@/utils/apiKeyManager";
 import {
@@ -20,21 +19,16 @@ import {
 
 export const ApiKeysSection: FC = () => {
   const [deepseekKey, setDeepseekKey] = useState("");
-  const [mistralKey, setMistralKey] = useState("");
   const [napkinKey, setNapkinKey] = useState("");
   const [ocrKey, setOcrKey] = useState("");
   const [serverUrl, setServerUrl] = useState("http://localhost:8000");
 
   const [showDeepseek, setShowDeepseek] = useState(false);
-  const [showMistral, setShowMistral] = useState(false);
   const [showNapkin, setShowNapkin] = useState(false);
   const [showOcr, setShowOcr] = useState(false);
 
   const [isTestingDeepseek, setIsTestingDeepseek] = useState(false);
   const [deepseekStatus, setDeepseekStatus] = useState<{ ok?: boolean; msg?: string } | null>(null);
-
-  const [isTestingMistral, setIsTestingMistral] = useState(false);
-  const [mistralStatus, setMistralStatus] = useState<{ ok?: boolean; msg?: string } | null>(null);
 
   const [isTestingServer, setIsTestingServer] = useState(false);
   const [serverStatus, setServerStatus] = useState<{ ok?: boolean; msg?: string } | null>(null);
@@ -45,7 +39,6 @@ export const ApiKeysSection: FC = () => {
   useEffect(() => {
     loadApiKeys().then((keys) => {
       setDeepseekKey(keys.deepseekApiKey || "");
-      setMistralKey(keys.mistralApiKey || "");
       setNapkinKey(keys.napkinApiKey || "");
       setOcrKey(keys.ocrSpaceApiKey || "");
       setServerUrl(keys.premiumServerUrl || "http://localhost:8000");
@@ -80,23 +73,6 @@ export const ApiKeysSection: FC = () => {
     }
   };
 
-  const handleTestMistral = async () => {
-    setIsTestingMistral(true);
-    setMistralStatus(null);
-    try {
-      const result = await testMistralKey(mistralKey);
-      if (result.ok) {
-        setMistralStatus({ ok: true, msg: "Mistral API key is valid!" });
-      } else {
-        setMistralStatus({ ok: false, msg: result.error || "Invalid API key." });
-      }
-    } catch (err) {
-      setMistralStatus({ ok: false, msg: String(err) });
-    } finally {
-      setIsTestingMistral(false);
-    }
-  };
-
   const handleTestServer = async () => {
     setIsTestingServer(true);
     setServerStatus(null);
@@ -120,7 +96,6 @@ export const ApiKeysSection: FC = () => {
     try {
       await saveApiKeys({
         deepseekApiKey: deepseekKey.trim(),
-        mistralApiKey: mistralKey.trim(),
         napkinApiKey: napkinKey.trim(),
         ocrSpaceApiKey: ocrKey.trim(),
         premiumServerUrl: serverUrl.trim(),
@@ -141,7 +116,7 @@ export const ApiKeysSection: FC = () => {
         <div>
           <h2>API Keys &amp; AI Service Providers</h2>
           <p style={{ margin: "2px 0 0", fontSize: "0.84rem", color: "var(--text-dim)" }}>
-            DeepSeek is the primary intelligence engine for content structuring and Manim video generation. Mistral serves as an optional fallback.
+            DeepSeek is the primary intelligence engine for content structuring and Manim video generation, configured with server defaults.
           </p>
         </div>
       </div>
@@ -195,54 +170,6 @@ export const ApiKeysSection: FC = () => {
           </div>
         </div>
 
-        {/* Mistral (Fallback) */}
-        <div className="api-key-block">
-          <div className="api-field-head">
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <label htmlFor="dash-mistral-key">Mistral AI API Key</label>
-              <span className="dest-req-badge" style={{ background: "var(--bg-base)", color: "var(--text-muted)" }}>Fallback</span>
-            </div>
-            <a href="https://console.mistral.ai/api-keys/" target="_blank" rel="noreferrer" className="api-help-link">
-              <span>Get key</span>
-              <ExternalLink size={11} />
-            </a>
-          </div>
-          <div className="api-input-wrap">
-            <input
-              id="dash-mistral-key"
-              type={showMistral ? "text" : "password"}
-              placeholder="Optional fallback key"
-              value={mistralKey}
-              onChange={(e) => setMistralKey(e.target.value)}
-            />
-            <button
-              type="button"
-              className="api-eye-btn"
-              onClick={() => setShowMistral(!showMistral)}
-              aria-label={showMistral ? "Hide key" : "Show key"}
-            >
-              {showMistral ? <EyeOff size={14} /> : <Eye size={14} />}
-            </button>
-          </div>
-          <div className="api-field-actions">
-            <button
-              type="button"
-              className="btn-acc-tool"
-              onClick={handleTestMistral}
-              disabled={isTestingMistral || !mistralKey.trim()}
-            >
-              {isTestingMistral ? <Loader2 size={12} className="spin" /> : <Sparkles size={12} />}
-              <span>Test Key</span>
-            </button>
-            {mistralStatus && (
-              <span className={`api-status-tag ${mistralStatus.ok ? "success" : "error"}`}>
-                {mistralStatus.ok ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                {mistralStatus.msg}
-              </span>
-            )}
-          </div>
-        </div>
-
         {/* Napkin AI */}
         <div className="api-key-block">
           <div className="api-field-head">
@@ -269,8 +196,10 @@ export const ApiKeysSection: FC = () => {
               {showNapkin ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
           </div>
+          <p style={{ margin: "6px 0 0", fontSize: "0.76rem", color: "var(--text-dim)" }}>
+            Your key is sent to your configured MindEase server to generate diagrams. Use a server you trust.
+          </p>
         </div>
-
         {/* OCR.space */}
         <div className="api-key-block">
           <div className="api-field-head">

@@ -8,7 +8,7 @@
 import browser from "webextension-polyfill";
 import { STORAGE_KEYS, type UserApiKeys } from "@/types";
 
-export type ApiKeyService = "deepseek" | "mistral" | "napkin" | "ocr" | "premiumServer";
+export type ApiKeyService = "deepseek" | "napkin" | "ocr" | "premiumServer";
 
 const DEFAULT_PREMIUM_SERVER = "http://localhost:8000";
 
@@ -21,7 +21,6 @@ export async function loadApiKeys(): Promise<UserApiKeys> {
     const stored = (result[STORAGE_KEYS.API_KEYS] as UserApiKeys) ?? {};
     return {
       deepseekApiKey: stored.deepseekApiKey?.trim() || "",
-      mistralApiKey: stored.mistralApiKey?.trim() || "",
       napkinApiKey: stored.napkinApiKey?.trim() || "",
       ocrSpaceApiKey: stored.ocrSpaceApiKey?.trim() || "",
       premiumServerUrl: stored.premiumServerUrl?.trim() || (import.meta.env.VITE_PREMIUM_API_URL as string) || DEFAULT_PREMIUM_SERVER,
@@ -30,7 +29,6 @@ export async function loadApiKeys(): Promise<UserApiKeys> {
   } catch (err) {
     console.warn("[MindEase] Failed to load API keys from storage:", err);
     return {
-      mistralApiKey: "",
       deepseekApiKey: "",
       napkinApiKey: "",
       ocrSpaceApiKey: "",
@@ -68,8 +66,6 @@ export async function getApiKey(service: ApiKeyService): Promise<string | undefi
   switch (service) {
     case "deepseek":
       return stored.deepseekApiKey || (import.meta.env.VITE_DEEPSEEK_API_KEY as string | undefined);
-    case "mistral":
-      return stored.mistralApiKey || (import.meta.env.VITE_MISTRAL_API_KEY as string | undefined);
     case "napkin":
       return stored.napkinApiKey || (import.meta.env.VITE_NAPKIN_API_KEY as string | undefined);
     case "ocr":
@@ -83,44 +79,12 @@ export async function getApiKey(service: ApiKeyService): Promise<string | undefi
 
 /**
  * Check if the minimum required keys exist for Layer 1 transformation.
- * DeepSeek (preferred) or Mistral (fallback) is required.
+ * DeepSeek is required.
  */
 export async function hasRequiredKeys(): Promise<boolean> {
   const deepseek = await getApiKey("deepseek");
-  const mistral = await getApiKey("mistral");
-  return Boolean((deepseek && deepseek.trim().length > 0) || (mistral && mistral.trim().length > 0));
+  return Boolean(deepseek && deepseek.trim().length > 0);
 }
-
-/**
- * Quick validation test for Mistral API Key.
- */
-export async function testMistralKey(key: string): Promise<{ ok: boolean; error?: string }> {
-  const trimmed = key.trim();
-  if (!trimmed) {
-    return { ok: false, error: "API key cannot be empty" };
-  }
-
-  try {
-    const res = await fetch("https://api.mistral.ai/v1/models", {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${trimmed}`,
-        Accept: "application/json",
-      },
-    });
-
-    if (res.ok) {
-      return { ok: true };
-    }
-    if (res.status === 401) {
-      return { ok: false, error: "Unauthorized (401): Invalid Mistral API key" };
-    }
-    return { ok: false, error: `Server responded with HTTP ${res.status}` };
-  } catch (err) {
-    return { ok: false, error: `Network error: ${err instanceof Error ? err.message : String(err)}` };
-  }
-}
-
 /**
  * Quick ping test for the MindEase Premium backend service.
  */

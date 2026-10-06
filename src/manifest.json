@@ -34,17 +34,17 @@
 
   "permissions": [
     "storage",
+    "unlimitedStorage",
+    "tabs",
     "offscreen",
     "activeTab",
     "scripting",
-    "sidePanel",
     "downloads",
     "contextMenus"
   ],
 
   "host_permissions": [
-    "<all_urls>",
-    "https://api.mistral.ai/*"
+    "<all_urls>"
   ],
 
   "web_accessible_resources": [
@@ -53,6 +53,7 @@
         "src/layer2/onboarding/onboarding.html",
         "src/session/dashboard/dashboard.html",
         "src/video/video.html",
+        "formulas.css",
         "assets/*"
       ],
       "matches": ["<all_urls>"]

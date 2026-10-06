@@ -10,6 +10,7 @@
  */
 
 import { getApiKey } from "@/utils/apiKeyManager";
+import { getSession } from "@/utils/supabase";
 import type { SupportHints } from "@/types";
 
 const ALLOWED_KEYS: Record<keyof SupportHints, true> = {
@@ -80,18 +81,22 @@ function parseHints(raw: string): SupportHints | undefined {
 }
 
 /**
- * Minimal LLM caller matching the project's existing three-tier pattern
- * (server proxy → user DeepSeek key → Mistral fallback).
- * Kept intentionally small; only used for this single mapping task.
+ * LLM caller for presentation support hints:
+ * 1. Secure Server Proxy: Calls /api/llm/generate using backend proxy with Supabase bearer token
+ * 2. User DeepSeek Key: Direct DeepSeek API call
  */
 async function callLLMForHints(userPrompt: string): Promise<string> {
   const serverBase = (await getApiKey("premiumServer")) || "http://localhost:8000";
 
   // 1. Server proxy
   try {
+    const session = await getSession();
     const resp = await fetch(`${serverBase.replace(/\/+$/, "")}/api/llm/generate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(session ? { Authorization: `Bearer ${session.accessToken}` } : {}),
+      },
       body: JSON.stringify({
         prompt: `${SYSTEM_PROMPT}\n\n${userPrompt}`,
         max_tokens: 256,
@@ -136,38 +141,5 @@ async function callLLMForHints(userPrompt: string): Promise<string> {
     } catch { /* proceed */ }
   }
 
-  // 3. Mistral fallback
-  const mistralKey = await getApiKey("mistral");
-  if (!mistralKey) throw new Error("No LLM backend available");
-
-  for (const model of ["ministral-8b-latest", "open-mistral-7b", "mistral-small-latest"]) {
-    try {
-      const resp = await fetch("https://api.mistral.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${mistralKey.trim()}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: userPrompt },
-          ],
-          max_tokens: 256,
-          temperature: 0.1,
-          response_format: { type: "json_object" },
-        }),
-      });
-      if (resp.status === 429) continue;
-      if (!resp.ok) throw new Error(`Mistral ${resp.status}`);
-      const data = (await resp.json()) as {
-        choices: Array<{ message: { content: string } }>;
-      };
-      const content = data.choices?.[0]?.message?.content;
-      if (content?.trim()) return content;
-    } catch { /* try next model */ }
-  }
-
-  throw new Error("All LLM options failed");
+  throw new Error("MindEase server unavailable. Configure the server or a DeepSeek API key.");
 }

@@ -311,10 +311,11 @@ def _client_returning(body):
 
 async def test_token_bound_to_action_and_paper(monkeypatch):
     monkeypatch.setenv("TURNSTILE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("TURNSTILE_ALLOWED_HOSTNAMES", "study.example.org")
     from datetime import UTC, datetime, timedelta
 
     minted = (datetime.now(UTC) - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    good = {"success": True, "hostname": "arxivisual.org", "action": "start-paper",
+    good = {"success": True, "hostname": "study.example.org", "action": "start-paper",
             "cdata": "1706_03762v2", "challenge_ts": minted}
     monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning(good))
     v = await turnstile.verify_turnstile_detailed("tok", "203.0.113.9", expected_cdata="1706_03762")
@@ -329,7 +330,7 @@ async def test_token_bound_to_action_and_paper(monkeypatch):
     assert not v.ok and v.reason.startswith("action")
 
     # Binding is only enforced when the caller asks for it (older callers/tests).
-    monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning({"success": True, "hostname": "arxivisual.org"}))
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", _client_returning({"success": True, "hostname": "study.example.org"}))
     assert await turnstile.verify_turnstile("tok", "203.0.113.9") is True
 
 

@@ -1,7 +1,7 @@
 """
-FastAPI routes for the ArXiviz API.
+FastAPI routes for the MindEase general document, video, and diagram server.
 
-Now using SQLite database and local Manim rendering.
+Supports SQLite database, Manim video rendering, and Napkin diagram generation.
 """
 
 import hashlib
@@ -34,7 +34,7 @@ from services.adaptation_plan import AdaptationPlanError, normalize_adaptation_p
 from services.azure_speech import synthesize
 from services.related_resources import search_related_resources
 from services.napkin import generate_diagram
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from agents.base import call_llm_json
 from .document_access import document_access, is_document, optional_user, owns_document
 
@@ -109,6 +109,7 @@ class DiagramRequest(BaseModel):
     content: str = Field(min_length=1, max_length=24000)
     label: str = Field(min_length=1, max_length=200)
     learner_profile: dict = Field(default_factory=dict)
+    napkin_api_key: SecretStr | None = Field(default=None, repr=False)
 
 
 class RelatedResourceRequest(BaseModel):
@@ -119,11 +120,11 @@ class RelatedResourceRequest(BaseModel):
 
 @router.post("/resources/related")
 async def related_resources(request: RelatedResourceRequest, _user: dict | None = Depends(current_user)):
-    topic = next((topic.strip() for topic in request.topics if 3 <= len(topic.strip()) <= 90), None)
-    if not topic:
+    topics = [t.strip() for t in request.topics if 3 <= len(t.strip()) <= 90]
+    if not topics:
         raise HTTPException(status_code=422, detail="A learning topic is required")
     try:
-        return {"resources": await search_related_resources(topic, request.preference, request.source_url)}
+        return {"resources": await search_related_resources(topics, request.preference, request.source_url)}
     except RuntimeError:
         raise HTTPException(status_code=503, detail="Web search is not configured") from None
     except (httpx.HTTPError, ValueError):
@@ -134,7 +135,8 @@ async def related_resources(request: RelatedResourceRequest, _user: dict | None 
 async def start_diagram_job(request: DiagramRequest, _user: dict | None = Depends(current_user)):
     from services.diagram_jobs import start_diagram
     owner = (_user.get("sub") or _user.get("id")) if _user else None
-    return {"job_id": start_diagram(request.content, request.label, request.learner_profile, owner)}
+    return {"job_id": start_diagram(request.content, request.label, request.learner_profile, owner,
+                                  api_key=request.napkin_api_key.get_secret_value() if request.napkin_api_key else None)}
 
 
 @router.get("/visuals/napkin/jobs/{job_id}")
@@ -147,7 +149,8 @@ async def get_diagram_job(job_id: str, _user: dict | None = Depends(current_user
 @router.post("/visuals/napkin")
 async def create_diagram(request: DiagramRequest, _user: dict | None = Depends(current_user)):
     try:
-        return await generate_diagram(request.content, request.label, request.learner_profile)
+        return await generate_diagram(request.content, request.label, request.learner_profile,
+                                      api_key=request.napkin_api_key.get_secret_value() if request.napkin_api_key else None)
     except httpx.HTTPStatusError as exc:
         code = exc.response.status_code
         detail = {401: "Napkin rejected the server API token.", 403: "Napkin denied access; check API access and credits.", 429: "Napkin rate limit reached; try again later."}.get(code, f"Diagram provider failed (HTTP {code}).")
@@ -259,7 +262,7 @@ async def generate_llm(
     request: LLMProxyRequest,
     _user: dict | None = Depends(current_user),
 ) -> LLMProxyResponse:
-    """Secure server-side LLM proxy: uses server's DEEPSEEK_API_KEY with Mistral fallback.
+    """Secure server-side LLM proxy: uses server's DEEPSEEK_API_KEY.
     Prevents client-side bundling or public exposure of provider API keys.
     """
     try:
@@ -269,7 +272,7 @@ async def generate_llm(
             max_tokens=request.max_tokens,
             json_mode=request.json_mode,
             name="client_adaptation_proxy",
-            providers=("deepseek", "mistral"),
+            providers=("deepseek",),
         )
         return LLMProxyResponse(content=content)
     except Exception as exc:

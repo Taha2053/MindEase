@@ -14,7 +14,7 @@ import type {
 } from "@/types";
 import { SessionTracker }  from "./sessionTracker";
 import { assembleArtifact } from "./knowledgeArtifact";
-import { clearActiveSession } from "./storage";
+import { clearActiveSession, saveActiveSession, saveSessionLog } from "./storage";
 
 // ── Active session tracker (singleton per session) ────────────────────────────
 let tracker: SessionTracker | null = null;
@@ -25,11 +25,12 @@ let tracker: SessionTracker | null = null;
  * Start a new tracking session.
  * Called by the background worker when a SESSION_START message arrives or tab opens.
  */
-export function startSession(userId: string, profile: CognitiveProfile, sessionId?: string): void {
+export async function startSession(userId: string, profile: CognitiveProfile, sessionId?: string): Promise<void> {
   if (tracker && tracker.getLog().endTime === null
     && tracker.getLog().userId === userId
     && (!sessionId || tracker.getLog().sessionId === sessionId)) return;
   tracker = new SessionTracker(userId, profile, sessionId);
+  await saveActiveSession(tracker.getLog());
   console.log("[Layer 3] Session started:", tracker.getLog().sessionId);
 }
 
@@ -66,7 +67,6 @@ export async function endSession(
 
   // Close the session log
   const log     = tracker.endSession();
-  await clearActiveSession();
   const profile = log.profile;
 
   // Run the full synthesis pipeline with workspace data
@@ -78,12 +78,14 @@ export async function endSession(
     tabs,
     focus,
   );
+  await saveSessionLog(log);
+  await clearActiveSession();
 
   // Notify popup that the artifact is ready
   browser.runtime.sendMessage({
     type:    "ARTIFACT_READY",
     payload: artifact,
-  } as ExtensionMessage);
+  } as ExtensionMessage).catch(() => {});
 
   // Reset tracker
   tracker = null;
@@ -96,9 +98,6 @@ export async function endSession(
  * Called by the background worker when a COGNITIVE_EVENT message arrives.
  */
 export function recordEvent(event: CognitiveEvent): void {
-  if (!tracker) {
-    console.log("[Layer 3] Auto-initializing tracker for incoming event.");
-    tracker = new SessionTracker(event.profile.userId, event.profile);
-  }
+  if (!tracker || tracker.getLog().endTime !== null) return;
   tracker.recordEvent(event);
 }

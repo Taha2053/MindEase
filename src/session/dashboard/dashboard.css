@@ -424,9 +424,9 @@ body {
   height: 8px;
   border-radius: 2px;
 }
-.legend-active { background: var(--success); }
-.legend-passive { background: var(--warning); }
-.legend-suspended { background: var(--danger); }
+.legend-active { background: var(--focus-active, #86efac); }
+.legend-passive { background: var(--focus-passive, #fde047); }
+.legend-suspended { background: var(--focus-suspended, #fca5a5); }
 
 .focus-metrics {
   display: flex;

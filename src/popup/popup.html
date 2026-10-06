@@ -224,25 +224,76 @@
         text-transform: uppercase;
         flex-shrink: 0;
       }
-      .tab-badge.included { background: rgba(74,222,128,0.12); color: var(--success); }
+      .tab-badge.learning { background: rgba(74,222,128,0.12); color: var(--success); }
       .tab-badge.distraction { background: rgba(248,113,113,0.12); color: var(--danger); }
-      .tab-badge.excluded { background: rgba(100,116,139,0.12); color: var(--text-muted); }
-      .tab-row .tab-toggle {
-        width: 28px; height: 22px;
-        border: 1px solid var(--border);
-        border-radius: 5px;
-        background: transparent;
-        color: var(--text-dim);
-        cursor: pointer;
-        display: flex;
+      .tab-badge.unknown { background: rgba(100,116,139,0.12); color: var(--text-muted); }
+
+      .tab-switch {
+        display: inline-flex;
         align-items: center;
-        justify-content: center;
-        transition: all 0.12s;
+        gap: 6px;
+        background: transparent;
+        border: none;
+        padding: 2px 0;
+        cursor: pointer;
         flex-shrink: 0;
       }
-      .tab-row .tab-toggle:hover { border-color: var(--border-hover); color: var(--text-primary); }
-      .tab-row .tab-toggle.on { background: var(--success); color: #000; border-color: var(--success); }
-
+      .tab-switch-track {
+        width: 30px;
+        height: 16px;
+        background: var(--bg-surface-alt);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        position: relative;
+        transition: background 0.18s ease, border-color 0.18s ease;
+        display: block;
+      }
+      .tab-switch.active .tab-switch-track {
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      .tab-switch-thumb {
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--text-dim);
+        transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1), background 0.18s ease;
+        display: block;
+      }
+      .tab-switch.active .tab-switch-thumb {
+        transform: translateX(14px);
+        background: #ffffff;
+      }
+      .tab-switch-label {
+        font-size: 0.66rem;
+        font-weight: 500;
+        color: var(--text-dim);
+        min-width: 40px;
+      }
+      .tab-switch.active .tab-switch-label {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .btn-pdf-reader {
+        padding: 3px 8px;
+        background: var(--bg-surface-alt);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--accent);
+        font-size: 0.68rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        flex-shrink: 0;
+      }
+      .btn-pdf-reader:hover {
+        background: var(--accent);
+        color: #ffffff;
+        border-color: var(--accent);
+      }
       .btn-group { display: flex; gap: 8px; margin-top: 12px; }
       .btn {
         flex: 1; padding: 10px; border: none; border-radius: 8px;

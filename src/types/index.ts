@@ -230,6 +230,7 @@ export type MessageType =
   | "GENERATE_VISUALS"          // content → background (request visuals for concepts)
   | "SESSION_STATE_CHANGED"     // popup → all (session started/ended)
   | "EXTENSION_STATE_CHANGED"  // popup → content (extension activated/deactivated)
+  | "GET_TAB_TRACKING_STATE"   // content → background (check active/included/overridden)
   | "CLASSIFY_CONTENT"         // content → background (ask LLM: educational or entertainment)
   | "CLASSIFY_CONTENT_RESULT" // background → content (classification result)
   | "EXPLAIN_SELECTION"       // content → background (ask LLM to explain selected text)
@@ -249,7 +250,9 @@ export type MessageType =
   | "STOP_TTS_AUDIO"       // content → background (stop offscreen audio)
   | "PAUSE_TTS_AUDIO"      // content → background (pause offscreen audio)
   | "RESUME_TTS_AUDIO"     // content → background (resume offscreen audio)
-  | "RELATED_RESOURCES";   // content → background (search related learning websites)
+  | "RELATED_RESOURCES"    // content → background (search related learning websites)
+  | "CLASSIFY_TABS"        // popup → background (batch classify all open tabs by metadata)
+  | "SAVE_READER_CHUNKS";   // dashboard reader → background (save transformed chunks for PDF reader)
 
 export interface ExtensionMessage {
   type:    MessageType;
@@ -310,6 +313,7 @@ export interface WorkspaceSession {
   closedTabs?: TabResource[]; // Retain studied resources and notes after their browser tabs close.
   startTime: number;
   endTime: number | null;
+  archivePending?: boolean; // Keep failed saves retryable after a worker restart.
   lastActivityAt: number;
   enteredPassiveAt: number | null;
   enteredSuspendedAt: number | null;
@@ -584,9 +588,7 @@ export const STORAGE_KEYS = {
 
 export interface UserApiKeys {
   deepseekApiKey?: string;
-  mistralApiKey?: string;
   napkinApiKey?: string;
-  hfToken?: string;
   ocrSpaceApiKey?: string;
   premiumServerUrl?: string;
   updatedAt?: number;
@@ -660,6 +662,7 @@ export type VisualSource = "napkin";
 
 export interface VisualEntry {
   sourceBlockId?: string;
+  sessionId?: string;
   id: string;
   concept: string;
   source: VisualSource;
@@ -692,6 +695,12 @@ export interface StorageDestinationConfig {
 }
 
 export interface SessionFolderSummary {
+  ownerAccountId?: string | null;
+  syncState?: "local" | "pending" | "synced" | "error";
+  syncError?: string;
+  studyCards?: StudyCard[];
+  content?: ContentChunk[];
+  resources?: ResourceEntry[];
   sessionId: string;
   sessionNumber: number;
   dateStr: string; // e.g., "2026-09-27"

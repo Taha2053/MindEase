@@ -7,18 +7,17 @@ from agents.manim_generator import ManimGenerator
 from agents.section_analyzer import SectionAnalyzer
 from agents.visualization_planner import VisualizationPlanner
 
-
-def test_planning_chain_prefers_deepseek_then_mistral(monkeypatch):
+def test_planning_chain_prefers_deepseek_then_nvidia(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test")
     monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-reasoner")
-    monkeypatch.setenv("MISTRAL_API_KEY", "mistral-test")
-    assert base._configured_role_chain(("deepseek", "mistral")) == ["deepseek", "mistral"]
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvidia-test")
+    assert base._configured_role_chain(("deepseek", "nvidia")) == ["deepseek", "nvidia"]
 
 
-def test_planning_falls_back_to_mistral(monkeypatch):
+def test_planning_falls_back_to_nvidia(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test")
     monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-reasoner")
-    monkeypatch.setenv("MISTRAL_API_KEY", "mistral-test")
+    monkeypatch.setenv("NVIDIA_API_KEY", "nvidia-test")
     calls = []
 
     async def fake_execute(provider, resolved_model, prompt, system_prompt, max_tokens, name, json_mode):
@@ -30,26 +29,22 @@ def test_planning_falls_back_to_mistral(monkeypatch):
     monkeypatch.setattr(base, "_execute_provider_call", fake_execute)
     result = asyncio.run(base.call_llm(
         "Plan this lesson",
-        providers=("deepseek", "mistral"),
+        providers=("deepseek", "nvidia"),
         json_mode=True,
     ))
 
     assert result == '{"plan": "grounded"}'
     assert calls == [
         ("deepseek", "deepseek-reasoner"),
-        ("mistral", "codestral-latest"),
+        ("nvidia", "moonshotai/kimi-k3"),
     ]
-
-
 def test_generation_chain_is_deepseek_only(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test")
-    monkeypatch.setenv("MISTRAL_API_KEY", "mistral-test")
     assert base._configured_role_chain(("deepseek",)) == ["deepseek"]
 
 
 def test_pipeline_agents_declare_their_provider_roles(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-test")
-    monkeypatch.setenv("MISTRAL_API_KEY", "mistral-test")
     assert SectionAnalyzer().providers == ("deepseek",)
     assert VisualizationPlanner().providers == ("deepseek",)
     assert ManimGenerator().providers == ("deepseek",)

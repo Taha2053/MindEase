@@ -1,4 +1,4 @@
-import katexStyles from "katex/dist/katex.min.css?url";
+import katexStyles from "@/styles/formulas.css?url";
 import { renderMarkdown } from "@/utils/markdown";
 /* ============================================================
    content/index.ts - Content Script
@@ -34,9 +34,17 @@ import {
   type SidebarState,
 } from "@/content/sidebarManager";
 import { showDiscoveryPrompt } from "@/content/discoveryPrompt";
-import { requestAdaptationChoice } from "@/content/adaptationPrompt";
+import { requestAdaptationChoice, dismissAdaptationChoice } from "@/content/adaptationPrompt";
 import { extractReadingText } from "@/content/sourceExtraction";
 import { isExcludedPage } from "@/utils/pagePrivacy";
+import {
+  isPdfUrl,
+  classifySource,
+  detectVideoPlatform,
+  loadTextTrackTranscript,
+  transcriptToText,
+  isNativePdfViewer,
+} from "@/content/sourceHelpers";
 import {
   injectShadowStyle,
   removeShadowStyle,
@@ -66,30 +74,12 @@ function shouldActivate(): ActivationResult {
   ];
   if (neverEducational.some(d => hostname.includes(d))) return { decision: false, ambiguous: false };
 
-  // Asset & search sites — not study content, show discovery prompt instead
-  const promptOnlyHosts = [
-    // AI chat platforms
-    "chatgpt.com", "chat.openai.com", "chat.deepseek.com",
-    "claude.ai", "perplexity.ai", "grok.com",
-    "gemini.google.com", "bard.google.com", "copilot.microsoft.com",
-    "chat.mistral.ai", "pi.ai",
-    // Asset sites
-    "unsplash.com", "pexels.com", "pixabay.com", "gettyimages.com",
-    "shutterstock.com", "istockphoto.com", "imgur.com",
-    "flaticon.com", "icons8.com", "iconfinder.com", "fontawesome.com",
-    "fonts.google.com", "dafont.com",
-    "freepik.com", "vecteezy.com", "storyset.com",
-    "duckduckgo.com",
-    // Design platforms
-    "canva.com",
-  ];
-  if (promptOnlyHosts.some(d => hostname.includes(d))) return { decision: false, ambiguous: false };
   // Search engine result pages (check URL path, not just hostname)
-  if (/google\.\w{2,4}\/search/.test(url) || /bing\.com\/search/.test(url) || /search\.yahoo\.com/.test(url)) {
+  if (/google\.\w{2,4}\/search/.test(url) || /bing\.com\/search/.test(url) || /search\.yahoo\.com/.test(url) || /duckduckgo\.com\/\?q=/.test(url)) {
     return { decision: false, ambiguous: false };
   }
 
-  if (url.endsWith(".pdf") || document.contentType === "application/pdf") return { decision: true, ambiguous: false };
+  if (isPdfUrl(url, document.contentType)) return { decision: true, ambiguous: false };
   // Fast-track known learning workspaces & documents
   if (hostname.includes("classroom.google.com") ||
       hostname.includes("docs.google.com") ||
@@ -204,19 +194,11 @@ const SKIP_SPEED_THRESHOLD_PX_PER_MS = 1.5;
 /* ─── Content type detection ─────────────────────────────────────────────────── */
 
 function detectSourceType(): "pdf" | "website" | "video" | "lecture" | null {
-  const url = window.location.href;
-
-  if (url.endsWith(".pdf") || document.contentType === "application/pdf") {
-    return "pdf";
-  }
-  if (
-    url.includes("youtube.com/watch") ||
-    url.includes("vimeo.com") ||
-    document.querySelector("video") !== null
-  ) {
-    return "video";
-  }
-  return "website";
+  return classifySource(
+    window.location.href,
+    document.contentType,
+    document.querySelector("video") !== null,
+  );
 }
 
 /* ─── Activity ping ──────────────────────────────────────────────────────────── */
@@ -443,10 +425,13 @@ function destroyBehaviorTracking(): void {
 
 let _theme: Theme = "dark";
 let _extensionActive = false;
-let _cleanupYouTube: (() => void) | null = null;
+let _cleanupVideo: (() => void) | null = null;
+let _cancelPausedVideo: (() => void) | null = null;
+let _resourcesRefreshedOnDone = false;
 let _adaptationFlow: Promise<boolean> | null = null;
 let _activated = false;
-let _classificationPromise: Promise<"educational" | "entertainment"> | null = null;
+let _classificationPromise: Promise<"educational" | "entertainment" | "unknown"> | null = null;
+let _activationEpoch = 0;
 
 const defaultBaseline: BaselineProfile = {
   formatPreference: "text",
@@ -481,84 +466,73 @@ async function isExtensionActive(): Promise<boolean> {
 /**
  * React to extension state changes.
  */
-function onExtensionStateChange(active: boolean): void {
-  _extensionActive = active;
-  if (!active) {
+async function onExtensionStateChange(active: boolean): Promise<void> {
+  const epoch = ++_activationEpoch;
+  const state = active
+    ? await browser.runtime.sendMessage({ type: "GET_TAB_TRACKING_STATE" }).catch(() => null) as { active?: boolean; included?: boolean; overridden?: boolean } | null
+    : null;
+  if (epoch !== _activationEpoch) return;
+  if (!active || !state?.active || (state.overridden && !state.included)) {
+    _extensionActive = false;
     _activated = false;
     _classificationPromise = null;
+    dismissAdaptationChoice();
     destroyBehaviorTracking();
+    stopTTS();
     shadowById("mindease-overlay")?.remove();
     shadowById("mindease-pdf-loader")?.remove();
     removeReopenButton();
-    _cleanupYouTube?.();
-    _cleanupYouTube = null;
-  } else {
-    const { decision } = shouldActivate();
-    if (!decision) return;
-    const sourceType = detectSourceType();
-    if (!sourceType) return;
-    void (async () => {
-      const classification = await requestClassification();
-      if (classification !== "educational" || _activated) return;
-      _activated = true;
-      activateForSession(sourceType);
-    })();
+    _cleanupVideo?.();
+    _cleanupVideo = null;
+    _cancelPausedVideo?.();
+    _cancelPausedVideo = null;
+    return;
+  }
+  const classification = await requestClassification();
+  if (epoch !== _activationEpoch) return;
+  const isDistraction = classification === "entertainment";
+  const included = state.overridden ? state.included : !isDistraction;
+  _extensionActive = Boolean(included);
+  const sourceType = detectSourceType();
+  if (!sourceType) return;
+  _activated = true;
+  try {
+    await activateForSession(sourceType);
+  } catch (error) {
+    _activated = false;
+    showAdaptationStatus(`Could not start adaptation: ${error instanceof Error ? error.message : String(error)}`, true);
   }
 }
 
-/**
- * Request LLM-based page classification from background service worker.
- * Returns "entertainment" as safe fallback on timeout or failure —
- * never silently blesses non-educational pages.
- */
-function requestClassification(): Promise<"educational" | "entertainment"> {
+/** Classification labels come from page content, never hostname guesses. */
+function requestClassification(): Promise<"educational" | "entertainment" | "unknown"> {
   if (_classificationPromise) return _classificationPromise;
-
-  _classificationPromise = new Promise<"educational" | "entertainment">((resolve) => {
-    const timeout = setTimeout(() => {
-      browser.runtime.onMessage.removeListener(handler);
-      resolve("entertainment");
-    }, 15_000);
-
-    const handler = (message: unknown) => {
-      const msg = message as { type: string; payload?: { classification: string } };
-      if (msg.type === "CLASSIFY_CONTENT_RESULT") {
-        clearTimeout(timeout);
-        browser.runtime.onMessage.removeListener(handler);
-        resolve(msg.payload?.classification === "educational" ? "educational" : "entertainment");
-      }
-    };
-    browser.runtime.onMessage.addListener(handler);
-
-    const snippet = (document.body?.innerText ?? "").slice(0, 2000);
-    browser.runtime.sendMessage({
-      type: "CLASSIFY_CONTENT",
-      payload: { title: document.title, snippet },
-    }).catch(() => {
-      clearTimeout(timeout);
-      browser.runtime.onMessage.removeListener(handler);
-      resolve("entertainment");
-    });
-  });
-
+  _classificationPromise = browser.runtime.sendMessage({
+    type: "CLASSIFY_CONTENT",
+    payload: { title: document.title, snippet: extractReadingText().slice(0, 2000) },
+  }).then(value => {
+    const reply = value as { classification?: string } | undefined;
+    if (reply?.classification === "educational" || reply?.classification === "entertainment") return reply.classification;
+    _classificationPromise = null;
+    return "unknown" as const;
+  }).catch(() => { _classificationPromise = null; return "unknown" as const; });
   return _classificationPromise;
 }
 
 async function activateForSession(sourceType: string): Promise<void> {
   console.log(`[MindEase Content] Activating for ${sourceType}`);
 
-  browser.runtime.sendMessage({
+  const reply = await browser.runtime.sendMessage({
     type: "SESSION_START",
-    payload: {
-      sourceType,
-      url: window.location.href,
-      timestamp: Date.now(),
-      title: document.title,
-    },
-  });
+    payload: { sourceType, url: window.location.href, timestamp: Date.now(), title: document.title },
+  }) as { received?: boolean; error?: string } | undefined;
+  console.log(`[MindEase Content] SESSION_START reply:`, JSON.stringify(reply));
+  if (!reply?.received) throw new Error(reply?.error || "This tab is not included in the active session.");
 
   initBehaviorTracking();
-  triggerContentTransformation(sourceType);
+  void triggerContentTransformation(sourceType).catch(error => {
+    showAdaptationStatus(`Could not prepare the source: ${error instanceof Error ? error.message : String(error)}`, true);
+  });
 
   const savedState = await loadSidebarState();
   if (savedState.visible) {
@@ -578,12 +552,41 @@ async function activateForSession(sourceType: string): Promise<void> {
 
 async function triggerContentTransformation(sourceType: string): Promise<void> {
   await wakeServiceWorker();
+  if (!_extensionActive) return;
   if (sourceType === "video") {
     const video = document.querySelector("video") as HTMLVideoElement;
-    if (video && !video.paused) {
-      await initYouTubeMode();
-    } else if (video) {
-      video.addEventListener("play", () => initYouTubeMode(), { once: true });
+    if (!video) {
+      showAdaptationStatus("MindEase could not find a video element on this page.", true);
+      return;
+    }
+    const platform = detectVideoPlatform(window.location.href);
+    const startVideo = async () => {
+      if (platform === "youtube") {
+        await initYouTubeMode();
+      } else {
+        await initGenericVideoMode(video, platform);
+      }
+    };
+    if (!video.paused) {
+      await startVideo();
+    } else {
+      _cancelPausedVideo?.();
+      let playHandler: (() => void) | null = null;
+      const cancelWait = () => {
+        if (playHandler) {
+          video.removeEventListener("play", playHandler);
+          playHandler = null;
+        }
+        shadowById("mindease-adaptation-status")?.remove();
+      };
+      _cancelPausedVideo = cancelWait;
+      showAdaptationStatus("MindEase is ready — press play on the video to start adaptation.", false);
+      playHandler = () => {
+        _cancelPausedVideo = null;
+        shadowById("mindease-adaptation-status")?.remove();
+        void startVideo();
+      };
+      video.addEventListener("play", playHandler, { once: true });
     }
   } else if (sourceType === "pdf") {
     await initPDFMode();
@@ -594,7 +597,7 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
       const onVisible = () => {
         if (document.visibilityState === "visible") {
           document.removeEventListener("visibilitychange", onVisible);
-          initContentTransformation(sourceType);
+          if (_extensionActive) initContentTransformation(sourceType);
         }
       };
       document.addEventListener("visibilitychange", onVisible);
@@ -611,40 +614,35 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
   browser.runtime.onMessage.addListener((message: unknown) => {
     const msg = message as { type: string; active?: boolean };
     if (msg.type === "EXTENSION_STATE_CHANGED") {
-      onExtensionStateChange(msg.active ?? false);
+      void onExtensionStateChange(msg.active ?? false);
     }
   });
 
-  const activation = shouldActivate();
-  if (!activation.decision) return;
-
+  // If extension is not active, show discovery prompt on relevant pages
   _extensionActive = await isExtensionActive();
   if (!_extensionActive) {
-    // Discovery prompt: manual user activation — intentional bypass of LLM classification
+    const activation = shouldActivate();
+    if (!activation.decision) return;
     const sourceType = detectSourceType();
     if (!sourceType) return;
     setTimeout(() => {
       void showDiscoveryPrompt(_theme, () => {
         void (async () => {
+          const response = await browser.runtime.sendMessage({ type: "SESSION_STATE_CHANGED", payload: { active: true, includeCurrentTab: true } }) as { received?: boolean; error?: string };
+          if (!response?.received) throw new Error(response?.error || "Session could not start.");
           _extensionActive = true;
           _activated = true;
-          await browser.storage.local.set({ [STORAGE_KEYS.EXTENSION_ACTIVE]: true });
-          await browser.runtime.sendMessage({ type: "SESSION_STATE_CHANGED", payload: { active: true } }).catch(() => {});
           await activateForSession(sourceType);
-        })();
+        })().catch(error => {
+          _activated = false;
+          showAdaptationStatus(`Session could not start: ${error instanceof Error ? error.message : String(error)}`, true);
+        });
       });
     }, 1200);
     return;
   }
 
-  // LLM classification gate for auto-activation
-  const sourceType = detectSourceType();
-  if (!sourceType) return;
-  const classification = await requestClassification();
-  if (classification !== "educational") return;
-  if (_activated) return;
-  _activated = true;
-  await activateForSession(sourceType);
+  await onExtensionStateChange(true);
 })();
 
 /* ─── Layer 1: Content Transformation ──────────────────────────────────────────── */
@@ -664,12 +662,13 @@ async function performTransformationRequest(
   text: string,
   pageType: "website" | "pdf" | "video" | "lecture",
 ): Promise<boolean> {
+  if (!_extensionActive) return false;
   if (isExcludedPage(window.location.href, browser.extension.inIncognitoContext)
     || document.querySelector('input[type="password"], input[autocomplete="cc-number"]')) return false;
   const stored = await browser.storage.local.get(STORAGE_KEYS.PROFILE).catch(() => ({}));
   const profile = (stored as Record<string, unknown>)[STORAGE_KEYS.PROFILE] as { baseline?: BaselineProfile } | undefined;
   const adaptation = await requestAdaptationChoice(_theme, profile?.baseline);
-  if (!adaptation) return false;
+  if (!adaptation || !_extensionActive) return false;
   showAdaptationStatus("MindEase is preparing the first adapted section…", false);
   let response: { received?: boolean; error?: string } | null = null;
   try {
@@ -775,6 +774,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     type: string; chunks?: ContentChunk[]; error?: string; payload?: unknown;
     visuals?: VisualEntry[]; baseline?: BaselineProfile; transformationParams?: TransformationParams;
     condition?: CognitiveNeed; language?: string; append?: boolean; done?: boolean;
+    pendingBlockIds?: string[]; completedBlockIds?: string[];
   };
   if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks && msg.chunks.length > 0) {
     if (!_extensionActive) return;
@@ -790,11 +790,24 @@ browser.runtime.onMessage.addListener((message: unknown) => {
       _ttsBatchesDone = true;
       const marker = shadowById("mindease-loading-marker");
       if (marker) (marker as HTMLElement).style.display = "none";
+      if (!_resourcesRefreshedOnDone && _contentChunks.length > 0) {
+        _resourcesRefreshedOnDone = true;
+        const aggregateTopics = [...new Set(_contentChunks.flatMap(c => c.conceptTags).filter(Boolean))];
+        if (aggregateTopics.length === 0) {
+          const cleanDocTitle = document.title.replace(/\s*[-–|].*$/, "").trim();
+          if (cleanDocTitle.length >= 3 && cleanDocTitle.length <= 60) {
+            aggregateTopics.push(cleanDocTitle);
+          }
+        }
+        void showRelatedResources(aggregateTopics, _formatPreference);
+      }
     }
   }
-  if (msg.type === "VISUALS_READY" && msg.visuals) {
-    if (msg.visuals.length) renderVisuals(msg.visuals);
-    else if (msg.error) showAdaptationStatus(`Visual generation failed: ${msg.error}`, true);
+  if (msg.type === "VISUALS_READY" && _extensionActive) {
+    if (msg.pendingBlockIds) showVisualPlaceholders(msg.pendingBlockIds);
+    if (msg.visuals?.length) renderVisuals(msg.visuals);
+    if (msg.completedBlockIds) finishVisualPlaceholders(msg.completedBlockIds, msg.error);
+    if (msg.error) showAdaptationStatus(`Visual generation failed: ${msg.error}`, true);
   }
   if (msg.type === "TRANSFORM_ERROR") {
     _ttsBatchesDone = true;
@@ -1874,8 +1887,66 @@ const OVERLAY_CSS = `
       #mindease-overlay[data-density="concise"] .is-example .chunk-body {max-height:none;overflow:visible;}
       #mindease-overlay .source-disclosure {font-size:11px;opacity:.7;margin-top:4px;}
       #mindease-overlay .mindease-inline-visual {margin:28px 0;}
-      #mindease-overlay .mindease-inline-visual img {width:100%;height:auto;border-radius:8px;}
+      #mindease-overlay .mindease-visual-img-wrap {position:relative;display:block;border-radius:8px;overflow:hidden;background:var(--bg-elevated);border:1px solid var(--border);}
+      #mindease-overlay .mindease-inline-visual img {width:100%;height:auto;display:block;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease;}
+      #mindease-overlay .mindease-inline-visual:hover img {transform:scale(1.012);}
+      #mindease-overlay .mindease-visual-zoom-btn {
+        position:absolute;right:10px;bottom:10px;
+        background:rgba(15,23,42,0.85);backdrop-filter:blur(6px);color:#fff;
+        border:1px solid rgba(255,255,255,0.25);border-radius:6px;
+        padding:4px 8px;font-size:11px;font-weight:600;cursor:pointer;
+        display:inline-flex;align-items:center;gap:4px;z-index:2;
+        transition:all 0.15s ease;
+      }
+      #mindease-overlay .mindease-visual-zoom-btn:hover {background:var(--accent);color:#fff;border-color:var(--accent);}
       #mindease-overlay .mindease-inline-visual figcaption {font-size:12px;margin-top:8px;color:var(--text-dim);}
+      .mindease-lightbox {
+        position:fixed;inset:0;z-index:2147483647;
+        display:flex;flex-direction:column;
+        background:rgba(5,7,15,0.92);backdrop-filter:blur(12px);
+        animation:mindease-fade-in 0.18s ease-out;
+      }
+      .mindease-lightbox-header {
+        display:flex;align-items:center;justify-content:space-between;
+        padding:12px 20px;color:#fff;border-bottom:1px solid rgba(255,255,255,0.12);
+        background:rgba(0,0,0,0.3);flex-shrink:0;
+      }
+      .mindease-lightbox-title {
+        font-size:0.92rem;font-weight:600;color:#f8fafc;
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50vw;
+      }
+      .mindease-lightbox-controls {
+        display:flex;align-items:center;gap:8px;
+      }
+      .mindease-lightbox-btn {
+        background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);
+        color:#f8fafc;padding:5px 10px;border-radius:6px;cursor:pointer;
+        font-size:0.75rem;font-weight:500;display:inline-flex;align-items:center;gap:4px;
+        transition:background 0.15s, transform 0.1s;
+      }
+      .mindease-lightbox-btn:hover {background:rgba(255,255,255,0.2);}
+      .mindease-lightbox-btn:active {transform:scale(0.97);}
+      .mindease-lightbox-zoom-val {
+        font-size:0.75rem;font-weight:600;color:#94a3b8;min-width:44px;text-align:center;
+      }
+      .mindease-lightbox-body {
+        flex:1;overflow:auto;display:grid;place-items:center;padding:24px;
+        user-select:none;cursor:grab;position:relative;
+      }
+      .mindease-lightbox-body:active {cursor:grabbing;}
+      .mindease-lightbox-img {
+        max-width:88vw;max-height:82vh;object-fit:contain;
+        border-radius:8px;transition:transform 0.15s ease-out;
+        box-shadow:0 12px 48px rgba(0,0,0,0.6);
+        pointer-events:auto;
+      }
+      #mindease-overlay .visual-pending {min-height:130px;display:grid;place-items:center;gap:12px;padding:24px;border:1px dashed var(--border);border-radius:12px;background:var(--bg-surface);color:var(--text-dim);font-size:13px;}
+      #mindease-overlay .visual-pending-art {display:flex;align-items:center;gap:14px;height:36px;}
+      #mindease-overlay .visual-pending-art span {width:22px;height:22px;border:2px solid var(--accent);border-radius:6px;animation:mindease-diagram-pulse 1.8s ease-in-out infinite;}
+      #mindease-overlay .visual-pending-art span:nth-child(2) {animation-delay:.3s;}
+      #mindease-overlay .visual-pending-art span:nth-child(3) {animation-delay:.6s;}
+      @keyframes mindease-diagram-pulse {0%,100% {opacity:.35;transform:translateY(0);} 50% {opacity:1;transform:translateY(-5px);}}
+      @media (prefers-reduced-motion:reduce) {#mindease-overlay .visual-pending-art span {animation:none;opacity:.7;}}
       #mindease-overlay #mindease-reader-actions {display:flex;gap:8px;padding:12px 18px;}
       #mindease-overlay .logo-icon {background:var(--accent);color:var(--bg-surface);}
       #mindease-overlay .logo-icon svg {stroke:currentColor;}
@@ -2959,6 +3030,7 @@ function injectOverlay(
   language?: string,
 ): void {
   stopTTS();
+  _visualEntries = [];
   shadowById("mindease-overlay")?.remove();
   shadowById("mindease-pdf-loader")?.remove();
   removeReopenButton();
@@ -3145,13 +3217,6 @@ function injectOverlay(
   );
 
 
-  // Persistent reading region: keyboard focus may leave for the source page.
-  /* ── Keyboard: Escape to close ── */
-  overlay.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      handleClose();
-    }
-  });
 
   /* ── Focus first focusable ── */
   setTimeout(() => {
@@ -3161,7 +3226,7 @@ function injectOverlay(
 
   /* ── Tab switching ── */
   overlay.querySelector("#mindease-video")?.addEventListener("click", () => {
-    window.open(browser.runtime.getURL("src/video/video.html") + "?url=" + encodeURIComponent(location.href), "_blank", "noopener");
+    window.open(browser.runtime.getURL("src/session/dashboard/dashboard.html") + "#video?source=" + encodeURIComponent(location.href), "_blank", "noopener");
   });
   overlay.querySelector("#mindease-profile-edit")?.addEventListener("click", () => {
     window.open(browser.runtime.getURL("src/session/dashboard/dashboard.html") + "#profile", "_blank", "noopener");
@@ -3277,9 +3342,10 @@ function injectOverlay(
   resourcesClose?.addEventListener("click", closeDrawer);
   resourcesBackdrop?.addEventListener("click", closeDrawer);
   overlay.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && resourcesDrawer?.style.display === "flex") {
+    if (e.key === "Escape") {
       e.stopPropagation();
-      closeDrawer();
+      if (resourcesDrawer?.style.display === "flex") closeDrawer();
+      else handleClose();
     }
   });
 
@@ -3295,14 +3361,19 @@ function injectOverlay(
     }
     btn.textContent = "Generating...";
     (btn as HTMLButtonElement).disabled = true;
+    const pendingIds = _contentChunks.slice(0, 5).map(chunk => chunk.id);
+    showVisualPlaceholders(pendingIds);
     try {
       const response = (await browser.runtime.sendMessage({
         type: "GENERATE_VISUALS",
         payload: { chunks: _contentChunks.slice(0, 5) },
-      })) as { type?: string; visuals?: VisualEntry[] } | undefined;
+      })) as { type?: string; visuals?: VisualEntry[]; error?: string } | undefined;
+      if (response?.error) throw new Error(response.error);
       const entries: VisualEntry[] = response?.visuals ?? [];
       if (entries.length > 0) {
         renderVisuals(entries);
+        btn.textContent = "Generate again";
+        (btn as HTMLButtonElement).disabled = false;
       } else {
         btn.textContent = "No visuals generated — try again";
         (btn as HTMLButtonElement).disabled = false;
@@ -3311,6 +3382,9 @@ function injectOverlay(
       console.warn("[Content] Visual generation error:", err);
       btn.textContent = "Failed — try again";
       (btn as HTMLButtonElement).disabled = false;
+      finishVisualPlaceholders(pendingIds, err instanceof Error ? err.message : String(err));
+    } finally {
+      finishVisualPlaceholders(pendingIds);
     }
   });
 
@@ -3695,20 +3769,167 @@ function speakTexts(texts: string[]): void {
 }
 let _contentChunks: ContentChunk[] = [];
 
+function showVisualPlaceholders(blockIds: string[]): void {
+  for (const id of blockIds) {
+    const pending = shadowById(`mindease-pending-${id}`);
+    if (pending?.getAttribute("aria-busy") === "true") continue;
+    pending?.remove();
+    const section = Array.from(shadowQueryAll("#tab-content [data-source-block]"))
+      .find(element => element.dataset.sourceBlock === id);
+    if (!section) continue;
+    const figure = document.createElement("figure");
+    figure.id = `mindease-pending-${id}`;
+    figure.className = "mindease-inline-visual visual-pending";
+    figure.setAttribute("role", "status");
+    figure.setAttribute("aria-live", "polite");
+    figure.setAttribute("aria-busy", "true");
+    figure.innerHTML = '<div class="visual-pending-art" aria-hidden="true"><span></span><span></span><span></span></div><span>Planning and drawing your diagram…</span>';
+    section.after(figure);
+  }
+}
+
+function finishVisualPlaceholders(blockIds: string[], error?: string): void {
+  for (const id of blockIds) {
+    const figure = shadowById(`mindease-pending-${id}`);
+    if (!figure || figure.getAttribute("aria-busy") !== "true") continue;
+    figure.setAttribute("aria-busy", "false");
+    figure.textContent = error ? `Diagram unavailable: ${error}` : "No diagram was returned for this section.";
+  }
+}
+
+function openVisualZoom(dataUrl: string, concept: string): void {
+  shadowById("mindease-visual-lightbox")?.remove();
+  let zoomLevel = 1.0;
+  const minZoom = 0.5;
+  const maxZoom = 4.0;
+
+  const lightbox = document.createElement("div");
+  lightbox.id = "mindease-visual-lightbox";
+  lightbox.className = "mindease-lightbox";
+  lightbox.setAttribute("role", "dialog");
+  lightbox.setAttribute("aria-label", `Diagram preview: ${concept}`);
+
+  const header = document.createElement("div");
+  header.className = "mindease-lightbox-header";
+
+  const titleEl = document.createElement("div");
+  titleEl.className = "mindease-lightbox-title";
+  titleEl.textContent = concept || "Diagram preview";
+
+  const controls = document.createElement("div");
+  controls.className = "mindease-lightbox-controls";
+
+  const zoomOutBtn = document.createElement("button");
+  zoomOutBtn.type = "button";
+  zoomOutBtn.className = "mindease-lightbox-btn";
+  zoomOutBtn.textContent = "− Zoom Out";
+
+  const zoomVal = document.createElement("span");
+  zoomVal.className = "mindease-lightbox-zoom-val";
+  zoomVal.textContent = "100%";
+
+  const zoomInBtn = document.createElement("button");
+  zoomInBtn.type = "button";
+  zoomInBtn.className = "mindease-lightbox-btn";
+  zoomInBtn.textContent = "+ Zoom In";
+
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "mindease-lightbox-btn";
+  resetBtn.textContent = "Reset";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "mindease-lightbox-btn";
+  closeBtn.setAttribute("aria-label", "Close visual zoom");
+  closeBtn.innerHTML = "&times; Close";
+
+  controls.append(zoomOutBtn, zoomVal, zoomInBtn, resetBtn, closeBtn);
+  header.append(titleEl, controls);
+
+  const body = document.createElement("div");
+  body.className = "mindease-lightbox-body";
+
+  const img = document.createElement("img");
+  img.className = "mindease-lightbox-img";
+  img.src = dataUrl;
+  img.alt = concept;
+
+  const applyZoom = () => {
+    zoomLevel = Math.max(minZoom, Math.min(maxZoom, zoomLevel));
+    img.style.transform = `scale(${zoomLevel})`;
+    zoomVal.textContent = `${Math.round(zoomLevel * 100)}%`;
+  };
+
+  zoomInBtn.addEventListener("click", () => { zoomLevel += 0.25; applyZoom(); });
+  zoomOutBtn.addEventListener("click", () => { zoomLevel -= 0.25; applyZoom(); });
+  resetBtn.addEventListener("click", () => { zoomLevel = 1.0; applyZoom(); });
+
+  const close = () => {
+    document.removeEventListener("keydown", onKey);
+    lightbox.remove();
+  };
+  closeBtn.addEventListener("click", close);
+  body.addEventListener("click", (e) => {
+    if (e.target === body) close();
+  });
+
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") close();
+    else if (e.key === "+" || e.key === "=") { zoomLevel += 0.25; applyZoom(); }
+    else if (e.key === "-") { zoomLevel -= 0.25; applyZoom(); }
+    else if (e.key === "0") { zoomLevel = 1.0; applyZoom(); }
+  };
+  document.addEventListener("keydown", onKey);
+
+  body.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.15 : -0.15;
+    zoomLevel += delta;
+    applyZoom();
+  }, { passive: false });
+
+  img.addEventListener("dblclick", () => {
+    zoomLevel = zoomLevel > 1.2 ? 1.0 : 2.0;
+    applyZoom();
+  });
+
+  body.append(img);
+  lightbox.append(header, body);
+  appendToShadow(lightbox);
+}
+
 function renderVisuals(visuals: VisualEntry[]): void {
-  _visualEntries = visuals;
+  const entries = new Map(_visualEntries.map(entry => [entry.id, entry]));
+  for (const visual of visuals) entries.set(visual.id, visual);
+  _visualEntries = [...entries.values()];
   const grid = shadowById("mindease-visuals-grid");
   if (!grid) return;
   for (const visual of visuals) {
     if (shadowById(`mindease-visual-${visual.id}`)) continue;
     if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(visual.dataUrl)) continue;
+    if (visual.sourceBlockId) shadowById(`mindease-pending-${visual.sourceBlockId}`)?.remove();
     const figure = document.createElement("figure");
     figure.id = `mindease-visual-${visual.id}`;
     figure.className = "mindease-inline-visual";
+    const wrap = document.createElement("div");
+    wrap.className = "mindease-visual-img-wrap";
     const image = document.createElement("img");
     image.src = visual.dataUrl; image.alt = visual.concept;
+    image.title = "Click to zoom picture";
+    image.addEventListener("click", () => openVisualZoom(visual.dataUrl, visual.concept));
+    const zoomBtn = document.createElement("button");
+    zoomBtn.type = "button";
+    zoomBtn.className = "mindease-visual-zoom-btn";
+    zoomBtn.setAttribute("aria-label", `Zoom picture: ${visual.concept}`);
+    zoomBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg><span>Zoom</span>`;
+    zoomBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openVisualZoom(visual.dataUrl, visual.concept);
+    });
+    wrap.append(image, zoomBtn);
     const caption = document.createElement("figcaption"); caption.textContent = visual.concept;
-    figure.append(image, caption);
+    figure.append(wrap, caption);
     const section = Array.from(shadowQueryAll("#tab-content [data-source-block]"))
       .find(element => element.dataset.sourceBlock === visual.sourceBlockId);
     if (section) section.after(figure); else if (!visual.sourceBlockId) grid.append(figure);
@@ -3791,7 +4012,93 @@ async function initYouTubeMode(): Promise<void> {
   video.addEventListener("pause", onPause);
   video.addEventListener("play", onPlay);
 
-  _cleanupYouTube = () => {
+  _cleanupVideo = () => {
+    browser.runtime.onMessage.removeListener(captionMessageHandler);
+    video.removeEventListener("timeupdate", onTimeUpdate);
+    video.removeEventListener("pause", onPause);
+    video.removeEventListener("play", onPlay);
+    captionOverlay.remove();
+  };
+}
+
+async function initGenericVideoMode(video: HTMLVideoElement, platform: string): Promise<void> {
+  if (!_extensionActive) return;
+  _cleanupVideo?.();
+  const controller = new AbortController();
+  _cleanupVideo = () => controller.abort();
+  const transcript = await loadTextTrackTranscript(video, controller.signal);
+  if (controller.signal.aborted || !_extensionActive) return;
+  if (!transcript || transcript.cues.length === 0) {
+    const platformLabel = platform === "vimeo" ? "Vimeo" : "this video player";
+    showAdaptationStatus(
+      `MindEase detected a video on ${platformLabel}, but no active captions or text tracks are readable. Enable subtitles on the player to allow adaptation.`,
+      true,
+    );
+    return;
+  }
+  const text = transcriptToText(transcript);
+  if (text.trim().length < 30) {
+    showAdaptationStatus("MindEase found captions, but there was not enough readable dialogue.", true);
+    return;
+  }
+  const captionOverlay = document.createElement("div");
+  captionOverlay.id = "mindease-caption-overlay";
+  captionOverlay.setAttribute("aria-live", "polite");
+  captionOverlay.setAttribute("aria-label", "AI-transformed captions");
+  const baseBg = _theme === "light" ? "rgba(212, 212, 212, 0.95)" : "rgba(23, 23, 23, 0.94)";
+  const baseText = _theme === "light" ? "#171717" : "#d4d4d4";
+  captionOverlay.style.cssText = `
+    position: fixed;
+    bottom: 120px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 800px;
+    width: 90%;
+    background: ${baseBg};
+    color: ${baseText};
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    font-size: 1.125rem;
+    line-height: 1.6;
+    letter-spacing: 0.04em;
+    padding: 12px 20px;
+    border-radius: 12px;
+    border: 1px solid ${baseText};
+    z-index: 2147483645;
+    text-align: center;
+    backdrop-filter: blur(8px);
+    display: none;
+    box-shadow: 0 4px 24px rgba(23, 23, 23, 0.2);
+  `;
+  appendToShadow(captionOverlay);
+  const accepted = await requestAndSendTransformation(text, "video");
+  if (!accepted || controller.signal.aborted || !_extensionActive) {
+    captionOverlay.remove();
+    return;
+  }
+  let captionChunks: string[] = [];
+  const captionMessageHandler = (message: unknown) => {
+    const msg = message as { type: string; chunks?: Array<{ text: string }> };
+    if (msg.type === "TRANSFORMED_CONTENT" && msg.chunks) {
+      captionChunks = msg.chunks.map(c => c.text);
+    }
+  };
+  browser.runtime.onMessage.addListener(captionMessageHandler);
+  const onTimeUpdate = () => {
+    if (captionChunks.length === 0) return;
+    const progress = video.currentTime / (video.duration || 1);
+    const index = Math.floor(progress * captionChunks.length);
+    const caption = captionChunks[Math.min(index, captionChunks.length - 1)];
+    if (caption) {
+      captionOverlay.style.display = "block";
+      captionOverlay.textContent = caption;
+    }
+  };
+  const onPause = () => { captionOverlay.style.display = "none"; };
+  const onPlay = () => { if (captionChunks.length > 0) captionOverlay.style.display = "block"; };
+  video.addEventListener("timeupdate", onTimeUpdate);
+  video.addEventListener("pause", onPause);
+  video.addEventListener("play", onPlay);
+  _cleanupVideo = () => {
     browser.runtime.onMessage.removeListener(captionMessageHandler);
     video.removeEventListener("timeupdate", onTimeUpdate);
     video.removeEventListener("pause", onPause);
@@ -3805,9 +4112,14 @@ async function initYouTubeMode(): Promise<void> {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 async function initPDFMode(): Promise<void> {
-  const pdfText = document.body?.innerText?.trim()
-    || "PDF document \u2014 unable to extract text directly";
-
+  if (isNativePdfViewer(document)) {
+    showAdaptationStatus(
+      "Browser built-in PDF viewer prevents in-page script injection. Use the 'Read PDF' action in the MindEase popup to adapt this document.",
+      true,
+    );
+    return;
+  }
+  const pdfText = window.location.href;
   const loader = document.createElement("div");
   loader.id = "mindease-pdf-loader";
   loader.setAttribute("role", "status");

@@ -10,7 +10,7 @@ _jobs: dict[str, dict] = {}
 _tasks: set[asyncio.Task] = set()
 
 
-def start_diagram(content: str, label: str, profile: dict, owner: str | None) -> str:
+def start_diagram(content: str, label: str, profile: dict, owner: str | None, *, api_key: str | None = None) -> str:
     now = time.monotonic()
     for key in list(_jobs):
         if _jobs[key]["expires"] < now:
@@ -24,7 +24,7 @@ def start_diagram(content: str, label: str, profile: dict, owner: str | None) ->
     async def run():
         try:
             async with asyncio.timeout(600):
-                job["result"] = await generate_diagram(content, label, profile)
+                job["result"] = await generate_diagram(content, label, profile, api_key=api_key)
             job["status"] = "completed"
         except httpx.HTTPStatusError as exc:
             job["status"] = "failed"

@@ -3,7 +3,6 @@ import { StorageDestinationSelector } from "@/session/dashboard/StorageDestinati
 import {
   loadApiKeys,
   saveApiKeys,
-  testMistralKey,
   testPremiumServer,
 } from "@/utils/apiKeyManager";
 import {
@@ -31,21 +30,16 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
   const [activeTab, setActiveTab] = useState<"storage" | "ai">("storage");
 
   const [deepseekKey, setDeepseekKey] = useState("");
-  const [mistralKey, setMistralKey] = useState("");
   const [napkinKey, setNapkinKey] = useState("");
   const [ocrKey, setOcrKey] = useState("");
   const [serverUrl, setServerUrl] = useState("http://localhost:8000");
 
   const [showDeepseek, setShowDeepseek] = useState(false);
-  const [showMistral, setShowMistral] = useState(false);
   const [showNapkin, setShowNapkin] = useState(false);
   const [showOcr, setShowOcr] = useState(false);
 
   const [isTestingDeepseek, setIsTestingDeepseek] = useState(false);
   const [deepseekStatus, setDeepseekStatus] = useState<{ ok?: boolean; msg?: string } | null>(null);
-
-  const [isTestingMistral, setIsTestingMistral] = useState(false);
-  const [mistralStatus, setMistralStatus] = useState<{ ok?: boolean; msg?: string } | null>(null);
 
   const [isTestingServer, setIsTestingServer] = useState(false);
   const [serverStatus, setServerStatus] = useState<{ ok?: boolean; msg?: string } | null>(null);
@@ -57,12 +51,10 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
     if (isOpen) {
       loadApiKeys().then((keys) => {
         setDeepseekKey(keys.deepseekApiKey || "");
-        setMistralKey(keys.mistralApiKey || "");
         setNapkinKey(keys.napkinApiKey || "");
         setOcrKey(keys.ocrSpaceApiKey || "");
         setServerUrl(keys.premiumServerUrl || "http://localhost:8000");
         setDeepseekStatus(null);
-        setMistralStatus(null);
         setServerStatus(null);
         setSaveSuccess(false);
       });
@@ -99,22 +91,6 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
     }
   };
 
-  const handleTestMistral = async () => {
-    setIsTestingMistral(true);
-    setMistralStatus(null);
-    try {
-      const result = await testMistralKey(mistralKey);
-      if (result.ok) {
-        setMistralStatus({ ok: true, msg: "Valid key!" });
-      } else {
-        setMistralStatus({ ok: false, msg: result.error || "Invalid key" });
-      }
-    } catch (err) {
-      setMistralStatus({ ok: false, msg: String(err) });
-    } finally {
-      setIsTestingMistral(false);
-    }
-  };
 
   const handleTestServer = async () => {
     setIsTestingServer(true);
@@ -139,7 +115,6 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
     try {
       await saveApiKeys({
         deepseekApiKey: deepseekKey.trim(),
-        mistralApiKey: mistralKey.trim(),
         napkinApiKey: napkinKey.trim(),
         ocrSpaceApiKey: ocrKey.trim(),
         premiumServerUrl: serverUrl.trim(),
@@ -246,53 +221,6 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
                 </div>
               </div>
 
-              {/* Mistral */}
-              <div className="modal-setting-card">
-                <div className="modal-setting-header">
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span className="setting-label">Mistral AI Key</span>
-                    <span className="dest-sub-badge">Fallback</span>
-                  </div>
-                  <a href="https://console.mistral.ai/api-keys/" target="_blank" rel="noreferrer" className="api-help-link">
-                    <span>Get key</span>
-                    <ExternalLink size={10} />
-                  </a>
-                </div>
-                <div className="api-field-wrap">
-                  <input
-                    type={showMistral ? "text" : "password"}
-                    className="api-input"
-                    placeholder="Optional fallback key"
-                    value={mistralKey}
-                    onChange={(e) => setMistralKey(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="api-eye-btn"
-                    onClick={() => setShowMistral(!showMistral)}
-                    aria-label={showMistral ? "Hide" : "Show"}
-                  >
-                    {showMistral ? <EyeOff size={13} /> : <Eye size={13} />}
-                  </button>
-                </div>
-                <div className="api-action-row">
-                  <button
-                    type="button"
-                    className="api-test-btn"
-                    onClick={handleTestMistral}
-                    disabled={isTestingMistral || !mistralKey.trim()}
-                  >
-                    {isTestingMistral ? <Loader2 size={11} className="spin" /> : <Sparkles size={11} />}
-                    <span>Test Key</span>
-                  </button>
-                  {mistralStatus && (
-                    <span className={`api-status-tag ${mistralStatus.ok ? "success" : "error"}`}>
-                      {mistralStatus.ok ? <CheckCircle2 size={11} /> : <AlertCircle size={11} />}
-                      {mistralStatus.msg}
-                    </span>
-                  )}
-                </div>
-              </div>
 
               {/* Napkin AI */}
               <div className="modal-setting-card">
@@ -320,8 +248,10 @@ export const ApiKeyModal: FC<ApiKeyModalProps> = ({ isOpen, onClose, onKeysSaved
                     {showNapkin ? <EyeOff size={13} /> : <Eye size={13} />}
                   </button>
                 </div>
+                <p style={{ margin: "6px 0 0", fontSize: "0.76rem", color: "var(--text-dim)" }}>
+                  Your key is sent to your configured MindEase server to generate diagrams. Use a server you trust.
+                </p>
               </div>
-
               {/* OCR.space */}
               <div className="modal-setting-card">
                 <div className="modal-setting-header">

@@ -1,5 +1,5 @@
 """
-ArXiviz Backend API - FastAPI Entry Point
+MindEase Document, Video, and Diagram API - FastAPI Entry Point
 
 Run with: uvicorn main:app --reload --port 8000
 Docs at: http://localhost:8000/docs
@@ -13,10 +13,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # (rendering/storage.py reads STORAGE_MODE at import time)
-load_dotenv()
-_root_env = Path(__file__).parent.parent / ".env"
+# Load server/.env with absolute path, then allow root .env (override=False preserves precedence)
+_server_env = Path(__file__).resolve().parent / ".env"
+if _server_env.exists():
+    load_dotenv(_server_env)
+_root_env = Path(__file__).resolve().parent.parent / ".env"
 if _root_env.exists():
     load_dotenv(_root_env)
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -64,8 +68,8 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="ArXiviz API",
-    description="Transform arXiv papers into animated visual explanations",
+    title="MindEase API",
+    description="MindEase general document, video, and diagram server",
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",

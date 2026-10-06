@@ -2,6 +2,9 @@ import { SessionFolderLibrary } from "./SessionFolderLibrary";
 import { MediaLibrary } from "./MediaLibrary";
 import { HelpPage } from "./HelpPage";
 import { ProfileEvolution } from "./ProfileEvolution";
+import { VideoStudio } from "@/video/VideoStudio";
+import { PdfReader } from "./PdfReader";
+import "@/video/video.css";
 import katexStyles from "katex/dist/katex.min.css?url";
 import { useEffect, useState, useRef, useCallback, type FC } from "react";
 import { createRoot } from "react-dom/client";
@@ -19,7 +22,7 @@ import type {
   ResourceEntry, KeyConceptEntry, StudyCard, Gap,
   Connection, TabResource, FocusSummary, StateTransition,
   SessionState, AdaptationExplanation,
-  CrossSourceConnection, VisualEntry,
+  CrossSourceConnection, VisualEntry, ContentChunk,
   BaselineProfile, CognitiveNeed, RLSessionAdaptationRecord,
 } from "@/types";
 import { initialTransformationParams, updateProfile } from "@/layer2/profileManager";
@@ -48,6 +51,18 @@ import {
 import type { PremiumJobStatus } from "@/types";
 
 /* ─── Helpers ──────────────────────────────────────────────────────────────── */
+
+function parseHash(hash = location.hash): { section: string; source: string } {
+  const raw = hash.replace(/^#/, "");
+  const [sectionPart = "", queryPart = ""] = raw.split("?");
+  const section = (sectionPart === "video-studio" ? "video" : sectionPart) || "overview";
+  const source = new URLSearchParams(queryPart).get("source") ?? "";
+  return { section, source };
+}
+
+function sectionFromHash(hash = location.hash): string {
+  return parseHash(hash).section;
+}
 
 function fmtDuration(ms: number): string {
   if (ms <= 0) return "0s";
@@ -115,6 +130,7 @@ interface DashboardData {
   profile: FullCognitiveProfile | null;
   visuals: VisualEntry[];
   feedbackSessionId?: string;
+  chunks: ContentChunk[];
 }
 
 async function loadData(): Promise<DashboardData> {
@@ -124,6 +140,7 @@ async function loadData(): Promise<DashboardData> {
     STORAGE_KEYS.PROFILE,
     STORAGE_KEYS.VISUALS_CACHE,
     STORAGE_KEYS.SESSION_HISTORY,
+    "latestReviewChunks",
   ]);
 
   const session = result[STORAGE_KEYS.WORKSPACE] as WorkspaceSession | null;
@@ -132,11 +149,13 @@ async function loadData(): Promise<DashboardData> {
   const visualsCache = result[STORAGE_KEYS.VISUALS_CACHE] as { entries: VisualEntry[]; updatedAt: number } | null;
   const history = (result[STORAGE_KEYS.SESSION_HISTORY] as SessionHistoryEntry[] | undefined) ?? [];
 
+  const review = result.latestReviewChunks as { sessionId?: string; chunks?: ContentChunk[] } | undefined;
   return {
     session,
     artifact,
     profile,
     visuals: visualsCache?.entries ?? [],
+    chunks: review?.sessionId === artifact?.sessionId ? review?.chunks ?? [] : [],
     feedbackSessionId: session
       ? (session.state === "ended" ? session.sessionId : undefined)
       : artifact?.sessionId ?? history[0]?.sessionId,
@@ -180,8 +199,15 @@ function drawFocusTimeline(
   ctx.roundRect(0, barY, w, barH, barR);
   ctx.fill();
 
+  const style = getComputedStyle(document.documentElement);
+  const colors: Record<string, string> = {
+    active: style.getPropertyValue("--focus-active").trim() || "#86efac",
+    passive: style.getPropertyValue("--focus-passive").trim() || "#fde047",
+    suspended: style.getPropertyValue("--focus-suspended").trim() || "#fca5a5",
+  };
+
   if (!transitions || transitions.length === 0) {
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--success").trim() || "#4ade80";
+    ctx.fillStyle = colors.active;
     ctx.beginPath();
     ctx.roundRect(2, barY + 2, w - 4, barH - 4, barR - 1);
     ctx.fill();
@@ -189,12 +215,6 @@ function drawFocusTimeline(
   }
 
   const sorted = [...transitions].sort((a, b) => a.timestamp - b.timestamp);
-  const style = getComputedStyle(document.documentElement);
-  const colors: Record<string, string> = {
-    active: style.getPropertyValue("--success").trim() || "#4ade80",
-    passive: style.getPropertyValue("--warning").trim() || "#facc15",
-    suspended: style.getPropertyValue("--danger").trim() || "#f87171",
-  };
 
   let currentState: SessionState = "active";
   let segmentStart = startTime;
@@ -452,9 +472,9 @@ const SectionFocus: FC<{ session: WorkspaceSession | null; artifact: Personalize
         </div>
         <FocusTimelineCanvas session={null} />
         <div className="focus-metrics">
-          <div className="focus-metric"><span className="fm-value">0</span><span className="fm-label">Interruptions</span><div className="fm-bar"><div className="fm-fill" style={{ width: "0%", background: "var(--success)" }} /></div></div>
-          <div className="focus-metric"><span className="fm-value">0</span><span className="fm-label">Passive Periods</span><div className="fm-bar"><div className="fm-fill" style={{ width: "0%", background: "var(--warning)" }} /></div></div>
-          <div className="focus-metric"><span className="fm-value">--</span><span className="fm-label">Longest Break</span><div className="fm-bar"><div className="fm-fill" style={{ width: "0%", background: "var(--danger)" }} /></div></div>
+          <div className="focus-metric"><span className="fm-value">0</span><span className="fm-label">Interruptions</span><div className="fm-bar"><div className="fm-fill" style={{ width: "0%", background: "var(--focus-suspended, #fca5a5)" }} /></div></div>
+          <div className="focus-metric"><span className="fm-value">0</span><span className="fm-label">Passive Periods</span><div className="fm-bar"><div className="fm-fill" style={{ width: "0%", background: "var(--focus-passive, #fde047)" }} /></div></div>
+          <div className="focus-metric"><span className="fm-value">--</span><span className="fm-label">Longest Break</span><div className="fm-bar"><div className="fm-fill" style={{ width: "0%", background: "var(--focus-break, #93c5fd)" }} /></div></div>
         </div>
       </section>
     );
@@ -493,27 +513,27 @@ const SectionFocus: FC<{ session: WorkspaceSession | null; artifact: Personalize
           <div className="focus-metric">
             <span className="fm-value">{interruptions}</span>
             <span className="fm-label">Interruptions</span>
-            <div className="fm-bar"><div className="fm-fill" style={{ width: pct(Math.min(interruptions, maxInterruption), maxInterruption), background: "var(--danger)" }} /></div>
+            <div className="fm-bar"><div className="fm-fill" style={{ width: pct(Math.min(interruptions, maxInterruption), maxInterruption), background: "var(--focus-suspended, #fca5a5)" }} /></div>
           </div>
           <div className="focus-metric">
             <span className="fm-value">{passivePeriods}</span>
             <span className="fm-label">Passive Periods</span>
-            <div className="fm-bar"><div className="fm-fill" style={{ width: pct(Math.min(passivePeriods, maxPassive), maxPassive), background: "var(--warning)" }} /></div>
+            <div className="fm-bar"><div className="fm-fill" style={{ width: pct(Math.min(passivePeriods, maxPassive), maxPassive), background: "var(--focus-passive, #fde047)" }} /></div>
           </div>
           <div className="focus-metric">
             <span className="fm-value">{fmtDurationShort(longestBreak)}</span>
             <span className="fm-label">Longest Break</span>
-            <div className="fm-bar"><div className="fm-fill" style={{ width: totalDuration > 0 ? pct(longestBreak, totalDuration) : "0%", background: "var(--info)" }} /></div>
+            <div className="fm-bar"><div className="fm-fill" style={{ width: totalDuration > 0 ? pct(longestBreak, totalDuration) : "0%", background: "var(--focus-break, #93c5fd)" }} /></div>
           </div>
           <div className="focus-metric">
             <span className="fm-value">{fmtDurationShort(totalBreak)}</span>
             <span className="fm-label">Total Break Time</span>
-            <div className="fm-bar"><div className="fm-fill" style={{ width: totalDuration > 0 ? pct(totalBreak, totalDuration) : "0%", background: "var(--danger)" }} /></div>
+            <div className="fm-bar"><div className="fm-fill" style={{ width: totalDuration > 0 ? pct(totalBreak, totalDuration) : "0%", background: "var(--focus-total, #c4b5fd)" }} /></div>
           </div>
           <div className="focus-metric">
             <span className="fm-value">{Math.round(focusScore * 100)}%</span>
             <span className="fm-label">Focus Score</span>
-            <div className="fm-bar"><div className="fm-fill" style={{ width: pct(Math.round(focusScore * 100), 100), background: focusScore >= 0.6 ? "var(--success)" : "var(--warning)" }} /></div>
+            <div className="fm-bar"><div className="fm-fill" style={{ width: pct(Math.round(focusScore * 100), 100), background: focusScore >= 0.6 ? "var(--focus-active, #86efac)" : "var(--focus-passive, #fde047)" }} /></div>
           </div>
         </div>
       </div>
@@ -1246,8 +1266,11 @@ const Dashboard: FC = () => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState(false);
-  const [activeSection, setActiveSection] = useState(location.hash.slice(1) || "overview");
+  const initialParsed = parseHash();
+  const [activeSection, setActiveSection] = useState(initialParsed.section);
+  const [videoSource, setVideoSource] = useState(initialParsed.source);
   const [generating, setGenerating] = useState(false);
+  const [visualError, setVisualError] = useState("");
   const [visuals, setVisuals] = useState<VisualEntry[]>([]);
   const [videoModalOpen, setVideoModalOpen] = useState(false);
   const [rlNotice, setRlNotice] = useState<RLSessionAdaptationRecord | null>(null);
@@ -1272,6 +1295,23 @@ const Dashboard: FC = () => {
       link.href = browser.runtime.getURL(katexStyles.replace(/^\//, ""));
       document.head.appendChild(link);
     }
+    const accountChanged = (changes: Record<string, browser.Storage.StorageChange>, area: string) => {
+      const change = changes[STORAGE_KEYS.AUTH_SESSION];
+      if (area !== "local" || !change) return;
+      const previous = change.oldValue as { user?: { id?: string } } | undefined;
+      const next = change.newValue as { user?: { id?: string } } | undefined;
+      if (previous?.user?.id === next?.user?.id) return;
+      setLoading(true);
+      setVisuals([]);
+      setRlNotice(null);
+      void loadData().then(result => {
+        setData(result);
+        setVisuals(result.visuals);
+        setError(false);
+      }).catch(() => setError(true)).finally(() => setLoading(false));
+    };
+    browser.storage.onChanged.addListener(accountChanged);
+    return () => browser.storage.onChanged.removeListener(accountChanged);
   }, []);
   useEffect(() => {
     const currentId = data?.session?.sessionId ?? data?.artifact?.sessionId;
@@ -1294,16 +1334,21 @@ const Dashboard: FC = () => {
   }, [data?.session?.sessionId, data?.artifact?.sessionId]);
 
   useEffect(() => {
-    const navigate = () => setActiveSection(location.hash.slice(1) || "overview");
+    const navigate = () => {
+      const parsed = parseHash();
+      setActiveSection(parsed.section);
+      setVideoSource(parsed.source);
+    };
     window.addEventListener("hashchange", navigate);
     return () => window.removeEventListener("hashchange", navigate);
   }, []);
   const handleNavigate = useCallback((id: string) => {
-    if (id === "video-studio") {
-      void browser.tabs.create({ url: browser.runtime.getURL("src/video/video.html") });
-      return;
-    }
-    location.hash = id; setActiveSection(id); window.scrollTo(0, 0);
+    const targetHash = id === "video-studio" || id === "video" ? "video" : id;
+    location.hash = targetHash;
+    const parsed = parseHash(`#${targetHash}`);
+    setActiveSection(parsed.section);
+    setVideoSource(parsed.source);
+    window.scrollTo(0, 0);
   }, []);
 
   const handleThemeToggle = async () => {
@@ -1320,17 +1365,21 @@ const Dashboard: FC = () => {
   };
 
   const handleGenerateVisuals = useCallback(async () => {
-    if (!data?.artifact?.keyConcepts?.length) return;
+    if (!data?.chunks.length) {
+      setVisualError("This session has no saved source text. Adapt a source before generating diagrams.");
+      return;
+    }
     setGenerating(true);
-    const concepts = data.artifact.keyConcepts.map(c => c.label);
+    setVisualError("");
     try {
       const response = await browser.runtime.sendMessage({
         type: "GENERATE_VISUALS",
-        payload: { concepts },
-      }) as { type: string; visuals: VisualEntry[] };
-      setVisuals(response.visuals ?? []);
+        payload: { chunks: data.chunks.slice(0, 5), sessionId: data.artifact?.sessionId },
+      }) as { type: string; visuals: VisualEntry[]; error?: string };
+      if (response.error) throw new Error(response.error);
+      setVisuals(previous => [...response.visuals, ...previous.filter(item => !response.visuals.some(next => next.id === item.id))]);
     } catch (err) {
-      console.warn("[Dashboard] Generate visuals error:", err);
+      setVisualError(err instanceof Error ? err.message : String(err));
     } finally {
       setGenerating(false);
     }
@@ -1362,7 +1411,7 @@ const Dashboard: FC = () => {
   return (
     <div className="dash-layout">
       <Sidebar
-        activeSection={activeSection}
+        activeSection={activeSection === "video" ? "video-studio" : activeSection}
         onNavigate={handleNavigate}
         theme={theme}
         onThemeToggle={handleThemeToggle}
@@ -1404,19 +1453,13 @@ const Dashboard: FC = () => {
           {activeSection === "overview" && <DashboardHero
             artifact={data.artifact}
             session={data.session}
-            onAnimate={() => void browser.tabs.create({ url: browser.runtime.getURL("src/video/video.html") })}
+            onAnimate={() => handleNavigate("video")}
           />}
           {activeSection === "overview" && <>
             <SectionOverview artifact={data.artifact} session={data.session} />
             <section className="section-card" aria-labelledby="session-summary-title">
               <div className="section-card-header"><BookOpenText size={16} /><h2 id="session-summary-title">Session summary</h2></div>
-              <p>Reviewed {data.artifact?.resourcesUsed?.length ?? 0} sources and captured {data.artifact?.userNotes?.length ?? 0} notes.</p>
-              {(data.artifact?.keyConcepts?.length ?? 0) > 0 && <p>Topics found in the source material: {data.artifact!.keyConcepts.map(c => c.label).join(", ")}.</p>}
-              {(data.artifact?.studyCards ?? []).map(card =>
-                <article key={card.id}><h3>{card.concept}</h3><p>{card.content}</p></article>
-              )}
-              {(data.artifact?.needsReview?.length ?? 0) > 0 && <p>{data.artifact!.needsReview.length} areas need another look; see Review for details.</p>}
-              <div className="summary-action-row">
+              <div className="summary-action-row" style={{ marginTop: 8 }}>
                 <button type="button" className="btn-open-review" onClick={handleExport}>
                   Open complete review / Save as PDF
                 </button>
@@ -1434,6 +1477,7 @@ const Dashboard: FC = () => {
             <MediaLibrary />
             <SectionLearned artifact={data.artifact} />
             <SectionReview artifact={data.artifact} />
+            {visualError && <p role="alert">{visualError}</p>}
             <SectionVisuals visuals={visuals} formatPreference={visualFirst ? "visual" : "text"} concepts={conceptLabels} onGenerateVisuals={handleGenerateVisuals} generating={generating} />
             <SectionInsights artifact={data.artifact} />
           </>}
@@ -1446,6 +1490,11 @@ const Dashboard: FC = () => {
           </>}
           {activeSection === "data" && <DataControls />}
           {activeSection === "help" && <HelpPage />}
+          {activeSection === "reader" && <PdfReader key={location.hash} source={videoSource}
+            tabId={Number(new URLSearchParams(location.hash.split("?")[1] ?? "").get("tab") ?? "-1")} />}
+          {(activeSection === "video" || activeSection === "video-studio") && (
+            <VideoStudio source={videoSource} />
+          )}
         </main>
 
         <footer className="dash-footer">

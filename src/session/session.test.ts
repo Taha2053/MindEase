@@ -33,6 +33,26 @@ describe("workspace lifecycle", () => {
     vi.restoreAllMocks();
   });
 
+  it("keeps a failed archive retryable across worker restart without losing source chunks", async () => {
+    await manager.registerTab(1, "https://example.org/lesson", "website", "Lesson");
+    const sessionId = manager.getSessionId();
+    const chunks = [{ id: "block-1", text: "Energy is conserved." }];
+    storage[STORAGE_KEYS.SESSION_CHUNKS] = chunks;
+    manager.onLayer3EndSession = async () => { throw new Error("Storage full"); };
+    await expect(manager.endSession()).rejects.toThrow("Storage full");
+    expect(storage[STORAGE_KEYS.SESSION_CHUNKS]).toEqual(chunks);
+    const restored = new SessionManager();
+    await restored.init();
+    expect(restored.getSessionId()).toBe(sessionId);
+    let archived: unknown;
+    restored.onLayer3EndSession = async (source) => { archived = source; };
+    await restored.endSession();
+    expect(archived).toEqual(chunks);
+    expect(storage[STORAGE_KEYS.SESSION_CHUNKS]).toBeUndefined();
+    expect(restored.getSessionId()).toBeNull();
+    await restored.reset();
+  });
+
   it("excludes ongoing passive and suspended time from focus", async () => {
     await manager.registerTab(1, "https://example.org/lesson", "website", "Lesson");
     await vi.advanceTimersByTimeAsync(10 * minute);
@@ -151,17 +171,6 @@ describe("workspace lifecycle", () => {
     expect(manager.getSessionId()).toBeNull();
   });
 
-  it("does not rerun synthesis after a callback failure and still closes learning", async () => {
-    await manager.registerTab(1, "https://example.org/lesson", "website", "Lesson");
-    manager.onLayer3EndSession = vi.fn(async () => {
-      throw new Error("provider unavailable");
-    });
-    manager.onLayer2EndSession = vi.fn(async () => null);
-    await expect(manager.endSession()).rejects.toThrow("provider unavailable");
-    expect(manager.onLayer3EndSession).toHaveBeenCalledOnce();
-    expect(manager.onLayer2EndSession).toHaveBeenCalledOnce();
-    expect(manager.getState()).toBe("ended");
-  });
 
   it("preserves closed resources and their notes for the final review", async () => {
     await manager.registerTab(1, "https://example.org/lesson", "website", "Lesson");

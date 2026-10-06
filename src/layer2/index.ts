@@ -36,6 +36,7 @@ import {
   freshSessionStats,
   broadcastProfileUpdate,
 } from "./profileManager";
+import { getTabTrackingState } from "@/utils/tabTracking";
 import { generateExplanation, recordExplanation } from "./explainer";
 import { loadOverrides, applyOverridesToParams } from "./userControls";
 
@@ -228,7 +229,7 @@ export async function createProfileFromOnboarding(
 
 /* ─── Setup all message listeners (called by background) ─── */
 export function setupLayer2Listeners(): void {
-  browser.runtime.onMessage.addListener((message: unknown) => {
+  browser.runtime.onMessage.addListener((message: unknown, sender: unknown) => {
     if (!message || typeof message !== "object") return false;
     const msg = message as Record<string, unknown>;
     if (!["BEHAVIOR_SIGNAL", "GET_PROFILE", "ONBOARDING_COMPLETE", "CONTROLS_CHANGED", "RESET_PROFILE"].includes(String(msg.type))) return false;
@@ -236,6 +237,13 @@ export function setupLayer2Listeners(): void {
 
     switch (msg.type) {
       case "BEHAVIOR_SIGNAL": {
+        const senderTabId = (sender as { tab?: { id?: number } } | undefined)?.tab?.id;
+        if (senderTabId) {
+          const state = await getTabTrackingState(senderTabId);
+          if (!state.active || !state.included) {
+            return { received: false, error: "Tab is not actively tracked." };
+          }
+        }
         const signalMsg = msg as unknown as BehaviorSignalMessage;
         await handleBehaviorSignal(
           signalMsg.signal,

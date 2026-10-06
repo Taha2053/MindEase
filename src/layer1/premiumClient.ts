@@ -9,11 +9,14 @@
 import browser from "webextension-polyfill";
 import { getApiKey } from "@/utils/apiKeyManager";
 import { getSession } from "@/utils/supabase";
-import type {
-  ProcessDocumentPayload,
-  PremiumJobResponse,
-  PremiumJobStatus,
+import {
+  STORAGE_KEYS,
+  type ProcessDocumentPayload,
+  type PremiumJobResponse,
+  type PremiumJobStatus,
+  type SessionFolderSummary,
 } from "@/types";
+import { recordSessionFolder } from "@/utils/sessionStorageManager";
 
 async function getServerBaseUrl(): Promise<string> {
   const url = await getApiKey("premiumServer");
@@ -196,8 +199,36 @@ export async function pollJobStatus(jobId: string): Promise<PremiumJobStatus> {
 /**
  * Retrieve completed document/paper visualizations and video URLs.
  */
+export interface SavedVideoEntry {
+  id: string;
+  concept: string;
+  video_url: string;
+  title: string;
+  savedAt: number;
+  sessionId?: string | null;
+  section_id?: string;
+  ownerAccountId?: string | null;
+}
+
+export interface FetchDocumentVideosOptions {
+  sessionId?: string | null;
+  ownerAccountId?: string | null;
+}
+
+/** Ground required output video URL safety on valid HTTP/HTTPS/blob schemes. */
+export function isValidVideoUrl(url: string | undefined | null): boolean {
+  if (!url || typeof url !== "string") return false;
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "blob:";
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchDocumentVideos(
   docId: string,
+  options?: FetchDocumentVideosOptions,
 ): Promise<{
   title: string;
   videos: Array<{
@@ -208,6 +239,20 @@ export async function fetchDocumentVideos(
   }>;
 } | null> {
   const baseUrl = await getServerBaseUrl();
+
+  // Capture auth owner at request start if not already captured before submission
+  const reqAuth = await browser.storage.local.get(STORAGE_KEYS.AUTH_SESSION);
+  const capturedOwnerId = options?.ownerAccountId !== undefined
+    ? options.ownerAccountId
+    : (reqAuth[STORAGE_KEYS.AUTH_SESSION] as { user?: { id?: string } } | undefined)?.user?.id ?? null;
+
+  // Determine target workspace sessionId
+  let targetSessionId = options?.sessionId;
+  if (targetSessionId === undefined) {
+    const ws = await browser.storage.local.get(STORAGE_KEYS.WORKSPACE);
+    targetSessionId = (ws[STORAGE_KEYS.WORKSPACE] as { sessionId?: string } | undefined)?.sessionId ?? null;
+  }
+
   try {
     const res = await fetch(`${baseUrl}/api/paper/${encodeURIComponent(docId)}`, {
       headers: await premiumHeaders("application/json"),
@@ -229,20 +274,85 @@ export async function fetchDocumentVideos(
 
     const validVideos = (data.visualizations || [])
       .filter((v) => v.video_url && v.status === "complete")
-      .map((v) => ({
-        id: v.id,
-        concept: v.concept,
-        video_url: v.video_url!.startsWith("http") ? v.video_url! : `${baseUrl}${v.video_url}`,
-        section_id: v.section_id,
-      }));
+      .map((v) => {
+        const rawUrl = v.video_url!;
+        const resolved = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") || rawUrl.startsWith("blob:")
+          ? rawUrl
+          : `${baseUrl}${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`;
+        return {
+          id: v.id,
+          concept: v.concept,
+          video_url: resolved,
+          section_id: v.section_id,
+        };
+      })
+      .filter((v) => isValidVideoUrl(v.video_url));
 
     if (validVideos.length) {
-      await navigator.locks.request("mindease-media-library", async () => {
+      const persistLocked = async () => {
+        // Prevent async cancelled prior-account fetch writing into different account:
+        // compare raw AUTH_SESSION before storage writes
+        const currentAuth = await browser.storage.local.get(STORAGE_KEYS.AUTH_SESSION);
+        const currentOwnerId = (currentAuth[STORAGE_KEYS.AUTH_SESSION] as { user?: { id?: string } } | undefined)?.user?.id ?? null;
+        if (currentOwnerId !== capturedOwnerId) {
+          return;
+        }
+
         const saved = await browser.storage.local.get("mindease_saved_videos");
-        const entries = new Map(((saved.mindease_saved_videos ?? []) as Array<{ id: string }>).map(video => [video.id, video]));
-        for (const video of validVideos) entries.set(video.id, { ...video, title: data.title, savedAt: Date.now() } as { id: string });
+        const rawList = (saved.mindease_saved_videos ?? []) as Array<SavedVideoEntry>;
+        const entries = new Map<string, SavedVideoEntry>(rawList.map(video => [video.id, video]));
+
+        for (const video of validVideos) {
+          const existing = entries.get(video.id);
+          const stableSavedAt = (existing && typeof existing.savedAt === "number")
+            ? existing.savedAt
+            : Date.now();
+          const assignedSessionId = existing?.sessionId ?? targetSessionId ?? undefined;
+
+          entries.set(video.id, {
+            ...existing,
+            ...video,
+            title: data.title || existing?.title || "Video explanation",
+            savedAt: stableSavedAt,
+            ...(assignedSessionId ? { sessionId: assignedSessionId } : {}),
+            ...(capturedOwnerId !== null ? { ownerAccountId: capturedOwnerId } : {}),
+          });
+        }
         await browser.storage.local.set({ mindease_saved_videos: [...entries.values()] });
-      });
+
+        // Append late videos to matching SESSION_FOLDERS (sessionId/owner id) via recordSessionFolder
+        if (targetSessionId) {
+          try {
+            const storedFolders = await browser.storage.local.get(STORAGE_KEYS.SESSION_FOLDERS);
+            const folders = (storedFolders[STORAGE_KEYS.SESSION_FOLDERS] as SessionFolderSummary[] | undefined);
+            const folder = folders?.find(item => item.sessionId === targetSessionId && (item.ownerAccountId ?? null) === capturedOwnerId);
+            if (folder) {
+              const mergedVideos = new Map((folder.videos || []).map(item => [item.id, item]));
+              validVideos.forEach((v, idx) => {
+                mergedVideos.set(v.id, {
+                  id: v.id,
+                  concept: v.concept || `Scene ${idx + 1}`,
+                  filename: `videos/${v.id}.mp4`,
+                  videoUrl: v.video_url,
+                });
+              });
+              await recordSessionFolder({
+                ...folder,
+                videos: [...mergedVideos.values()],
+                savedAt: Date.now(),
+              });
+            }
+          } catch (folderErr) {
+            console.warn("[PremiumClient] Failed to append late videos to session folder:", folderErr);
+          }
+        }
+      };
+
+      if (typeof navigator !== "undefined" && navigator.locks?.request) {
+        await navigator.locks.request("mindease-media-library", persistLocked);
+      } else {
+        await persistLocked();
+      }
     }
     return {
       title: data.title,

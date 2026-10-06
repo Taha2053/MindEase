@@ -18,7 +18,7 @@ async def current_user(authorization: str | None = Header(default=None)) -> dict
         return None
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid authorization header")
-    url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    url = (os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL", "")).rstrip("/")
     key = os.getenv("SUPABASE_PUBLISHABLE_KEY") or os.getenv("VITE_SUPABASE_PUBLISHABLE_KEY", "")
     if not url or not key:
         raise HTTPException(status_code=503, detail="Authentication service is not configured")

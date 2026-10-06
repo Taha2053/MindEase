@@ -73,7 +73,7 @@ NUMBERED_HEADER_PATTERN = re.compile(
 
 def extract_sections(
     content: ParsedContent,
-    meta: ArxivPaperMeta
+    meta: ArxivPaperMeta | None = None
 ) -> list[Section]:
     """
     Extract sections from parsed content.
@@ -113,7 +113,7 @@ def extract_sections(
     sections = build_hierarchy(sections)
 
     # Add abstract if not present and available in metadata
-    if meta.abstract and not any(s.title.lower() == 'abstract' for s in sections):
+    if meta and meta.abstract and not any(s.title.lower() == 'abstract' for s in sections):
         abstract_section = Section(
             id="abstract",
             title="Abstract",

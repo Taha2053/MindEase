@@ -5,6 +5,9 @@
    extension styles cannot leak into the host page.
    ============================================================ */
 
+import browser from "webextension-polyfill";
+import formulaStyles from "@/styles/formulas.css?url";
+
 let _host: HTMLDivElement | null = null;
 let _shadow: ShadowRoot | null = null;
 
@@ -40,6 +43,12 @@ export function getMindeaseShadow(): ShadowRoot {
     *, *::before, *::after { box-sizing: border-box; }
   `;
   _shadow.appendChild(reset);
+  // Shadow trees cannot use the document's KaTeX stylesheet.
+  const mathStyles = document.createElement("link");
+  mathStyles.id = "mindease-katex-css";
+  mathStyles.rel = "stylesheet";
+  mathStyles.href = browser.runtime.getURL(formulaStyles.replace(/^\//, ""));
+  _shadow.appendChild(mathStyles);
 
   return _shadow;
 }

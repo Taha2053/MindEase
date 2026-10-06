@@ -1,30 +1,10 @@
 import { getApiKey } from "@/utils/apiKeyManager";
 import { getSession } from "@/utils/supabase";
 
-export type NapkinStyle =
-  | "colorful" | "casual" | "hand-drawn" | "formal" | "monochrome";
-
 export type NapkinFormat = "svg" | "png";
-
-export type NapkinVisualQuery =
-  | "flowchart" | "mindmap" | "timeline" | "venn";
-
-export type NapkinOrientation =
-  | "auto" | "horizontal" | "vertical" | "square";
-
-export type NapkinSortStrategy =
-  | "relevance" | "random";
 
 export interface NapkinOptions {
   learnerProfile?: object;
-  style?: NapkinStyle;
-  format?: NapkinFormat;
-  visualQuery?: NapkinVisualQuery;
-  orientation?: NapkinOrientation;
-  sortStrategy?: NapkinSortStrategy;
-  styleId?: string;
-  contextBefore?: string;
-  contextAfter?: string;
 }
 
 export interface NapkinResult {
@@ -42,10 +22,15 @@ export async function generateNapkinVisualFromContent(
 ): Promise<NapkinResult> {
   const base = ((await getApiKey("premiumServer")) || "http://localhost:8000").replace(/\/+$/, "");
   const session = await getSession();
+  const apiKey = await getApiKey("napkin");
+  const endpoint = new URL(base);
+  if (apiKey && endpoint.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname)) {
+    throw new Error("Use HTTPS for a remote MindEase server before sending your Napkin API key.");
+  }
   const headers = { "Content-Type": "application/json", ...(session ? { Authorization: "Bearer " + session.accessToken } : {}) };
   const response = await fetch(base + "/api/visuals/napkin/jobs", {
     method: "POST", headers,
-    body: JSON.stringify({ content, label, learner_profile: options.learnerProfile ?? {} }),
+    body: JSON.stringify({ content, label, learner_profile: options.learnerProfile ?? {}, ...(apiKey ? { napkin_api_key: apiKey } : {}) }),
     signal: AbortSignal.timeout(20000),
   });
   if (!response.ok) {
@@ -65,6 +50,3 @@ export async function generateNapkinVisualFromContent(
   throw new Error("Diagram generation took too long. Try again.");
 }
 
-export async function generateNapkinVisuals(concepts: string[], options: NapkinOptions = {}): Promise<NapkinResult[]> {
-  return Promise.all(concepts.map(concept => generateNapkinVisualFromContent(concept, concept, options)));
-}

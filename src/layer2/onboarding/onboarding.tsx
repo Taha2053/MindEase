@@ -205,7 +205,6 @@ function generateProfileSummary(baseline: BaselineProfile, _condition?: string):
 export function Onboarding({ onComplete }: { onComplete?: () => void }) {
   const [step, setStep] = useState(-1); // -1 = welcome, 0..7 = questions, 8 = done
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("light");
   const isEditMode = false;
 
@@ -252,7 +251,6 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
       setCustomLanguage("");
       setCustomLanguageLabel("");
     }
-    setFeedback("Preference selected. You can change it later.");
   }, []);
 
   const goNext = useCallback(async () => {
@@ -351,6 +349,14 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
 
   return (
     <>
+      <div className="onboarding-bg-wrap" aria-hidden="true">
+        <img
+          src={typeof browser !== "undefined" && browser.runtime?.getURL ? browser.runtime.getURL("onboarding-bg.png") : "/onboarding-bg.png"}
+          alt=""
+          className="onboarding-bg-image"
+        />
+        <div className="onboarding-bg-overlay" />
+      </div>
       <div className="container" role="main">
       <header className="brand-header">
         <div className="brand-left">
@@ -430,7 +436,6 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
                         <span className="option-label">{opt.label}</span>
                         <span className="option-desc">{opt.description}</span>
                       </div>
-                      <div className="option-check">{selectedValue === opt.value ? "✓" : ""}</div>
                     </div>
                   ))}
                 </div>
@@ -498,7 +503,6 @@ export function Onboarding({ onComplete }: { onComplete?: () => void }) {
                   </div>
                 )}
 
-                {feedback && <div className="micro-feedback" role="status" aria-live="polite" key={feedback}>{feedback}</div>}
               </div>
             );
           })()}

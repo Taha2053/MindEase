@@ -9,6 +9,10 @@ const STYLE_ID = "mindease-adaptation-prompt-style";
 const PROMPT_ID = "mindease-adaptation-prompt";
 let cancelPendingPrompt: (() => void) | undefined;
 
+export function dismissAdaptationChoice(): void {
+  cancelPendingPrompt?.();
+}
+
 const STYLES = `
 #${PROMPT_ID} { all: initial; position: fixed; right: 24px; bottom: 24px; z-index: 2147483647;
   width: min(360px, calc(100vw - 32px)); font-family: Inter, system-ui, sans-serif; color: var(--ap-text); }
@@ -53,7 +57,7 @@ export function requestAdaptationChoice(theme: Theme, baseline?: Partial<Baselin
   prompt.innerHTML = `
     <div class="ap-card">
       <h2 id="mindease-adaptation-title">Adapt this learning material?</h2>
-      <p id="mindease-adaptation-description">Accepting sends the extracted material to Mistral. Visual options also send sections to Napkin. Generated explanations may contain errors.</p>
+      <p id="mindease-adaptation-description">Accepting sends this source to your configured MindEase server or DeepSeek. Visual options also send selected sections to Napkin. Generated explanations may contain errors.</p>
       <div class="ap-options">
         <div class="ap-recommendations"></div>
       </div>
