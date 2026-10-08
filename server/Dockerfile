@@ -15,8 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sox \
     texlive-latex-base \
     texlive-fonts-recommended \
-    texlive-latex-extra \
-    texlive-fonts-extra \
     cm-super \
     dvipng \
     dvisvgm \
