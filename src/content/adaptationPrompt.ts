@@ -2,6 +2,7 @@ import { appendToShadow, getMindeaseShadow, shadowById } from "./shadowHost";
 import type { Theme } from "@/utils/themeManager";
 import type { BaselineProfile } from "@/types";
 import { rankAdaptations } from "@/layer2/recommendations";
+import { replaceSanitizedHtml } from "@/utils/safeHtml";
 
 export type AdaptationChoice = { adaptation: "structured" | "visual"; language: "preferred" | "source" };
 
@@ -54,7 +55,7 @@ export function requestAdaptationChoice(theme: Theme, baseline?: Partial<Baselin
   prompt.setAttribute("role", "dialog");
   prompt.setAttribute("aria-labelledby", "mindease-adaptation-title");
   prompt.setAttribute("aria-describedby", "mindease-adaptation-description");
-  prompt.innerHTML = `
+  replaceSanitizedHtml(prompt, `
     <div class="ap-card">
       <h2 id="mindease-adaptation-title">Adapt this learning material?</h2>
       <p id="mindease-adaptation-description">Accepting sends this source to your configured MindEase server or DeepSeek. Visual options also send selected sections to Napkin. Generated explanations may contain errors.</p>
@@ -66,7 +67,7 @@ export function requestAdaptationChoice(theme: Theme, baseline?: Partial<Baselin
         <button type="button" class="ap-cancel-btn" data-choice="alternative">Suggest another option</button>
         <button type="button" class="ap-cancel-btn secondary" data-choice="cancel">Keep the original page</button>
       </div>
-    </div>`;
+    </div>`);
   const languageName = prompt.querySelector(".ap-language-name");
   if (languageName) languageName.textContent = baseline?.preferredLanguage ?? "";
   const recommendations = rankAdaptations(baseline);

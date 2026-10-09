@@ -1,6 +1,7 @@
 import { appendToShadow, getMindeaseShadow, shadowById } from "./shadowHost";
 import browser from "webextension-polyfill";
 import type { Theme } from "@/utils/themeManager";
+import { replaceSanitizedHtml } from "@/utils/safeHtml";
 
 const DISMISSED_KEY = "mindease_prompt_dismissed";
 const PROMPT_CSS_ID = "mindease-prompt-styles";
@@ -171,7 +172,7 @@ export async function showDiscoveryPrompt(theme: Theme, onEnable: () => void): P
   prompt.id = "mindease-discovery-prompt";
   prompt.setAttribute("data-theme", theme);
 
-  prompt.innerHTML = `
+  replaceSanitizedHtml(prompt, `
     <div class="mindease-prompt-card">
       <div class="mindease-prompt-icon">${BRAIN_SVG}</div>
       <span class="mindease-prompt-text">Want MindEase for this page?</span>
@@ -180,7 +181,7 @@ export async function showDiscoveryPrompt(theme: Theme, onEnable: () => void): P
         <button class="mindease-prompt-btn mindease-prompt-btn-ghost" id="mindease-prompt-dismiss">Not now</button>
       </div>
     </div>
-  `;
+  `);
 
   appendToShadow(prompt);
 

@@ -35,8 +35,18 @@ export default defineConfig(({ mode }) => ({
             ),
             browser_specific_settings: {
               gecko: {
-                id: "mindease@architects.ensit",
-                strict_min_version: "109.0",
+                id: "{d1ccf3c2-6267-4618-9477-1569f43a56af}",
+                strict_min_version: "142.0",
+                data_collection_permissions: {
+                  required: [
+                    "authenticationInfo",
+                    "browsingActivity",
+                    "healthInfo",
+                    "personallyIdentifyingInfo",
+                    "websiteActivity",
+                    "websiteContent",
+                  ],
+                },
               },
             },
             content_security_policy: {

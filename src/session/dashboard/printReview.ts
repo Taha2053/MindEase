@@ -2,6 +2,7 @@ import browser from "webextension-polyfill";
 import type { ContentChunk, Gap, HighlightNote, PersonalizedArtifact, ResourceEntry, SessionFolderSummary, StudyCard, VisualEntry } from "@/types";
 import { renderMarkdown } from "@/utils/markdown";
 import { formatDayAndTime } from "@/session/sessionHistory";
+import { replaceSanitizedHtml } from "@/utils/safeHtml";
 
 const main = document.getElementById("review")!;
 document.getElementById("print")?.addEventListener("click", () => window.print());
@@ -176,7 +177,7 @@ void Promise.all([
   const overview = section("Session at a glance");
   const glanceTable = document.createElement("table");
   glanceTable.className = "review-table glance-table";
-  glanceTable.innerHTML = `
+  replaceSanitizedHtml(glanceTable, `
     <thead>
       <tr>
         <th style="width: 34%;">Session Metric</th>
@@ -204,7 +205,7 @@ void Promise.all([
       ${notes.length ? `<tr><td><strong>Learner Notes</strong></td><td>${notes.length} note${notes.length === 1 ? "" : "s"}</td><td>Important excerpts highlighted by student</td></tr>` : ""}
       ${cards.length ? `<tr><td><strong>Study Cards</strong></td><td>${cards.length} card${cards.length === 1 ? "" : "s"}</td><td>Spaced repetition review questions</td></tr>` : ""}
     </tbody>
-  `;
+  `);
   overview.append(glanceTable);
 
   // 2. Key Topics: Clean Badge Pills (No repetitive 168-line dumps!)
@@ -267,7 +268,7 @@ void Promise.all([
     const sourcesSummarySec = section("Sources summary");
     const srcTable = document.createElement("table");
     srcTable.className = "review-table sources-table";
-    srcTable.innerHTML = `
+    replaceSanitizedHtml(srcTable, `
       <thead>
         <tr>
           <th style="width: 52%;">Source Document</th>
@@ -288,7 +289,7 @@ void Promise.all([
           `;
         }).join("")}
       </tbody>
-    `;
+    `);
     sourcesSummarySec.append(srcTable);
   }
 
@@ -328,7 +329,7 @@ void Promise.all([
       const sourceChunks = chunks.filter(c => c.sourceId === source.url).sort((a, b) => a.position - b.position);
       for (const chunk of sourceChunks) {
         const body = document.createElement("div");
-        body.innerHTML = renderMarkdown(chunk.text);
+        replaceSanitizedHtml(body, renderMarkdown(chunk.text));
         group.append(body);
         if (chunk.sourceText && chunk.sourceText.trim() !== chunk.text.trim()) {
           const original = document.createElement("details");
@@ -336,7 +337,7 @@ void Promise.all([
           const label = document.createElement("summary");
           label.textContent = "Original source section";
           const text = document.createElement("div");
-          text.innerHTML = renderMarkdown(chunk.sourceText);
+          replaceSanitizedHtml(text, renderMarkdown(chunk.sourceText));
           original.append(label, text);
           group.append(original);
         }
@@ -379,7 +380,7 @@ void Promise.all([
     const cardSec = section("Study cards");
     const cardsTable = document.createElement("table");
     cardsTable.className = "review-table cards-table";
-    cardsTable.innerHTML = `
+    replaceSanitizedHtml(cardsTable, `
       <thead>
         <tr>
           <th style="width: 28%;">Concept</th>
@@ -392,7 +393,7 @@ void Promise.all([
           </tr>
         `).join("")}
       </tbody>
-    `;
+    `);
     cardSec.append(cardsTable);
   }
 
@@ -401,7 +402,7 @@ void Promise.all([
     const noteSec = section("Your notes");
     const notesTable = document.createElement("table");
     notesTable.className = "review-table notes-table";
-    notesTable.innerHTML = `
+    replaceSanitizedHtml(notesTable, `
       <thead>
         <tr>
           <th>Learner Highlight / Note</th>
@@ -416,7 +417,7 @@ void Promise.all([
           </tr>
         `).join("")}
       </tbody>
-    `;
+    `);
     noteSec.append(notesTable);
   }
 
@@ -425,7 +426,7 @@ void Promise.all([
     const gapSec = section("Areas for review");
     const gapsTable = document.createElement("table");
     gapsTable.className = "review-table gaps-table";
-    gapsTable.innerHTML = `
+    replaceSanitizedHtml(gapsTable, `
       <thead>
         <tr>
           <th style="width: 30%;">Topic Area</th>
@@ -438,7 +439,7 @@ void Promise.all([
           </tr>
         `).join("")}
       </tbody>
-    `;
+    `);
     gapSec.append(gapsTable);
   }
 }).catch(() => {

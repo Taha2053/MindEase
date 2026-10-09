@@ -1,5 +1,6 @@
 import katexStyles from "@/styles/formulas.css?url";
 import { renderMarkdown } from "@/utils/markdown";
+import { replaceSanitizedHtml } from "@/utils/safeHtml";
 /* ============================================================
    content/index.ts - Content Script
    Runs inside every webpage the student visits.
@@ -744,11 +745,11 @@ function renderNotesList(notes?: Array<Record<string, unknown>>): void {
   const container = shadowById("mindease-notes-list");
   if (!container) return;
   if (!notes || notes.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-muted);font-size:0.78rem;text-align:center;padding:12px">Highlight text on the page to create notes.</p>';
+    replaceSanitizedHtml(container, '<p style="color:var(--text-muted);font-size:0.78rem;text-align:center;padding:12px">Highlight text on the page to create notes.</p>');
     return;
   }
   const recent = notes.slice(-20).reverse();
-  container.innerHTML = recent.map((n) => `
+  replaceSanitizedHtml(container, recent.map((n) => `
     <div class="mindease-note-card">
       <div class="mindease-note-text">\u201C${renderLatex(_escHtml(String(n.text ?? "")))}\u201D</div>
       <div class="mindease-note-meta">
@@ -756,7 +757,7 @@ function renderNotesList(notes?: Array<Record<string, unknown>>): void {
         <span>${new Date(Number(n.timestamp ?? 0)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
       </div>
     </div>
-  `).join("");
+  `).join(""));
 }
 
 function fmtDurationLocal(ms: number): string {
@@ -829,7 +830,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     const capturePopup = shadowById("mindease-capture-result");
     const capPlaceholder = capturePopup?.querySelector(".cap-ocr-text");
     if (capPlaceholder) {
-      capPlaceholder.innerHTML = `<strong>Explanation:</strong><div style="margin:6px 0 0;line-height:1.6">${renderMarkdown(p.explanation)}</div>`;
+      replaceSanitizedHtml(capPlaceholder, `<strong>Explanation:</strong><div style="margin:6px 0 0;line-height:1.6">${renderMarkdown(p.explanation)}</div>`);
     } else {
       const popup = shadowById("mindease-explain-popup");
       const body = shadowById("mindease-explain-body");
@@ -872,7 +873,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
           placeholder.textContent = `OCR failed: ${p.error}`;
         } else {
           placeholder.className = "cap-ocr-text";
-          placeholder.innerHTML = "<em>Explaining&hellip;</em>";
+          replaceSanitizedHtml(placeholder, "<em>Explaining&hellip;</em>");
           browser.runtime.sendMessage({
             type: "EXPLAIN_SELECTION",
             payload: p.text,
@@ -2077,7 +2078,7 @@ function setupSelectionPopup(container: HTMLElement): void {
   if (shadowById("mindease-explain-popup")) return;
   const popup = document.createElement("div");
   popup.id = "mindease-explain-popup";
-  popup.innerHTML = `
+  replaceSanitizedHtml(popup, `
     <div id="mindease-explain-header">
       <span>Explain selection</span>
       <button id="mindease-explain-close">&times;</button>
@@ -2085,7 +2086,7 @@ function setupSelectionPopup(container: HTMLElement): void {
     <div id="mindease-explain-loader" style="display:none">Getting explanation</div>
     <div id="mindease-explain-body"></div>
     <div id="mindease-explain-selected"></div>
-  `;
+  `);
   appendToShadow(popup);
 
   popup.querySelector("#mindease-explain-close")?.addEventListener("click", () => {
@@ -2250,9 +2251,9 @@ function showContextExplainLoading(text: string): void {
   if (!loader) {
     loader = document.createElement("div");
     loader.id = "mindease-ctx-loading";
-    loader.innerHTML = `<span class="ctx-loader-icon">
+    replaceSanitizedHtml(loader, `<span class="ctx-loader-icon">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-    </span><span class="ctx-loader-text">Thinking</span><span class="ctx-loader-dots"></span>`;
+    </span><span class="ctx-loader-text">Thinking</span><span class="ctx-loader-dots"></span>`);
     appendToShadow(loader);
   }
   loader.style.display = "flex";
@@ -2290,15 +2291,15 @@ function showContextExplainResult(_text: string, explanation: string): void {
       display:flex;flex-direction:column;
       left:50%;top:50%;transform:translate(-50%,-50%);
     `;
-    popup.innerHTML = `
+    replaceSanitizedHtml(popup, `
       <div class="ctx-popup-header">
         <span>MindEase</span>
         <button class="ctx-popup-close">&times;</button>
       </div>
       <div class="ctx-popup-body"></div>
-    `;
+    `);
     const bodyEl = popup.querySelector(".ctx-popup-body");
-    if (bodyEl) bodyEl.innerHTML = renderMarkdown(explanation);
+    if (bodyEl) replaceSanitizedHtml(bodyEl, renderMarkdown(explanation));
     appendToShadow(popup);
 
     popup.querySelector(".ctx-popup-close")?.addEventListener("click", () => popup!.remove());
@@ -2312,7 +2313,7 @@ function showContextExplainResult(_text: string, explanation: string): void {
     });
   } else {
     const body = popup.querySelector(".ctx-popup-body");
-    if (body) body.innerHTML = renderMarkdown(explanation);
+    if (body) replaceSanitizedHtml(body, renderMarkdown(explanation));
   }
   popup.style.display = "flex";
 }
@@ -2335,14 +2336,14 @@ function showOcrResult(text?: string, error?: string): void {
     ? `<p style="color:var(--danger);margin:0">${_escHtml(error)}</p>`
     : `<div style="white-space:pre-wrap;font-size:0.82rem;line-height:1.6;max-height:300px;overflow-y:auto">${renderMarkdown(text ?? "")}</div>`;
 
-  popup.innerHTML = `
+  replaceSanitizedHtml(popup, `
     <div style="background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);width:400px;max-width:90vw;overflow:hidden">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)">
         <span style="font-weight:600;font-size:0.82rem">${headerText}</span>
         <button id="mindease-ocr-close" style="background:none;border:none;cursor:pointer;color:var(--text-dim);padding:4px;font-size:18px;line-height:1">&times;</button>
       </div>
       <div style="padding:14px 16px">${bodyContent}</div>
-    </div>`;
+    </div>`);
 
   popup.style.cssText = `
     position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2147483647;
@@ -2518,7 +2519,7 @@ function showCaptureCropTool(dataUrl: string): void {
 
   const overlay = document.createElement("div");
   overlay.id = "mindease-capture-overlay";
-  overlay.innerHTML = `
+  replaceSanitizedHtml(overlay, `
     <div class="cap-image-wrap">
       <img src="${dataUrl}" alt="Screenshot" />
       <div class="cap-selection" id="cap-selection"></div>
@@ -2527,7 +2528,7 @@ function showCaptureCropTool(dataUrl: string): void {
         <button class="cap-cancel" id="cap-cancel">Cancel</button>
       </div>
     </div>
-  `;
+  `);
   appendToShadow(overlay);
 
   const wrap = overlay.querySelector(".cap-image-wrap") as HTMLElement;
@@ -2638,7 +2639,7 @@ function showCaptureResult(croppedDataUrl: string): void {
   popup.style.top = "50%";
   popup.style.transform = "translate(-50%,-50%)";
 
-  popup.innerHTML = `
+  replaceSanitizedHtml(popup, `
     <div class="cap-result-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border,#d4d4d4);font-size:0.82rem;font-weight:600;color:var(--accent,#d4d4d4)">
       <span>Captured region</span>
       <button class="cap-result-close" style="background:none;border:none;cursor:pointer;padding:2px 8px;font-size:16px;color:var(--text-muted,#d4d4d4)">&times;</button>
@@ -2649,7 +2650,7 @@ function showCaptureResult(croppedDataUrl: string): void {
         OCR in progress...
       </div>
     </div>
-  `;
+  `);
   appendToShadow(popup);
 
   popup.querySelector(".cap-result-close")?.addEventListener("click", () => popup.remove());
@@ -2806,7 +2807,7 @@ function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void
     const el = document.createElement("div");
     _floatingTtsEl = el;
     el.id = "mindease-floating-tts";
-    el.innerHTML = `
+    replaceSanitizedHtml(el, `
       <div id="mindease-floating-tts-header">
         <div style="display:flex;align-items:center;gap:6px">
           ${iconHTML("volume-2")}
@@ -2828,7 +2829,7 @@ function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void
           <button class="mindease-tts-speed-btn${_floatingTtsRate === 1.5 ? " active" : ""}" data-rate="1.5">1.5x</button>
         </div>
       </div>
-    `;
+    `);
 
     appendToShadow(el);
 
@@ -2890,7 +2891,7 @@ function showFloatingTtsPlayer(text: string, initialRect?: DOMRect | null): void
         onProgress: (idx, total, sentence) => {
           if (counterEl) counterEl.textContent = `(${idx + 1}/${total})`;
           if (bodyEl) {
-            bodyEl.innerHTML = `<span style="background:color-mix(in srgb,var(--accent,#d4d4d4) 30%,transparent);border-radius:3px;padding:2px 4px">${_escHtml(sentence)}</span>`;
+            replaceSanitizedHtml(bodyEl, `<span style="background:color-mix(in srgb,var(--accent,#d4d4d4) 30%,transparent);border-radius:3px;padding:2px 4px">${_escHtml(sentence)}</span>`);
           }
         },
         onEnd: () => {
@@ -2946,10 +2947,13 @@ function appendToOverlay(chunks: ContentChunk[]): void {
       </div>
     `;
   }).join("");
+  const staged = document.createElement("div");
+  replaceSanitizedHtml(staged, html);
+  const nodes = [...staged.childNodes];
   if (marker) {
-    marker.insertAdjacentHTML("beforebegin", html);
+    marker.before(...nodes);
   } else {
-    container.insertAdjacentHTML("beforeend", html);
+    container.append(...nodes);
   }
   _ttsTexts = _contentChunks.map((_, i) => renderedChunkText(i));
   const statEl = shadowById("mindease-engage-count");
@@ -2967,7 +2971,7 @@ async function showRelatedResources(topics: string[], preference: "visual" | "te
 
   const validTopics = topics.filter(topic => topic.length >= 3 && topic.length <= 90);
   if (!validTopics.length) {
-    drawerContent.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">No related topics identified on this page.</p>`;
+    replaceSanitizedHtml(drawerContent, `<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">No related topics identified on this page.</p>`);
     return;
   }
   try {
@@ -2982,7 +2986,7 @@ async function showRelatedResources(topics: string[], preference: "visual" | "te
     });
 
     if (!resources.length) {
-      drawerContent.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">No related educational websites found for this topic.</p>`;
+      replaceSanitizedHtml(drawerContent, `<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">No related educational websites found for this topic.</p>`);
       return;
     }
 
@@ -3001,7 +3005,7 @@ async function showRelatedResources(topics: string[], preference: "visual" | "te
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       link.className = "suggested-link";
-      link.innerHTML = `<span>${resource.title}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+      replaceSanitizedHtml(link, `<span>${resource.title}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`);
 
       const desc = document.createElement("p");
       desc.className = "suggested-desc";
@@ -3018,7 +3022,7 @@ async function showRelatedResources(topics: string[], preference: "visual" | "te
       drawerContent.append(card);
     }
   } catch (err) {
-    drawerContent.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">Could not retrieve website suggestions.</p>`;
+    replaceSanitizedHtml(drawerContent, `<p style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:24px 0">Could not retrieve website suggestions.</p>`);
   }
 }
 
@@ -3127,7 +3131,7 @@ function injectOverlay(
     getMindeaseShadow().appendChild(styleEl);
   }
 
-  overlay.innerHTML = `
+  replaceSanitizedHtml(overlay, `
     <div id="mindease-header">
       <div id="mindease-logo">
         <div class="logo-icon">${iconHTML("brain")}</div>
@@ -3199,7 +3203,7 @@ function injectOverlay(
       </button>
       <button class="mindease-btn mindease-btn-ghost" id="mindease-toggle-side">${iconHTML("arrow-left-right")} Side</button>
     </div>
-  `;
+  `);
 
   appendToShadow(overlay);
   void browser.storage.local.get("mindease_reader_font_size").then(saved => {
@@ -3635,14 +3639,14 @@ function stopTTS(): void {
   shadowQueryAll(".mindease-chunk.tts-active-chunk").forEach((el) => el.classList.remove("tts-active-chunk"));
   shadowQueryAll(".chunk-speak-btn.speaking").forEach((btn) => {
     btn.classList.remove("speaking");
-    btn.innerHTML = iconHTML("volume-2");
+    replaceSanitizedHtml(btn, iconHTML("volume-2"));
   });
 
   const bar = shadowById("mindease-tts-bar");
   const btn = shadowById("mindease-tts-btn");
   const pauseBtn = shadowById("mindease-tts-pause");
   if (bar) bar.style.display = "none";
-  if (btn) btn.innerHTML = iconHTML("volume-2");
+  if (btn) replaceSanitizedHtml(btn, iconHTML("volume-2"));
   if (pauseBtn) pauseBtn.textContent = "❚❚";
 }
 
@@ -3656,14 +3660,14 @@ function updateActiveChunkHighlight(chunkIdx: number): void {
       const speakBtn = el.querySelector(".chunk-speak-btn");
       if (speakBtn) {
         speakBtn.classList.add("speaking");
-        speakBtn.innerHTML = '<span style="font-size:10px">■</span>';
+        speakBtn.textContent = "■";
       }
     } else {
       el.classList.remove("tts-active-chunk");
       const speakBtn = el.querySelector(".chunk-speak-btn");
       if (speakBtn) {
         speakBtn.classList.remove("speaking");
-        speakBtn.innerHTML = iconHTML("volume-2");
+        replaceSanitizedHtml(speakBtn, iconHTML("volume-2"));
       }
     }
   });
@@ -3701,7 +3705,7 @@ function speakSingleChunk(chunkIdx: number): void {
     const label = bar.querySelector(".tts-label");
     if (label) label.textContent = `Reading section ${chunkIdx + 1}...`;
   }
-  if (btn) btn.innerHTML = iconHTML("x") + " Stop";
+  if (btn) replaceSanitizedHtml(btn, iconHTML("x") + " Stop");
   if (pauseBtn) pauseBtn.textContent = "❚❚";
 
   ttsSpeak(cleanText, {
@@ -3727,7 +3731,7 @@ function speakTexts(texts: string[]): void {
   _ttsActiveChunkIdx = 0;
 
   const btn = shadowById("mindease-tts-btn");
-  if (btn) btn.innerHTML = iconHTML("x") + " Stop";
+  if (btn) replaceSanitizedHtml(btn, iconHTML("x") + " Stop");
 
   const bar = shadowById("mindease-tts-bar");
   const pauseBtn = shadowById("mindease-tts-pause");
@@ -3783,7 +3787,7 @@ function showVisualPlaceholders(blockIds: string[]): void {
     figure.setAttribute("role", "status");
     figure.setAttribute("aria-live", "polite");
     figure.setAttribute("aria-busy", "true");
-    figure.innerHTML = '<div class="visual-pending-art" aria-hidden="true"><span></span><span></span><span></span></div><span>Planning and drawing your diagram…</span>';
+    replaceSanitizedHtml(figure, '<div class="visual-pending-art" aria-hidden="true"><span></span><span></span><span></span></div><span>Planning and drawing your diagram…</span>');
     section.after(figure);
   }
 }
@@ -3842,7 +3846,7 @@ function openVisualZoom(dataUrl: string, concept: string): void {
   closeBtn.type = "button";
   closeBtn.className = "mindease-lightbox-btn";
   closeBtn.setAttribute("aria-label", "Close visual zoom");
-  closeBtn.innerHTML = "&times; Close";
+  closeBtn.textContent = "× Close";
 
   controls.append(zoomOutBtn, zoomVal, zoomInBtn, resetBtn, closeBtn);
   header.append(titleEl, controls);
@@ -3922,7 +3926,7 @@ function renderVisuals(visuals: VisualEntry[]): void {
     zoomBtn.type = "button";
     zoomBtn.className = "mindease-visual-zoom-btn";
     zoomBtn.setAttribute("aria-label", `Zoom picture: ${visual.concept}`);
-    zoomBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg><span>Zoom</span>`;
+    replaceSanitizedHtml(zoomBtn, `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg><span>Zoom</span>`);
     zoomBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       openVisualZoom(visual.dataUrl, visual.concept);
@@ -4147,7 +4151,7 @@ async function initPDFMode(): Promise<void> {
   `;
   const accepted = await requestAndSendTransformation(pdfText, "pdf");
   if (!accepted) return;
-  loader.innerHTML = `<span style="display:inline-flex;animation:mindease-spin 1s linear infinite">${iconHTML("refresh-cw")}</span> MindEase &mdash; Structuring PDF...`;
+  replaceSanitizedHtml(loader, `<span style="display:inline-flex;animation:mindease-spin 1s linear infinite">${iconHTML("refresh-cw")}</span> MindEase &mdash; Structuring PDF...`);
   document.body?.appendChild(loader);
 
   setTimeout(() => loader?.remove(), 30000);

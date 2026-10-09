@@ -1,7 +1,8 @@
 {
   "name": "mindease",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI-native browser extension for neurodiverse learners - GCD4F 2026",
+  "license": "MIT",
   "scripts": {
     "config:check": "node tools/check-env.mjs",
     "dev:chrome": "vite --mode chrome",

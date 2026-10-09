@@ -7,6 +7,7 @@
 import { appendToShadow, getMindeaseShadow, shadowById } from "./shadowHost";
 import browser from "webextension-polyfill";
 import type { Theme } from "@/utils/themeManager";
+import { replaceSanitizedHtml } from "@/utils/safeHtml";
 
 const SIDEBAR_STORAGE_KEY = "mindease_sidebar_state";
 const SIDEBAR_CSS_ID = "mindease-reopen-styles";
@@ -62,13 +63,13 @@ export function injectReopenButton(theme: Theme): HTMLButtonElement {
   reopenBtn.id = "mindease-reopen-btn";
   reopenBtn.setAttribute("aria-label", "Reopen MindEase panel");
   reopenBtn.setAttribute("title", "Reopen MindEase");
-  reopenBtn.innerHTML = `
+  replaceSanitizedHtml(reopenBtn, `
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 2L2 7l10 5 10-5-10-5z"/>
       <path d="M2 17l10 5 10-5"/>
       <path d="M2 12l10 5 10-5"/>
     </svg>
-  `;
+  `);
 
   Object.assign(reopenBtn.style, {
     position: "fixed",

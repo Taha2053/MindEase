@@ -20,6 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dvisvgm \
     && rm -rf /var/lib/apt/lists/*
 
+# Manim's default TexTemplate requires standalone.cls and preview.sty. Keep
+# only those assets in the runtime image instead of the full latex-extra set.
+FROM base AS latex-assets
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    texlive-latex-extra \
+    && rm -rf /var/lib/apt/lists/*
+
+
 # ── Python dependencies ────────────────────────────────────
 FROM base AS deps
 
@@ -45,6 +54,12 @@ WORKDIR /app
 
 # Copy venv from deps stage
 COPY --from=deps /app/.venv /app/.venv
+
+COPY --from=latex-assets /usr/share/texlive/texmf-dist/tex/latex/standalone \
+    /usr/local/share/texmf/tex/latex/standalone
+COPY --from=latex-assets /usr/share/texmf/tex/latex/preview \
+    /usr/local/share/texmf/tex/latex/preview
+RUN texhash
 
 # Add venv to PATH so manim, uvicorn, etc. are available
 ENV PATH="/app/.venv/bin:$PATH"
