@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$script_dir"
+
 required_node_major=24
 actual_node_major=$(node -p "process.versions.node.split('.')[0]")
 if [ "$actual_node_major" -ne "$required_node_major" ]; then
