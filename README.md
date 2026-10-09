@@ -24,6 +24,31 @@ npm run config:check  # configuration presence, not credential authentication
 
 Load the generated manifest as an unpacked Chrome extension or a temporary Firefox add-on.
 
+## Firefox Add-ons source build
+
+The AMO submission is built from unmodified TypeScript, React, HTML, and CSS
+sources in this repository. The Python backend is not part of the extension
+bundle and is not required for this build.
+
+Build environment:
+
+- Linux x86-64
+- Node.js 24.12.0 (install from <https://nodejs.org/>)
+- npm 11.6.2 (included with the specified Node.js installation)
+- Info-ZIP `zip` 3.0 (`sudo apt-get install zip` on Debian/Ubuntu)
+
+From a clean source checkout, run:
+
+```sh
+./build-firefox-amo.sh
+```
+
+The script uses `npm ci` with `package-lock.json`, configures the public
+MindEase backend URL, builds the Firefox extension, and creates the submitted
+archive at `dist/mindease-firefox.zip`. It deliberately removes provider and
+cloud credentials from the build environment; no `.env` file or secret is
+required. The unpacked build is available at `dist/firefox/`.
+
 ## Configuration
 
 Extension settings accept a MindEase server URL and personal DeepSeek, Napkin, and OCR.space keys. Root `.env` supplies public build configuration (`VITE_PREMIUM_API_URL`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`). Provider secrets should normally remain in `server/.env`, not distributed Vite bundles. The server loads its own configuration using an absolute path and then root configuration without overriding existing values.
