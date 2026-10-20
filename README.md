@@ -67,7 +67,7 @@ Formulas use bundled KaTeX styles in both extension documents and the isolated c
 
 Remote PDFs can be opened directly through the popup's "Read PDF" button or the dashboard reader route (`#reader?source=...&tab=ID`). The reader requires explicit user consent before sending the URL or text to the configured MindEase server, verifies the source tab remains open and non-private, and saves adapted sections directly into the active session. Browser-internal PDF viewers that block content script execution display an honest notice guiding the learner to use the reader.
 
-Video lessons on YouTube or standard HTML5 players (including Vimeo) inspect subtitle and caption text tracks to generate synchronized narration chunk overlays. If dialogue tracks are disabled or unavailable, an informative notice is displayed explaining that captions must be enabled on the player.
+Video lessons on YouTube or prominent standard HTML5 players (including Vimeo) inspect subtitle and caption text tracks to generate synchronized narration chunk overlays. Small, hidden, decorative, and incidental videos do not block article adaptation behind playback. If dialogue tracks are disabled or unavailable, an informative notice is displayed explaining that captions must be enabled on the player.
 
 Related website recommendations extract multiple core concepts from adapted sections, query external resources with domain deduplication and visual-preference ranking, and fall back to public educational references (Wikibooks/Wikiversity) matching verified topic words when search services are unreachable.
 

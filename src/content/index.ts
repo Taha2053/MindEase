@@ -194,12 +194,48 @@ const SKIP_SPEED_THRESHOLD_PX_PER_MS = 1.5;
 
 /* ─── Content type detection ─────────────────────────────────────────────────── */
 
+function findPrimaryVideoElement(): HTMLVideoElement | null {
+  const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+  const minimumWidth = Math.min(480, window.innerWidth * 0.6);
+  const minimumHeight = Math.min(270, window.innerHeight * 0.35);
+  let primary: HTMLVideoElement | null = null;
+  let largestArea = 0;
+
+  for (const video of document.querySelectorAll("video")) {
+    const style = window.getComputedStyle(video);
+    const rect = video.getBoundingClientRect();
+    const area = rect.width * rect.height;
+    const visible = style.display !== "none"
+      && style.visibility !== "hidden"
+      && Number(style.opacity || "1") > 0
+      && rect.bottom > 0
+      && rect.right > 0
+      && rect.top < window.innerHeight
+      && rect.left < window.innerWidth;
+    const prominent = rect.width >= minimumWidth
+      && rect.height >= minimumHeight
+      && area >= viewportArea * 0.15;
+    if (visible && prominent && area > largestArea) {
+      primary = video;
+      largestArea = area;
+    }
+  }
+  return primary;
+}
+
 function detectSourceType(): "pdf" | "website" | "video" | "lecture" | null {
-  return classifySource(
-    window.location.href,
-    document.contentType,
-    document.querySelector("video") !== null,
-  );
+  const video = findPrimaryVideoElement();
+  const hasCaptionTrack = video
+    ? video.querySelector('track[kind="captions"], track[kind="subtitles"]') !== null
+      || Array.from(video.textTracks).some(track => track.kind === "captions" || track.kind === "subtitles")
+    : false;
+  return classifySource(window.location.href, document.contentType, {
+    hasProminentVideo: video !== null,
+    hasCaptionTrack,
+    hasNativeControls: video?.controls === true,
+    isPlaying: video ? !video.paused && !video.ended && video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA : false,
+    readableTextLength: video ? extractReadingText().trim().length : 0,
+  });
 }
 
 /* ─── Activity ping ──────────────────────────────────────────────────────────── */
@@ -555,7 +591,7 @@ async function triggerContentTransformation(sourceType: string): Promise<void> {
   await wakeServiceWorker();
   if (!_extensionActive) return;
   if (sourceType === "video") {
-    const video = document.querySelector("video") as HTMLVideoElement;
+    const video = findPrimaryVideoElement() ?? document.querySelector("video");
     if (!video) {
       showAdaptationStatus("MindEase could not find a video element on this page.", true);
       return;

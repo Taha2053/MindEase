@@ -62,17 +62,47 @@ describe("sourceHelpers", () => {
   });
 
   describe("classifySource", () => {
-    it("prioritizes PDF over other signals", () => {
-      expect(classifySource("https://example.com/book.pdf", undefined, true)).toBe("pdf");
+    const noVideo = {
+      hasProminentVideo: false,
+      hasCaptionTrack: false,
+      hasNativeControls: false,
+      isPlaying: false,
+      readableTextLength: 4000,
+    };
+
+    it("prioritizes PDF and direct video content types", () => {
+      expect(classifySource("https://example.com/book.pdf", undefined, noVideo)).toBe("pdf");
+      expect(classifySource("https://example.com/media", "video/mp4", noVideo)).toBe("video");
     });
 
-    it("identifies video pages with video elements or video platforms", () => {
-      expect(classifySource("https://www.youtube.com/watch?v=123", undefined, false)).toBe("video");
-      expect(classifySource("https://example.com/lecture", undefined, true)).toBe("video");
+    it("identifies dedicated video platforms and primary HTML5 players", () => {
+      expect(classifySource("https://www.youtube.com/watch?v=123", undefined, noVideo)).toBe("video");
+      expect(classifySource("https://example.com/lecture", undefined, {
+        ...noVideo,
+        hasProminentVideo: true,
+        hasNativeControls: true,
+        readableTextLength: 300,
+      })).toBe("video");
     });
 
-    it("defaults to website when neither PDF nor video", () => {
-      expect(classifySource("https://example.com/article", undefined, false)).toBe("website");
+    it("keeps articles with incidental or secondary videos in website mode", () => {
+      expect(classifySource("https://example.com/article", undefined, {
+        ...noVideo,
+        hasNativeControls: true,
+      })).toBe("website");
+      expect(classifySource("https://example.com/article", undefined, {
+        ...noVideo,
+        hasProminentVideo: true,
+        hasNativeControls: true,
+      })).toBe("website");
+    });
+
+    it("recognizes a captioned primary player even when the lesson has substantial text", () => {
+      expect(classifySource("https://example.com/lecture", undefined, {
+        ...noVideo,
+        hasProminentVideo: true,
+        hasCaptionTrack: true,
+      })).toBe("video");
     });
   });
 

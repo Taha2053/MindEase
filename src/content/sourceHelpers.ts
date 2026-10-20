@@ -26,18 +26,31 @@ export function isPdfUrl(url: string, contentType?: string): boolean {
   }
 }
 
-/** Classify the source type for a page given its URL, content type, and DOM state. */
+export interface VideoPageEvidence {
+  hasProminentVideo: boolean;
+  hasCaptionTrack: boolean;
+  hasNativeControls: boolean;
+  isPlaying: boolean;
+  readableTextLength: number;
+}
+
+/**
+ * Classify a source without treating every incidental, advertising, or
+ * decorative <video> element as a video lesson.
+ */
 export function classifySource(
   url: string,
   contentType: string | undefined,
-  hasVideoElement: boolean,
+  video: VideoPageEvidence,
 ): "pdf" | "website" | "video" {
   if (isPdfUrl(url, contentType)) return "pdf";
   const platform = detectVideoPlatform(url);
-  if (platform === "youtube" || platform === "vimeo" || hasVideoElement) {
+  if (platform === "youtube" || platform === "vimeo" || contentType?.startsWith("video/")) {
     return "video";
   }
-  return "website";
+  const usablePlayer = video.hasNativeControls || video.hasCaptionTrack || video.isPlaying;
+  const videoLedPage = video.hasCaptionTrack || video.isPlaying || video.readableTextLength < 1200;
+  return video.hasProminentVideo && usablePlayer && videoLedPage ? "video" : "website";
 }
 
 /* ─── Video platform detection ──────────────────────────────────────────────── */
